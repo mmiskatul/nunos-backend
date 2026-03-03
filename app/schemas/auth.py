@@ -61,6 +61,17 @@ class ResetPasswordRequest(BaseModel):
         return self
 
 
+class VerifyResetCodeRequest(BaseModel):
+    email_or_phone: str
+    validation_code: str = Field(min_length=4, max_length=8)
+
+    @field_validator("email_or_phone")
+    @classmethod
+    def validate_email_or_phone(cls, value: str) -> str:
+        parse_email_or_phone(value)
+        return value
+
+
 class UserPublic(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -83,5 +94,8 @@ class MessageResponse(BaseModel):
 
 
 class ForgotPasswordResponse(MessageResponse):
-    reset_token: str | None = None
+    validation_code: str | None = None
 
+
+class VerifyResetCodeResponse(MessageResponse):
+    reset_token: str | None = None

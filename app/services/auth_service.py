@@ -2,10 +2,12 @@ from typing import Any
 
 from bson.errors import InvalidId
 from fastapi import HTTPException, status
+from pymongo.errors import DuplicateKeyError
 
 from app.core.config import get_settings
 from app.core.contact import parse_email_or_phone
 from app.core.security import create_access_token, decode_access_token, hash_password, verify_password
+from app.providers.email_sender import EmailSender
 from app.providers.social_auth import SocialAuthStrategyFactory
 from app.repositories.password_reset_repository import PasswordResetRepository
 from app.repositories.user_repository import UserRepository
@@ -17,6 +19,8 @@ from app.schemas.auth import (
     ResetPasswordRequest,
     SignupRequest,
     SocialLoginRequest,
+    VerifyResetCodeRequest,
+    VerifyResetCodeResponse,
     UserPublic,
 )
 
@@ -29,10 +33,12 @@ class AuthService:
         user_repo: UserRepository,
         password_reset_repo: PasswordResetRepository,
         social_factory: SocialAuthStrategyFactory,
+        email_sender: EmailSender,
     ):
         self.user_repo = user_repo
         self.password_reset_repo = password_reset_repo
         self.social_factory = social_factory
+        self.email_sender = email_sender
         self.settings = get_settings()
 
     def signup(self, payload: SignupRequest) -> AuthResponse:
@@ -41,16 +47,19 @@ class AuthService:
         if existing:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User already exists.")
 
-        user = self.user_repo.create_user(
-            {
-                "full_name": payload.full_name,
-                "email": email,
-                "phone": phone,
-                "password_hash": hash_password(payload.password),
-                "enable_location": payload.enable_location,
-                "auth_provider": "local",
-            }
-        )
+        try:
+            user = self.user_repo.create_user(
+                {
+                    "full_name": payload.full_name,
+                    "email": email,
+                    "phone": phone,
+                    "password_hash": hash_password(payload.password),
+                    "enable_location": payload.enable_location,
+                    "auth_provider": "local",
+                }
+            )
+        except DuplicateKeyError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User already exists.") from exc
         return self._build_auth_response(user)
 
     def login(self, payload: LoginRequest) -> AuthResponse:
@@ -89,20 +98,48 @@ class AuthService:
         user = self._get_user_by_contact(payload.email_or_phone)
         if not user:
             return ForgotPasswordResponse(
-                message="If the account exists, a password reset link has been generated."
+                message="If the account exists, a validation code has been sent."
             )
 
-        token = self.password_reset_repo.create_token(
-            user_id=user["id"], expires_in_minutes=self.settings.password_reset_token_expire_minutes
-        )
-        if self.settings.debug_return_reset_token:
+        if not user.get("email"):
             return ForgotPasswordResponse(
-                message="Password reset token created (debug mode).",
-                reset_token=token,
+                message="If the account exists, a validation code has been sent."
+            )
+
+        validation_code = self.password_reset_repo.create_validation_code(
+            user_id=user["id"],
+            code_length=self.settings.password_reset_code_length,
+            expires_in_minutes=self.settings.password_reset_code_expire_minutes,
+        )
+        self.email_sender.send_password_reset_code(
+            recipient_email=user["email"],
+            full_name=user["full_name"],
+            code=validation_code,
+            expires_in=self.settings.password_reset_code_expire_minutes,
+        )
+
+        if self.settings.debug_return_reset_code:
+            return ForgotPasswordResponse(
+                message="Validation code sent to email (debug mode includes code).",
+                validation_code=validation_code,
             )
         return ForgotPasswordResponse(
-            message="If the account exists, a password reset link has been generated."
+            message="If the account exists, a validation code has been sent."
         )
+
+    def verify_password_reset_code(self, payload: VerifyResetCodeRequest) -> VerifyResetCodeResponse:
+        user = self._get_user_by_contact(payload.email_or_phone)
+        if not user:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired validation code.")
+
+        is_valid = self.password_reset_repo.validate_and_consume_code(user["id"], payload.validation_code)
+        if not is_valid:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired validation code.")
+
+        reset_token = self.password_reset_repo.create_token(
+            user_id=user["id"], expires_in_minutes=self.settings.password_reset_token_expire_minutes
+        )
+        return VerifyResetCodeResponse(message="Validation code verified.", reset_token=reset_token)
 
     def reset_password(self, payload: ResetPasswordRequest) -> dict[str, str]:
         token_doc = self.password_reset_repo.get_valid_token(payload.reset_token)
@@ -142,4 +179,3 @@ class AuthService:
         if email:
             return self.user_repo.get_by_email(email)
         return self.user_repo.get_by_phone(phone or "")
-

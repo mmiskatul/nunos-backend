@@ -10,6 +10,8 @@ from app.schemas.auth import (
     ResetPasswordRequest,
     SignupRequest,
     SocialLoginRequest,
+    VerifyResetCodeRequest,
+    VerifyResetCodeResponse,
     UserPublic,
 )
 from app.services.auth_service import AuthService
@@ -47,6 +49,14 @@ def request_forgot_password(
     auth_service: AuthService = Depends(get_auth_service),
 ) -> ForgotPasswordResponse:
     return auth_service.request_password_reset(payload)
+
+
+@router.post("/forgot-password/verify-code", response_model=VerifyResetCodeResponse)
+def verify_forgot_password_code(
+    payload: VerifyResetCodeRequest,
+    auth_service: AuthService = Depends(get_auth_service),
+) -> VerifyResetCodeResponse:
+    return auth_service.verify_password_reset_code(payload)
 
 
 @router.post("/forgot-password/reset", response_model=MessageResponse)

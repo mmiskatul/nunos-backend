@@ -1,7 +1,9 @@
+from app.core.config import get_settings
 from fastapi import Depends, Request
 from fastapi.security import OAuth2PasswordBearer
 
 from app.db.mongodb import MongoDatabase
+from app.providers.email_sender import SMTPEmailSender
 from app.providers.social_auth import SocialAuthStrategyFactory
 from app.repositories.password_reset_repository import PasswordResetRepository
 from app.repositories.user_repository import UserRepository
@@ -28,7 +30,12 @@ def get_auth_service(
     user_repo: UserRepository = Depends(get_user_repository),
     password_reset_repo: PasswordResetRepository = Depends(get_password_reset_repository),
 ) -> AuthService:
-    return AuthService(user_repo, password_reset_repo, SocialAuthStrategyFactory())
+    return AuthService(
+        user_repo,
+        password_reset_repo,
+        SocialAuthStrategyFactory(),
+        SMTPEmailSender(get_settings()),
+    )
 
 
 def get_current_user(
@@ -36,4 +43,3 @@ def get_current_user(
     auth_service: AuthService = Depends(get_auth_service),
 ) -> dict:
     return auth_service.get_current_user_from_token(token)
-

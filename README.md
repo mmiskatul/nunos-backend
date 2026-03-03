@@ -26,20 +26,26 @@ uvicorn app.main:app --reload
 - Login form:
   - `POST /api/v1/auth/login`
   - `POST /api/v1/auth/forgot-password/request`
+  - `POST /api/v1/auth/forgot-password/verify-code`
+  - `POST /api/v1/auth/forgot-password/reset`
   - `POST /api/v1/auth/social-login` (Google / Apple)
 - Sign up form:
   - `POST /api/v1/auth/signup`
   - `PATCH /api/v1/users/me/location` (enable location toggle)
 - Common authenticated user:
   - `GET /api/v1/auth/me`
-  - `POST /api/v1/auth/forgot-password/reset`
+  - `PATCH /api/v1/users/me/location`
 
 ## Notes
 - Social login strategy is wired for extension. Replace the development token parser in
   `app/providers/social_auth.py` with real Google/Apple token verification.
+- Password reset flow now uses an email validation code:
+  1. request code
+  2. verify code (returns reset token)
+  3. reset password using that token
+- Configure SMTP in `.env` (`SMTP_*` fields) so validation codes can be sent by email.
 - If you add more UI screens, follow the same module split:
   - request/response models in `app/schemas`
   - business rules in `app/services`
   - DB access in `app/repositories`
   - expose routes in `app/api/routes`
-

@@ -17,10 +17,20 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 60 * 24
 
     password_reset_token_expire_minutes: int = 30
-    debug_return_reset_token: bool = True
+    password_reset_code_expire_minutes: int = 10
+    password_reset_code_length: int = 6
+    debug_return_reset_code: bool = True
+
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = ""
+    smtp_from_name: str = "Nunos"
+    smtp_use_tls: bool = True
+    smtp_use_ssl: bool = False
 
 
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-

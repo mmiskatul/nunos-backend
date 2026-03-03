@@ -23,9 +23,11 @@ class UserRepository:
 
     def create_user(self, payload: dict[str, Any]) -> dict[str, Any]:
         now = datetime.now(UTC)
-        payload["created_at"] = now
-        payload["updated_at"] = now
-        inserted = self.collection.insert_one(payload)
+        # Do not store explicit nulls on sparse+unique indexed fields (email/phone/provider_user_id).
+        insert_payload = {key: value for key, value in payload.items() if value is not None}
+        insert_payload["created_at"] = now
+        insert_payload["updated_at"] = now
+        inserted = self.collection.insert_one(insert_payload)
         created = self.collection.find_one({"_id": inserted.inserted_id})
         return self._serialize(created)  # type: ignore[return-value]
 
@@ -53,4 +55,3 @@ class UserRepository:
             {"$set": {"enable_location": enable_location, "updated_at": datetime.now(UTC)}},
         )
         return self.get_by_id(user_id)
-
