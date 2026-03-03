@@ -22,6 +22,12 @@ def signup(payload: SignupRequest, auth_service: AuthService = Depends(get_auth_
     return auth_service.signup(payload)
 
 
+@router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
+def register(payload: SignupRequest, auth_service: AuthService = Depends(get_auth_service)) -> AuthResponse:
+    # Alias for clients still using `/register` from older UI contracts.
+    return auth_service.signup(payload)
+
+
 @router.post("/login", response_model=AuthResponse)
 def login(payload: LoginRequest, auth_service: AuthService = Depends(get_auth_service)) -> AuthResponse:
     return auth_service.login(payload)
@@ -55,4 +61,3 @@ def reset_forgot_password(
 @router.get("/me", response_model=UserPublic)
 def get_me(current_user: dict = Depends(get_current_user)) -> UserPublic:
     return UserPublic.model_validate(current_user)
-
