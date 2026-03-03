@@ -10,6 +10,7 @@ from app.core.security import create_access_token, decode_access_token, hash_pas
 from app.providers.email_sender import EmailSender
 from app.providers.social_auth import SocialAuthStrategyFactory
 from app.repositories.password_reset_repository import PasswordResetRepository
+from app.repositories.signup_verification_repository import SignupVerificationRepository
 from app.repositories.user_repository import UserRepository
 from app.schemas.auth import (
     AuthResponse,
@@ -17,8 +18,11 @@ from app.schemas.auth import (
     ForgotPasswordResponse,
     LoginRequest,
     ResetPasswordRequest,
+    SignupCodeRequest,
     SignupRequest,
     SocialLoginRequest,
+    VerifySignupCodeRequest,
+    VerifySignupCodeResponse,
     VerifyResetCodeRequest,
     VerifyResetCodeResponse,
     UserPublic,
@@ -32,17 +36,31 @@ class AuthService:
         self,
         user_repo: UserRepository,
         password_reset_repo: PasswordResetRepository,
+        signup_verification_repo: SignupVerificationRepository,
         social_factory: SocialAuthStrategyFactory,
         email_sender: EmailSender,
     ):
         self.user_repo = user_repo
         self.password_reset_repo = password_reset_repo
+        self.signup_verification_repo = signup_verification_repo
         self.social_factory = social_factory
         self.email_sender = email_sender
         self.settings = get_settings()
 
     def signup(self, payload: SignupRequest) -> AuthResponse:
         email, phone = parse_email_or_phone(payload.email_or_phone)
+        if not email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email verification is required for signup.",
+            )
+
+        valid_signup_token = self.signup_verification_repo.get_valid_signup_token(
+            email=email, token=payload.signup_token
+        )
+        if not valid_signup_token:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired signup token.")
+
         existing = self.user_repo.get_by_email(email) if email else self.user_repo.get_by_phone(phone or "")
         if existing:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User already exists.")
@@ -60,7 +78,55 @@ class AuthService:
             )
         except DuplicateKeyError as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User already exists.") from exc
+        self.signup_verification_repo.mark_signup_token_used(payload.signup_token)
         return self._build_auth_response(user)
+
+    def request_signup_code(self, payload: SignupCodeRequest) -> ForgotPasswordResponse:
+        email, _ = parse_email_or_phone(payload.email_or_phone)
+        if not email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Signup verification code can only be sent to email.",
+            )
+
+        existing = self.user_repo.get_by_email(email)
+        if existing:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User already exists.")
+
+        validation_code = self.signup_verification_repo.create_validation_code(
+            email=email,
+            code_length=self.settings.signup_verification_code_length,
+            expires_in_minutes=self.settings.signup_verification_code_expire_minutes,
+        )
+        self.email_sender.send_validation_code(
+            recipient_email=email,
+            full_name="there",
+            code=validation_code,
+            expires_in=self.settings.signup_verification_code_expire_minutes,
+        )
+        if self.settings.debug_return_signup_code:
+            return ForgotPasswordResponse(
+                message="Signup validation code sent (debug mode includes code).",
+                validation_code=validation_code,
+            )
+        return ForgotPasswordResponse(message="Signup validation code sent.")
+
+    def verify_signup_code(self, payload: VerifySignupCodeRequest) -> VerifySignupCodeResponse:
+        email, _ = parse_email_or_phone(payload.email_or_phone)
+        if not email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Signup verification code can only be sent to email.",
+            )
+
+        is_valid = self.signup_verification_repo.validate_and_consume_code(email, payload.validation_code)
+        if not is_valid:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired validation code.")
+
+        signup_token = self.signup_verification_repo.create_signup_token(
+            email=email, expires_in_minutes=self.settings.signup_verification_token_expire_minutes
+        )
+        return VerifySignupCodeResponse(message="Signup code verified.", signup_token=signup_token)
 
     def login(self, payload: LoginRequest) -> AuthResponse:
         user = self._get_user_by_contact(payload.email_or_phone)
@@ -111,7 +177,7 @@ class AuthService:
             code_length=self.settings.password_reset_code_length,
             expires_in_minutes=self.settings.password_reset_code_expire_minutes,
         )
-        self.email_sender.send_password_reset_code(
+        self.email_sender.send_validation_code(
             recipient_email=user["email"],
             full_name=user["full_name"],
             code=validation_code,

@@ -9,7 +9,7 @@ from app.core.config import Settings
 
 class EmailSender(ABC):
     @abstractmethod
-    def send_password_reset_code(self, recipient_email: str, full_name: str, code: str, expires_in: int) -> None:
+    def send_validation_code(self, recipient_email: str, full_name: str, code: str, expires_in: int) -> None:
         raise NotImplementedError
 
 
@@ -19,7 +19,7 @@ class SMTPEmailSender(EmailSender):
     def __init__(self, settings: Settings):
         self.settings = settings
 
-    def send_password_reset_code(self, recipient_email: str, full_name: str, code: str, expires_in: int) -> None:
+    def send_validation_code(self, recipient_email: str, full_name: str, code: str, expires_in: int) -> None:
         if not self.settings.smtp_host or not self.settings.smtp_from_email:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -65,4 +65,3 @@ class SMTPEmailSender(EmailSender):
     def _authenticate(self, server: smtplib.SMTP) -> None:
         if self.settings.smtp_username:
             server.login(self.settings.smtp_username, self.settings.smtp_password)
-

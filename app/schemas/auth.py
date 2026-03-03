@@ -6,6 +6,7 @@ from app.core.contact import parse_email_or_phone
 class SignupRequest(BaseModel):
     full_name: str = Field(min_length=2, max_length=80)
     email_or_phone: str
+    signup_token: str = Field(min_length=16)
     password: str = Field(min_length=8, max_length=128)
     confirm_password: str = Field(min_length=8, max_length=128)
     enable_location: bool = False
@@ -41,6 +42,27 @@ class SocialLoginRequest(BaseModel):
 
 class ForgotPasswordRequest(BaseModel):
     email_or_phone: str
+
+    @field_validator("email_or_phone")
+    @classmethod
+    def validate_email_or_phone(cls, value: str) -> str:
+        parse_email_or_phone(value)
+        return value
+
+
+class SignupCodeRequest(BaseModel):
+    email_or_phone: str
+
+    @field_validator("email_or_phone")
+    @classmethod
+    def validate_email_or_phone(cls, value: str) -> str:
+        parse_email_or_phone(value)
+        return value
+
+
+class VerifySignupCodeRequest(BaseModel):
+    email_or_phone: str
+    validation_code: str = Field(min_length=4, max_length=8)
 
     @field_validator("email_or_phone")
     @classmethod
@@ -99,3 +121,7 @@ class ForgotPasswordResponse(MessageResponse):
 
 class VerifyResetCodeResponse(MessageResponse):
     reset_token: str | None = None
+
+
+class VerifySignupCodeResponse(MessageResponse):
+    signup_token: str | None = None

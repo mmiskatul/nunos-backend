@@ -30,6 +30,8 @@ uvicorn app.main:app --reload
   - `POST /api/v1/auth/forgot-password/reset`
   - `POST /api/v1/auth/social-login` (Google / Apple)
 - Sign up form:
+  - `POST /api/v1/auth/signup/request-code`
+  - `POST /api/v1/auth/signup/verify-code`
   - `POST /api/v1/auth/signup`
   - `PATCH /api/v1/users/me/location` (enable location toggle)
 - Common authenticated user:
@@ -43,6 +45,10 @@ uvicorn app.main:app --reload
   1. request code
   2. verify code (returns reset token)
   3. reset password using that token
+- Signup now also requires email validation:
+  1. request signup code
+  2. verify signup code (returns signup token)
+  3. call signup with `signup_token`
 - Configure SMTP in `.env` (`SMTP_*` fields) so validation codes can be sent by email.
 - If you add more UI screens, follow the same module split:
   - request/response models in `app/schemas`

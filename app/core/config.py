@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60 * 24
 
+    signup_verification_code_expire_minutes: int = 10
+    signup_verification_code_length: int = 6
+    signup_verification_token_expire_minutes: int = 30
+    debug_return_signup_code: bool = True
+
     password_reset_token_expire_minutes: int = 30
     password_reset_code_expire_minutes: int = 10
     password_reset_code_length: int = 6

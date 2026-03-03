@@ -8,8 +8,11 @@ from app.schemas.auth import (
     LoginRequest,
     MessageResponse,
     ResetPasswordRequest,
+    SignupCodeRequest,
     SignupRequest,
     SocialLoginRequest,
+    VerifySignupCodeRequest,
+    VerifySignupCodeResponse,
     VerifyResetCodeRequest,
     VerifyResetCodeResponse,
     UserPublic,
@@ -17,6 +20,22 @@ from app.schemas.auth import (
 from app.services.auth_service import AuthService
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
+
+
+@router.post("/signup/request-code", response_model=ForgotPasswordResponse)
+def request_signup_code(
+    payload: SignupCodeRequest,
+    auth_service: AuthService = Depends(get_auth_service),
+) -> ForgotPasswordResponse:
+    return auth_service.request_signup_code(payload)
+
+
+@router.post("/signup/verify-code", response_model=VerifySignupCodeResponse)
+def verify_signup_code(
+    payload: VerifySignupCodeRequest,
+    auth_service: AuthService = Depends(get_auth_service),
+) -> VerifySignupCodeResponse:
+    return auth_service.verify_signup_code(payload)
 
 
 @router.post("/signup", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
