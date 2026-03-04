@@ -48,17 +48,26 @@ class VendorRepository:
     def get_by_id(self, vendor_id: str) -> dict[str, Any] | None:
         return self._serialize(self.collection.find_one({"_id": ObjectId(vendor_id)}))
 
-    def list_by_status(self, status: str, limit: int = 50, skip: int = 0) -> list[dict[str, Any]]:
-        cursor = (
-            self.collection.find({"status": status})
-            .sort("created_at", -1)
-            .skip(skip)
-            .limit(limit)
-        )
+    def list_vendors(
+        self,
+        limit: int = 50,
+        skip: int = 0,
+        search: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        query = self._build_vendor_query(search=search, status=status)
+        cursor = self.collection.find(query).sort("created_at", -1).skip(skip).limit(limit)
         rows = [self._serialize(doc) for doc in cursor if doc]  # type: ignore[list-item]
         for row in rows:
             row["sections"] = self.get_vendor_sections(row["id"])
         return rows
+
+    def count_vendors(self, search: str | None = None, status: str | None = None) -> int:
+        query = self._build_vendor_query(search=search, status=status)
+        return int(self.collection.count_documents(query))
+
+    def list_by_status(self, status: str, limit: int = 50, skip: int = 0) -> list[dict[str, Any]]:
+        return self.list_vendors(limit=limit, skip=skip, status=status)
 
     def update_password_hash(self, vendor_id: str, password_hash: str) -> None:
         self.collection.update_one(
@@ -248,3 +257,19 @@ class VendorRepository:
             "vendor": vendor,
             "sections": self.get_vendor_sections(vendor_id),
         }
+
+    @staticmethod
+    def _build_vendor_query(search: str | None = None, status: str | None = None) -> dict[str, Any]:
+        query: dict[str, Any] = {}
+        if search:
+            escaped = search.strip()
+            if escaped:
+                query["$or"] = [
+                    {"business_name": {"$regex": escaped, "$options": "i"}},
+                    {"owner_full_name": {"$regex": escaped, "$options": "i"}},
+                    {"email": {"$regex": escaped, "$options": "i"}},
+                    {"phone": {"$regex": escaped, "$options": "i"}},
+                ]
+        if status:
+            query["status"] = status
+        return query

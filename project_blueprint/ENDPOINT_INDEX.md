@@ -101,6 +101,8 @@
 - `PATCH /loyalty/settings`
 - `GET /reviews`
 - `POST /reviews/{review_id}/reply`
+- `GET /users`
+- `GET /users/{user_id}`
 - `GET /settings/general`
 - `PATCH /settings/general`
 - `PATCH /settings/commission`

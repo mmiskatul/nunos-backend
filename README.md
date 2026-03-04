@@ -79,10 +79,15 @@ Vendor approval behavior:
   - `GET /api/v1/platform-admin/users`
   - `GET /api/v1/platform-admin/users/{user_id}`
   - `PATCH /api/v1/platform-admin/users/{user_id}/status`
+  - `GET /api/v1/platform-admin/vendors`
   - `GET /api/v1/platform-admin/vendors/pending`
   - `GET /api/v1/platform-admin/vendors/{vendor_id}`
   - `GET /api/v1/platform-admin/vendors/{vendor_id}/sections`
   - `PATCH /api/v1/platform-admin/vendors/{vendor_id}/verification`
+
+Vendor users endpoints:
+- `GET /api/v1/vendor/users`
+- `GET /api/v1/vendor/users/{user_id}`
 
 MongoDB segmented storage for vendor registration:
 - `vendors` (auth/core status)
