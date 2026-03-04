@@ -53,6 +53,13 @@ uvicorn app.main:app --reload
 - `POST /api/v1/vendor/auth/kyc/submit`
 - `GET /api/v1/vendor/auth/kyc/status`
 
+`POST /api/v1/vendor/auth/register` now requires business registration + verification fields from vendor onboarding UI:
+- `address`, `city`, `website`, `business_description`
+- `trade_license_number`
+- `trade_license_document_url`
+- `owner_manager_id_document_url`
+- `terms_accepted=true`
+
 ## Notes
 - Social login strategy is wired for extension. Replace the development token parser in
   `app/providers/social_auth.py` with real Google/Apple token verification.

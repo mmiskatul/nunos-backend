@@ -128,7 +128,27 @@ class VendorAuthService:
                     "password_hash": hash_password(payload.password),
                     "role": "vendor",
                     "status": "active",
-                    "kyc_status": "not_submitted",
+                    "address": payload.address,
+                    "city": payload.city,
+                    "website": payload.website,
+                    "business_description": payload.business_description,
+                    "terms_accepted": payload.terms_accepted,
+                    "terms_accepted_at": datetime.utcnow().isoformat(),
+                    "kyc_status": "pending_review",
+                    "kyc_submitted_at": datetime.utcnow().isoformat(),
+                    "kyc_data": {
+                        "business_name": payload.business_name,
+                        "owner_full_name": payload.owner_full_name,
+                        "email": email,
+                        "phone": phone,
+                        "address": payload.address,
+                        "city": payload.city,
+                        "website": payload.website,
+                        "business_description": payload.business_description,
+                        "trade_license_number": payload.trade_license_number,
+                        "trade_license_document_url": payload.trade_license_document_url,
+                        "owner_manager_id_document_url": payload.owner_manager_id_document_url,
+                    },
                 }
             )
         except DuplicateKeyError as exc:
@@ -239,4 +259,3 @@ class VendorAuthService:
         if isinstance(value, datetime):
             return value.isoformat()
         return None
-

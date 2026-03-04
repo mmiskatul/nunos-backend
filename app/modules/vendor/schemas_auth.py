@@ -29,6 +29,14 @@ class VendorRegisterRequest(BaseModel):
     owner_full_name: str = Field(min_length=2, max_length=80)
     email_or_phone: str
     phone: str | None = None
+    address: str = Field(min_length=5, max_length=255)
+    city: str = Field(min_length=2, max_length=80)
+    website: str | None = None
+    business_description: str = Field(min_length=10, max_length=1000)
+    trade_license_number: str = Field(min_length=4, max_length=80)
+    trade_license_document_url: str = Field(min_length=8, max_length=1000)
+    owner_manager_id_document_url: str = Field(min_length=8, max_length=1000)
+    terms_accepted: bool = False
     password: str = Field(min_length=8, max_length=128)
     confirm_password: str = Field(min_length=8, max_length=128)
     signup_token: str = Field(min_length=16)
@@ -51,6 +59,8 @@ class VendorRegisterRequest(BaseModel):
     def validate_passwords(self) -> "VendorRegisterRequest":
         if self.password != self.confirm_password:
             raise ValueError("Password and confirm_password must match.")
+        if not self.terms_accepted:
+            raise ValueError("terms_accepted must be true.")
         return self
 
 
@@ -146,4 +156,3 @@ class VendorKycStatusResponse(BaseModel):
     submitted_at: str | None = None
     reviewed_at: str | None = None
     rejection_reason: str | None = None
-
