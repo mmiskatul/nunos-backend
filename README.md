@@ -42,6 +42,17 @@ uvicorn app.main:app --reload
   - `GET /api/v1/auth/me`
   - `PATCH /api/v1/users/me/location`
 
+## Vendor Auth Endpoints
+- `POST /api/v1/vendor/auth/register/request-code`
+- `POST /api/v1/vendor/auth/register/verify-code`
+- `POST /api/v1/vendor/auth/register`
+- `POST /api/v1/vendor/auth/login`
+- `POST /api/v1/vendor/auth/forgot-password/request`
+- `POST /api/v1/vendor/auth/forgot-password/verify-code`
+- `POST /api/v1/vendor/auth/forgot-password/reset`
+- `POST /api/v1/vendor/auth/kyc/submit`
+- `GET /api/v1/vendor/auth/kyc/status`
+
 ## Notes
 - Social login strategy is wired for extension. Replace the development token parser in
   `app/providers/social_auth.py` with real Google/Apple token verification.

@@ -1,0 +1,242 @@
+from datetime import datetime
+from typing import Any
+
+from bson.errors import InvalidId
+from fastapi import HTTPException, status
+from pymongo.errors import DuplicateKeyError
+
+from app.core.config import get_settings
+from app.core.contact import parse_email_or_phone
+from app.core.security import create_access_token, decode_access_token, hash_password, verify_password
+from app.modules.vendor.repositories_password_reset import VendorPasswordResetRepository
+from app.modules.vendor.repositories_signup import VendorSignupVerificationRepository
+from app.modules.vendor.repositories_vendor import VendorRepository
+from app.modules.vendor.schemas_auth import (
+    VendorAuthResponse,
+    VendorCodeRequestResponse,
+    VendorForgotPasswordRequest,
+    VendorKycStatusResponse,
+    VendorKycSubmitRequest,
+    VendorLoginRequest,
+    VendorMessageResponse,
+    VendorPublic,
+    VendorRegisterRequest,
+    VendorResetPasswordRequest,
+    VendorVerifyCodeResponse,
+    VendorVerifyResetCodeRequest,
+    VendorVerifySignupCodeRequest,
+)
+from app.providers.email_sender import EmailSender
+
+
+class VendorAuthService:
+    """Service layer for vendor onboarding and authentication."""
+
+    def __init__(
+        self,
+        vendor_repo: VendorRepository,
+        signup_repo: VendorSignupVerificationRepository,
+        password_reset_repo: VendorPasswordResetRepository,
+        email_sender: EmailSender,
+    ):
+        self.vendor_repo = vendor_repo
+        self.signup_repo = signup_repo
+        self.password_reset_repo = password_reset_repo
+        self.email_sender = email_sender
+        self.settings = get_settings()
+
+    def request_register_code(self, payload: VendorForgotPasswordRequest) -> VendorCodeRequestResponse:
+        email, _ = parse_email_or_phone(payload.email_or_phone)
+        if not email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Vendor registration requires email verification.",
+            )
+
+        existing = self.vendor_repo.get_by_email(email)
+        if existing:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Vendor already exists.")
+
+        code = self.signup_repo.create_validation_code(
+            email=email,
+            code_length=self.settings.signup_verification_code_length,
+            expires_in_minutes=self.settings.signup_verification_code_expire_minutes,
+        )
+        self.email_sender.send_validation_code(
+            recipient_email=email,
+            full_name="vendor",
+            code=code,
+            expires_in=self.settings.signup_verification_code_expire_minutes,
+        )
+        if self.settings.debug_return_signup_code:
+            return VendorCodeRequestResponse(
+                message="Verification code sent to email (debug mode includes code).",
+                validation_code=code,
+            )
+        return VendorCodeRequestResponse(message="Verification code sent to email.")
+
+    def verify_register_code(self, payload: VendorVerifySignupCodeRequest) -> VendorVerifyCodeResponse:
+        email, _ = parse_email_or_phone(payload.email_or_phone)
+        if not email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Vendor registration requires email verification.",
+            )
+
+        is_valid = self.signup_repo.validate_and_consume_code(email, payload.validation_code)
+        if not is_valid:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired validation code.")
+
+        signup_token = self.signup_repo.create_signup_token(
+            email=email, expires_in_minutes=self.settings.signup_verification_token_expire_minutes
+        )
+        return VendorVerifyCodeResponse(message="Verification successful.", signup_token=signup_token)
+
+    def register(self, payload: VendorRegisterRequest) -> VendorAuthResponse:
+        email, phone_from_contact = parse_email_or_phone(payload.email_or_phone)
+        if not email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Vendor registration requires verified email.",
+            )
+
+        explicit_phone = None
+        if payload.phone:
+            possible_email, parsed_phone = parse_email_or_phone(payload.phone)
+            if possible_email:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="phone must be a phone number.")
+            explicit_phone = parsed_phone
+
+        valid_token = self.signup_repo.get_valid_signup_token(email=email, token=payload.signup_token)
+        if not valid_token:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired signup token.")
+
+        if self.vendor_repo.get_by_email(email):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Vendor already exists.")
+
+        phone = explicit_phone or phone_from_contact
+        if phone and self.vendor_repo.get_by_phone(phone):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Phone already in use.")
+
+        try:
+            vendor = self.vendor_repo.create_vendor(
+                {
+                    "business_name": payload.business_name,
+                    "owner_full_name": payload.owner_full_name,
+                    "email": email,
+                    "phone": phone,
+                    "password_hash": hash_password(payload.password),
+                    "role": "vendor",
+                    "status": "active",
+                    "kyc_status": "not_submitted",
+                }
+            )
+        except DuplicateKeyError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Vendor already exists.") from exc
+
+        self.signup_repo.mark_signup_token_used(payload.signup_token)
+        return self._build_auth_response(vendor)
+
+    def login(self, payload: VendorLoginRequest) -> VendorAuthResponse:
+        vendor = self._get_by_contact(payload.email_or_phone)
+        if not vendor or not vendor.get("password_hash"):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials.")
+
+        if not verify_password(payload.password, vendor["password_hash"]):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials.")
+
+        return self._build_auth_response(vendor)
+
+    def request_forgot_password_code(self, payload: VendorForgotPasswordRequest) -> VendorCodeRequestResponse:
+        vendor = self._get_by_contact(payload.email_or_phone)
+        if not vendor or not vendor.get("email"):
+            return VendorCodeRequestResponse(message="If the account exists, a validation code has been sent.")
+
+        code = self.password_reset_repo.create_validation_code(
+            vendor_id=vendor["id"],
+            code_length=self.settings.password_reset_code_length,
+            expires_in_minutes=self.settings.password_reset_code_expire_minutes,
+        )
+        self.email_sender.send_validation_code(
+            recipient_email=vendor["email"],
+            full_name=vendor["owner_full_name"],
+            code=code,
+            expires_in=self.settings.password_reset_code_expire_minutes,
+        )
+        if self.settings.debug_return_reset_code:
+            return VendorCodeRequestResponse(
+                message="Validation code sent (debug mode includes code).",
+                validation_code=code,
+            )
+        return VendorCodeRequestResponse(message="If the account exists, a validation code has been sent.")
+
+    def verify_forgot_password_code(self, payload: VendorVerifyResetCodeRequest) -> VendorVerifyCodeResponse:
+        vendor = self._get_by_contact(payload.email_or_phone)
+        if not vendor:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired validation code.")
+
+        is_valid = self.password_reset_repo.validate_and_consume_code(vendor["id"], payload.validation_code)
+        if not is_valid:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired validation code.")
+
+        reset_token = self.password_reset_repo.create_reset_token(
+            vendor_id=vendor["id"], expires_in_minutes=self.settings.password_reset_token_expire_minutes
+        )
+        return VendorVerifyCodeResponse(message="Validation code verified.", reset_token=reset_token)
+
+    def reset_password(self, payload: VendorResetPasswordRequest) -> VendorMessageResponse:
+        token_doc = self.password_reset_repo.get_valid_reset_token(payload.reset_token)
+        if not token_doc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset token.")
+
+        vendor_id = str(token_doc["vendor_id"])
+        self.vendor_repo.update_password_hash(vendor_id, hash_password(payload.new_password))
+        self.password_reset_repo.mark_reset_token_used(payload.reset_token)
+        return VendorMessageResponse(message="Password has been reset successfully.")
+
+    def submit_kyc(self, vendor_id: str, payload: VendorKycSubmitRequest) -> VendorMessageResponse:
+        self.vendor_repo.upsert_kyc(vendor_id, payload.model_dump())
+        return VendorMessageResponse(message="KYC submitted successfully. Status is now pending_review.")
+
+    def get_kyc_status(self, vendor_id: str) -> VendorKycStatusResponse:
+        status_payload = self.vendor_repo.get_kyc_status(vendor_id)
+        if not status_payload:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vendor not found.")
+
+        return VendorKycStatusResponse(
+            kyc_status=status_payload.get("kyc_status", "not_submitted"),
+            submitted_at=self._to_iso(status_payload.get("submitted_at")),
+            reviewed_at=self._to_iso(status_payload.get("reviewed_at")),
+            rejection_reason=status_payload.get("rejection_reason"),
+        )
+
+    def get_current_vendor_from_token(self, token: str) -> dict[str, Any]:
+        payload = decode_access_token(token)
+        vendor_id = payload.get("sub")
+        if not vendor_id:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload.")
+
+        try:
+            vendor = self.vendor_repo.get_by_id(vendor_id)
+        except InvalidId as exc:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject.") from exc
+        if not vendor:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Vendor not found.")
+        return vendor
+
+    def _build_auth_response(self, vendor: dict[str, Any]) -> VendorAuthResponse:
+        token = create_access_token(vendor["id"])
+        return VendorAuthResponse(access_token=token, vendor=VendorPublic.model_validate(vendor))
+
+    def _get_by_contact(self, email_or_phone: str) -> dict[str, Any] | None:
+        email, phone = parse_email_or_phone(email_or_phone)
+        if email:
+            return self.vendor_repo.get_by_email(email)
+        return self.vendor_repo.get_by_phone(phone or "")
+
+    @staticmethod
+    def _to_iso(value: Any) -> str | None:
+        if isinstance(value, datetime):
+            return value.isoformat()
+        return None
+

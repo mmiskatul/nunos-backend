@@ -57,6 +57,15 @@
 - `GET /points/summary`
 
 ## Vendor (`/api/v1/vendor`)
+- `POST /auth/register/request-code`
+- `POST /auth/register/verify-code`
+- `POST /auth/register`
+- `POST /auth/login`
+- `POST /auth/forgot-password/request`
+- `POST /auth/forgot-password/verify-code`
+- `POST /auth/forgot-password/reset`
+- `POST /auth/kyc/submit`
+- `GET /auth/kyc/status`
 - `GET /dashboard/overview`
 - `GET /dashboard/booking-trends`
 - `GET /dashboard/calendar-preview`
@@ -143,4 +152,3 @@
 - `GET /settings/profile`
 - `PATCH /settings/profile`
 - `PATCH /settings/password`
-

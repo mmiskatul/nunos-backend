@@ -21,6 +21,7 @@ This folder contains the full API blueprint derived from the provided UI screens
 11. `Profile` -> `/api/v1/customer/profile*` + `/api/v1/customer/bookings`
 
 ### Vendor
+0. `Vendor Onboarding/Auth` -> `/api/v1/vendor/auth/*` (registration code, verify, register, login, forgot password, KYC submit/status)
 1. `Dashboard` -> `/api/v1/vendor/dashboard/*`
 2. `Booking Management` -> `/api/v1/vendor/booking-management/bookings*`
 3. `Menu/Services Upload` -> `/api/v1/vendor/menu-services/*`
@@ -49,4 +50,3 @@ This folder contains the full API blueprint derived from the provided UI screens
 - `app/modules/schemas.py`
 
 These routers are mounted by `app/api/router.py`.
-
