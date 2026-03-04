@@ -12,6 +12,10 @@ Backend API scaffolding based on the provided **Login** and **Sign Up** UI scree
 - Service Layer: `app/services/auth_service.py`
 - Strategy + Factory Pattern (social login providers): `app/providers/social_auth.py`
 - Singleton Pattern (Mongo client): `app/db/mongodb.py`
+- Full feature module routers:
+  - `app/modules/customer/router.py`
+  - `app/modules/vendor/router.py`
+  - `app/modules/platform_admin/router.py`
 
 ## Run
 ```bash
@@ -55,3 +59,6 @@ uvicorn app.main:app --reload
   - business rules in `app/services`
   - DB access in `app/repositories`
   - expose routes in `app/api/routes`
+- Full multi-app blueprint from provided UI images is in:
+  - `project_blueprint/README.md`
+  - `project_blueprint/ENDPOINT_INDEX.md`
