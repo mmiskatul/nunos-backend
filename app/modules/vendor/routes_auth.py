@@ -9,6 +9,7 @@ from app.modules.vendor.schemas_auth import (
     VendorKycSubmitRequest,
     VendorLoginRequest,
     VendorMessageResponse,
+    VendorRegistrationStatusResponse,
     VendorRegisterRequest,
     VendorResetPasswordRequest,
     VendorVerifyCodeResponse,
@@ -42,6 +43,14 @@ def register_vendor(
     auth_service: VendorAuthService = Depends(get_vendor_auth_service),
 ) -> VendorAuthResponse:
     return auth_service.register(payload)
+
+
+@router.get("/registration-status", response_model=VendorRegistrationStatusResponse)
+def get_registration_status(
+    email_or_phone: str,
+    auth_service: VendorAuthService = Depends(get_vendor_auth_service),
+) -> VendorRegistrationStatusResponse:
+    return auth_service.get_registration_status(email_or_phone)
 
 
 @router.post("/login", response_model=VendorAuthResponse)
@@ -91,4 +100,3 @@ def get_vendor_kyc_status(
     auth_service: VendorAuthService = Depends(get_vendor_auth_service),
 ) -> VendorKycStatusResponse:
     return auth_service.get_kyc_status(current_vendor["id"])
-

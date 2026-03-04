@@ -60,6 +60,7 @@
 - `POST /auth/register/request-code`
 - `POST /auth/register/verify-code`
 - `POST /auth/register`
+- `GET /auth/registration-status`
 - `POST /auth/login`
 - `POST /auth/forgot-password/request`
 - `POST /auth/forgot-password/verify-code`
@@ -110,6 +111,14 @@
 - `PATCH /settings/password`
 
 ## Platform Admin (`/api/v1/platform-admin`)
+- `POST /auth/register/request-code`
+- `POST /auth/register/verify-code`
+- `POST /auth/register`
+- `POST /auth/login`
+- `POST /auth/forgot-password/request`
+- `POST /auth/forgot-password/verify-code`
+- `POST /auth/forgot-password/reset`
+- `GET /auth/me`
 - `GET /dashboard/overview`
 - `GET /dashboard/revenue-growth`
 - `GET /dashboard/booking-insights`
@@ -121,6 +130,7 @@
 - `GET /users/{user_id}/bookings`
 - `GET /vendors`
 - `GET /vendors/{vendor_id}`
+- `GET /vendors/{vendor_id}/sections`
 - `PATCH /vendors/{vendor_id}/verification`
 - `GET /vendors/{vendor_id}/documents`
 - `GET /moderation/submissions`

@@ -4,6 +4,7 @@ from fastapi import FastAPI
 
 from app.api.router import api_router
 from app.core.config import get_settings
+from app.db.bootstrap import ensure_mongodb_indexes
 from app.db.mongodb import MongoDatabaseSingleton
 
 settings = get_settings()
@@ -13,6 +14,7 @@ settings = get_settings()
 async def lifespan(app: FastAPI):
     db = MongoDatabaseSingleton.get_instance(settings)
     app.state.db = db
+    ensure_mongodb_indexes(db.db)
     yield
     db.close()
 
@@ -29,4 +31,3 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
-

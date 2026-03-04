@@ -20,6 +20,7 @@ from app.modules.vendor.schemas_auth import (
     VendorLoginRequest,
     VendorMessageResponse,
     VendorPublic,
+    VendorRegistrationStatusResponse,
     VendorRegisterRequest,
     VendorResetPasswordRequest,
     VendorVerifyCodeResponse,
@@ -127,32 +128,36 @@ class VendorAuthService:
                     "phone": phone,
                     "password_hash": hash_password(payload.password),
                     "role": "vendor",
-                    "status": "active",
-                    "address": payload.address,
-                    "city": payload.city,
-                    "website": payload.website,
-                    "business_description": payload.business_description,
+                    "status": "pending_approval",
                     "terms_accepted": payload.terms_accepted,
-                    "terms_accepted_at": datetime.utcnow().isoformat(),
+                    "terms_accepted_at": datetime.now().isoformat(),
                     "kyc_status": "pending_review",
-                    "kyc_submitted_at": datetime.utcnow().isoformat(),
-                    "kyc_data": {
-                        "business_name": payload.business_name,
-                        "owner_full_name": payload.owner_full_name,
-                        "email": email,
-                        "phone": phone,
-                        "address": payload.address,
-                        "city": payload.city,
-                        "website": payload.website,
-                        "business_description": payload.business_description,
-                        "trade_license_number": payload.trade_license_number,
-                        "trade_license_document_url": payload.trade_license_document_url,
-                        "owner_manager_id_document_url": payload.owner_manager_id_document_url,
-                    },
+                    "kyc_submitted_at": datetime.now().isoformat(),
                 }
             )
         except DuplicateKeyError as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Vendor already exists.") from exc
+
+        self.vendor_repo.create_vendor_sections(
+            vendor_id=vendor["id"],
+            profile_payload={
+                "business_name": payload.business_name,
+                "owner_full_name": payload.owner_full_name,
+                "email": email,
+                "phone": phone,
+            },
+            business_payload={
+                "address": payload.address,
+                "city": payload.city,
+                "website": payload.website,
+                "business_description": payload.business_description,
+            },
+            verification_payload={
+                "trade_license_number": payload.trade_license_number,
+                "trade_license_document_url": payload.trade_license_document_url,
+                "owner_manager_id_document_url": payload.owner_manager_id_document_url,
+            },
+        )
 
         self.signup_repo.mark_signup_token_used(payload.signup_token)
         return self._build_auth_response(vendor)
@@ -164,6 +169,18 @@ class VendorAuthService:
 
         if not verify_password(payload.password, vendor["password_hash"]):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials.")
+
+        account_status = (vendor.get("status") or "").lower()
+        if account_status != "approved":
+            if account_status == "rejected":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Your vendor account was rejected. Contact support.",
+                )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Your vendor account is pending admin approval.",
+            )
 
         return self._build_auth_response(vendor)
 
@@ -243,6 +260,16 @@ class VendorAuthService:
         if not vendor:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Vendor not found.")
         return vendor
+
+    def get_registration_status(self, email_or_phone: str) -> VendorRegistrationStatusResponse:
+        vendor = self._get_by_contact(email_or_phone)
+        if not vendor:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vendor not found.")
+        return VendorRegistrationStatusResponse(
+            status=vendor.get("status", "pending_approval"),
+            kyc_status=vendor.get("kyc_status", "not_submitted"),
+            rejection_reason=vendor.get("kyc_rejection_reason"),
+        )
 
     def _build_auth_response(self, vendor: dict[str, Any]) -> VendorAuthResponse:
         token = create_access_token(vendor["id"])

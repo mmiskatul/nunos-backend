@@ -34,60 +34,10 @@ def get_platform_vendor_performance() -> PlannedEndpointResponse:
     return _planned("/platform-admin/dashboard/vendor-performance", "Vendor performance table.", ["Platform dashboard"])
 
 
-@router.get("/users", tags=["Platform Admin - Users"], response_model=PlannedEndpointResponse)
-def list_platform_users() -> PlannedEndpointResponse:
-    return _planned("/platform-admin/users", "User management table with filters.", ["User management"])
-
-
-@router.get("/users/{user_id}", tags=["Platform Admin - Users"], response_model=PlannedEndpointResponse)
-def get_platform_user(user_id: str) -> PlannedEndpointResponse:
-    _ = user_id
-    return _planned("/platform-admin/users/{user_id}", "User profile drawer details.", ["User detail panel"])
-
-
-@router.patch("/users/{user_id}/status", tags=["Platform Admin - Users"], response_model=PlannedEndpointResponse)
-def update_platform_user_status(user_id: str, payload: StatusUpdateRequest) -> PlannedEndpointResponse:
-    _ = (user_id, payload)
-    return _planned("/platform-admin/users/{user_id}/status", "Block/unblock user account.", ["User actions"])
-
-
-@router.post("/users/{user_id}/reset-password", tags=["Platform Admin - Users"], response_model=PlannedEndpointResponse)
-def reset_platform_user_password(user_id: str) -> PlannedEndpointResponse:
-    _ = user_id
-    return _planned("/platform-admin/users/{user_id}/reset-password", "Trigger admin reset password action.", ["User detail panel"])
-
-
 @router.get("/users/{user_id}/bookings", tags=["Platform Admin - Users"], response_model=PlannedEndpointResponse)
 def list_platform_user_bookings(user_id: str) -> PlannedEndpointResponse:
     _ = user_id
     return _planned("/platform-admin/users/{user_id}/bookings", "Recent bookings for a user.", ["User detail panel"])
-
-
-@router.get("/vendors", tags=["Platform Admin - Vendors"], response_model=PlannedEndpointResponse)
-def list_platform_vendors() -> PlannedEndpointResponse:
-    return _planned("/platform-admin/vendors", "Vendor directory with status and actions.", ["Vendors management"])
-
-
-@router.get("/vendors/{vendor_id}", tags=["Platform Admin - Vendors"], response_model=PlannedEndpointResponse)
-def get_platform_vendor(vendor_id: str) -> PlannedEndpointResponse:
-    _ = vendor_id
-    return _planned("/platform-admin/vendors/{vendor_id}", "Vendor verification detail panel.", ["Vendor verification panel"])
-
-
-@router.patch("/vendors/{vendor_id}/verification", tags=["Platform Admin - Vendors"], response_model=PlannedEndpointResponse)
-def update_platform_vendor_verification(vendor_id: str, payload: StatusUpdateRequest) -> PlannedEndpointResponse:
-    _ = (vendor_id, payload)
-    return _planned(
-        "/platform-admin/vendors/{vendor_id}/verification",
-        "Approve/reject vendor verification.",
-        ["Vendor verification panel"],
-    )
-
-
-@router.get("/vendors/{vendor_id}/documents", tags=["Platform Admin - Vendors"], response_model=PlannedEndpointResponse)
-def list_platform_vendor_documents(vendor_id: str) -> PlannedEndpointResponse:
-    _ = vendor_id
-    return _planned("/platform-admin/vendors/{vendor_id}/documents", "Vendor verification documents list.", ["Vendor verification panel"])
 
 
 @router.get("/moderation/submissions", tags=["Platform Admin - Moderation"], response_model=PlannedEndpointResponse)
@@ -305,4 +255,3 @@ def update_admin_profile_settings(payload: GenericPatchRequest) -> PlannedEndpoi
 def update_admin_password(payload: GenericPatchRequest) -> PlannedEndpointResponse:
     _ = payload
     return _planned("/platform-admin/settings/password", "Update admin password.", ["Admin settings"])
-

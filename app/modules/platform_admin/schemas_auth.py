@@ -3,7 +3,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.core.contact import parse_email_or_phone
 
 
-class VendorSignupCodeRequest(BaseModel):
+class AdminRegisterCodeRequest(BaseModel):
     email_or_phone: str
 
     @field_validator("email_or_phone")
@@ -13,7 +13,7 @@ class VendorSignupCodeRequest(BaseModel):
         return value
 
 
-class VendorVerifySignupCodeRequest(BaseModel):
+class AdminVerifyRegisterCodeRequest(BaseModel):
     email_or_phone: str
     validation_code: str = Field(min_length=4, max_length=8)
 
@@ -24,19 +24,9 @@ class VendorVerifySignupCodeRequest(BaseModel):
         return value
 
 
-class VendorRegisterRequest(BaseModel):
-    business_name: str = Field(min_length=2, max_length=120)
-    owner_full_name: str = Field(min_length=2, max_length=80)
+class AdminRegisterRequest(BaseModel):
+    full_name: str = Field(min_length=2, max_length=80)
     email_or_phone: str
-    phone: str | None = None
-    address: str = Field(min_length=5, max_length=255)
-    city: str = Field(min_length=2, max_length=80)
-    website: str | None = None
-    business_description: str = Field(min_length=10, max_length=1000)
-    trade_license_number: str = Field(min_length=4, max_length=80)
-    trade_license_document_url: str = Field(min_length=8, max_length=1000)
-    owner_manager_id_document_url: str = Field(min_length=8, max_length=1000)
-    terms_accepted: bool = False
     password: str = Field(min_length=8, max_length=128)
     confirm_password: str = Field(min_length=8, max_length=128)
     signup_token: str = Field(min_length=16)
@@ -47,24 +37,14 @@ class VendorRegisterRequest(BaseModel):
         parse_email_or_phone(value)
         return value
 
-    @field_validator("phone")
-    @classmethod
-    def validate_phone(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        parse_email_or_phone(value)
-        return value
-
     @model_validator(mode="after")
-    def validate_passwords(self) -> "VendorRegisterRequest":
+    def validate_passwords(self) -> "AdminRegisterRequest":
         if self.password != self.confirm_password:
             raise ValueError("Password and confirm_password must match.")
-        if not self.terms_accepted:
-            raise ValueError("terms_accepted must be true.")
         return self
 
 
-class VendorLoginRequest(BaseModel):
+class AdminLoginRequest(BaseModel):
     email_or_phone: str
     password: str = Field(min_length=8, max_length=128)
 
@@ -75,7 +55,7 @@ class VendorLoginRequest(BaseModel):
         return value
 
 
-class VendorForgotPasswordRequest(BaseModel):
+class AdminForgotPasswordRequest(BaseModel):
     email_or_phone: str
 
     @field_validator("email_or_phone")
@@ -85,7 +65,7 @@ class VendorForgotPasswordRequest(BaseModel):
         return value
 
 
-class VendorVerifyResetCodeRequest(BaseModel):
+class AdminVerifyResetCodeRequest(BaseModel):
     email_or_phone: str
     validation_code: str = Field(min_length=4, max_length=8)
 
@@ -96,69 +76,44 @@ class VendorVerifyResetCodeRequest(BaseModel):
         return value
 
 
-class VendorResetPasswordRequest(BaseModel):
+class AdminResetPasswordRequest(BaseModel):
     reset_token: str = Field(min_length=16)
     new_password: str = Field(min_length=8, max_length=128)
     confirm_password: str = Field(min_length=8, max_length=128)
 
     @model_validator(mode="after")
-    def validate_passwords(self) -> "VendorResetPasswordRequest":
+    def validate_passwords(self) -> "AdminResetPasswordRequest":
         if self.new_password != self.confirm_password:
             raise ValueError("new_password and confirm_password must match.")
         return self
 
 
-class VendorKycSubmitRequest(BaseModel):
-    business_name: str = Field(min_length=2, max_length=120)
-    category: str = Field(min_length=2, max_length=60)
-    owner_full_name: str = Field(min_length=2, max_length=80)
-    email: str
-    phone: str
-    address: str = Field(min_length=5, max_length=255)
-    website: str | None = None
-    description: str | None = None
-    document_urls: list[str] = Field(default_factory=list, max_length=10)
-
-
-class VendorPublic(BaseModel):
+class AdminPublic(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     id: str
-    business_name: str
-    owner_full_name: str
+    full_name: str
     email: str | None = None
     phone: str | None = None
-    status: str = "pending_approval"
-    kyc_status: str = "not_submitted"
+    status: str = "active"
+    role: str = "platform_admin"
 
 
-class VendorAuthResponse(BaseModel):
+class AdminAuthResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
-    vendor: VendorPublic
+    admin: AdminPublic
 
 
-class VendorMessageResponse(BaseModel):
+class AdminMessageResponse(BaseModel):
     message: str
 
 
-class VendorCodeRequestResponse(VendorMessageResponse):
+class AdminCodeResponse(AdminMessageResponse):
     validation_code: str | None = None
 
 
-class VendorVerifyCodeResponse(VendorMessageResponse):
+class AdminVerifyCodeResponse(AdminMessageResponse):
     signup_token: str | None = None
     reset_token: str | None = None
 
-
-class VendorKycStatusResponse(BaseModel):
-    kyc_status: str
-    submitted_at: str | None = None
-    reviewed_at: str | None = None
-    rejection_reason: str | None = None
-
-
-class VendorRegistrationStatusResponse(BaseModel):
-    status: str
-    kyc_status: str
-    rejection_reason: str | None = None

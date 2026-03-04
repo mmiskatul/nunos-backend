@@ -33,6 +33,7 @@ This folder contains the full API blueprint derived from the provided UI screens
 9. `Settings` -> `/api/v1/vendor/settings/*`
 
 ### Platform Admin
+0. `Auth` -> `/api/v1/platform-admin/auth/*` (register + login + validation/forgot password)
 1. `Platform Dashboard` -> `/api/v1/platform-admin/dashboard/*`
 2. `Users Management` -> `/api/v1/platform-admin/users*`
 3. `Vendors Management` -> `/api/v1/platform-admin/vendors*`

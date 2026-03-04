@@ -46,6 +46,7 @@ uvicorn app.main:app --reload
 - `POST /api/v1/vendor/auth/register/request-code`
 - `POST /api/v1/vendor/auth/register/verify-code`
 - `POST /api/v1/vendor/auth/register`
+- `GET /api/v1/vendor/auth/registration-status?email_or_phone=...`
 - `POST /api/v1/vendor/auth/login`
 - `POST /api/v1/vendor/auth/forgot-password/request`
 - `POST /api/v1/vendor/auth/forgot-password/verify-code`
@@ -53,12 +54,42 @@ uvicorn app.main:app --reload
 - `POST /api/v1/vendor/auth/kyc/submit`
 - `GET /api/v1/vendor/auth/kyc/status`
 
+## Platform Admin Auth Endpoints
+- `POST /api/v1/platform-admin/auth/register/request-code`
+- `POST /api/v1/platform-admin/auth/register/verify-code`
+- `POST /api/v1/platform-admin/auth/register`
+- `POST /api/v1/platform-admin/auth/login`
+- `POST /api/v1/platform-admin/auth/forgot-password/request`
+- `POST /api/v1/platform-admin/auth/forgot-password/verify-code`
+- `POST /api/v1/platform-admin/auth/forgot-password/reset`
+- `GET /api/v1/platform-admin/auth/me`
+
 `POST /api/v1/vendor/auth/register` now requires business registration + verification fields from vendor onboarding UI:
 - `address`, `city`, `website`, `business_description`
 - `trade_license_number`
 - `trade_license_document_url`
 - `owner_manager_id_document_url`
 - `terms_accepted=true`
+
+Vendor approval behavior:
+- New vendor is created with `status=pending_approval`
+- Vendor cannot login until admin approves (`status=approved`)
+- UI can poll `GET /api/v1/vendor/auth/registration-status` to show "Waiting for admin approval"
+- Admin live approval endpoints:
+  - `GET /api/v1/platform-admin/users`
+  - `GET /api/v1/platform-admin/users/{user_id}`
+  - `PATCH /api/v1/platform-admin/users/{user_id}/status`
+  - `GET /api/v1/platform-admin/vendors/pending`
+  - `GET /api/v1/platform-admin/vendors/{vendor_id}`
+  - `GET /api/v1/platform-admin/vendors/{vendor_id}/sections`
+  - `PATCH /api/v1/platform-admin/vendors/{vendor_id}/verification`
+
+MongoDB segmented storage for vendor registration:
+- `vendors` (auth/core status)
+- `vendor_profiles` (owner + contact section)
+- `vendor_business_details` (business details section)
+- `vendor_verification_details` (license/docs section)
+- `vendor_admin_reviews` (admin review subsection)
 
 ## Notes
 - Social login strategy is wired for extension. Replace the development token parser in

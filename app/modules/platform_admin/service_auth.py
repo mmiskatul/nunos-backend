@@ -1,0 +1,202 @@
+from typing import Any
+
+from bson.errors import InvalidId
+from fastapi import HTTPException, status
+from pymongo.errors import DuplicateKeyError
+
+from app.core.config import get_settings
+from app.core.contact import parse_email_or_phone
+from app.core.security import create_access_token, decode_access_token, hash_password, verify_password
+from app.modules.platform_admin.repositories_admin import PlatformAdminRepository
+from app.modules.platform_admin.repositories_password_reset import AdminPasswordResetRepository
+from app.modules.platform_admin.repositories_signup import AdminSignupVerificationRepository
+from app.modules.platform_admin.schemas_auth import (
+    AdminAuthResponse,
+    AdminCodeResponse,
+    AdminForgotPasswordRequest,
+    AdminLoginRequest,
+    AdminMessageResponse,
+    AdminPublic,
+    AdminRegisterCodeRequest,
+    AdminRegisterRequest,
+    AdminResetPasswordRequest,
+    AdminVerifyCodeResponse,
+    AdminVerifyRegisterCodeRequest,
+    AdminVerifyResetCodeRequest,
+)
+from app.providers.email_sender import EmailSender
+
+
+class PlatformAdminAuthService:
+    """Service layer for platform admin authentication and validation flows."""
+
+    def __init__(
+        self,
+        admin_repo: PlatformAdminRepository,
+        signup_repo: AdminSignupVerificationRepository,
+        password_reset_repo: AdminPasswordResetRepository,
+        email_sender: EmailSender,
+    ):
+        self.admin_repo = admin_repo
+        self.signup_repo = signup_repo
+        self.password_reset_repo = password_reset_repo
+        self.email_sender = email_sender
+        self.settings = get_settings()
+
+    def request_register_code(self, payload: AdminRegisterCodeRequest) -> AdminCodeResponse:
+        email, _ = parse_email_or_phone(payload.email_or_phone)
+        if not email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Admin registration requires email verification.",
+            )
+        if self.admin_repo.get_by_email(email):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Admin already exists.")
+
+        code = self.signup_repo.create_validation_code(
+            email=email,
+            code_length=self.settings.signup_verification_code_length,
+            expires_in_minutes=self.settings.signup_verification_code_expire_minutes,
+        )
+        self.email_sender.send_validation_code(
+            recipient_email=email,
+            full_name="admin",
+            code=code,
+            expires_in=self.settings.signup_verification_code_expire_minutes,
+        )
+        if self.settings.debug_return_signup_code:
+            return AdminCodeResponse(
+                message="Validation code sent to email (debug mode includes code).",
+                validation_code=code,
+            )
+        return AdminCodeResponse(message="Validation code sent to email.")
+
+    def verify_register_code(self, payload: AdminVerifyRegisterCodeRequest) -> AdminVerifyCodeResponse:
+        email, _ = parse_email_or_phone(payload.email_or_phone)
+        if not email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Admin registration requires email verification.",
+            )
+
+        is_valid = self.signup_repo.validate_and_consume_code(email, payload.validation_code)
+        if not is_valid:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired validation code.")
+
+        signup_token = self.signup_repo.create_signup_token(
+            email=email, expires_in_minutes=self.settings.signup_verification_token_expire_minutes
+        )
+        return AdminVerifyCodeResponse(message="Validation successful.", signup_token=signup_token)
+
+    def register(self, payload: AdminRegisterRequest) -> AdminAuthResponse:
+        email, phone = parse_email_or_phone(payload.email_or_phone)
+        if not email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Admin registration requires verified email.",
+            )
+
+        valid_token = self.signup_repo.get_valid_signup_token(email=email, token=payload.signup_token)
+        if not valid_token:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired signup token.")
+
+        if self.admin_repo.get_by_email(email):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Admin already exists.")
+
+        try:
+            admin = self.admin_repo.create_admin(
+                {
+                    "full_name": payload.full_name,
+                    "email": email,
+                    "phone": phone,
+                    "password_hash": hash_password(payload.password),
+                    "role": "platform_admin",
+                    "status": "active",
+                }
+            )
+        except DuplicateKeyError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Admin already exists.") from exc
+
+        self.signup_repo.mark_signup_token_used(payload.signup_token)
+        return self._build_auth_response(admin)
+
+    def login(self, payload: AdminLoginRequest) -> AdminAuthResponse:
+        admin = self._get_by_contact(payload.email_or_phone)
+        if not admin or not admin.get("password_hash"):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials.")
+
+        if not verify_password(payload.password, admin["password_hash"]):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials.")
+
+        if (admin.get("status") or "").lower() != "active":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin account is not active.")
+
+        return self._build_auth_response(admin)
+
+    def request_forgot_password_code(self, payload: AdminForgotPasswordRequest) -> AdminCodeResponse:
+        admin = self._get_by_contact(payload.email_or_phone)
+        if not admin or not admin.get("email"):
+            return AdminCodeResponse(message="If the account exists, a validation code has been sent.")
+
+        code = self.password_reset_repo.create_validation_code(
+            admin_id=admin["id"],
+            code_length=self.settings.password_reset_code_length,
+            expires_in_minutes=self.settings.password_reset_code_expire_minutes,
+        )
+        self.email_sender.send_validation_code(
+            recipient_email=admin["email"],
+            full_name=admin.get("full_name", "admin"),
+            code=code,
+            expires_in=self.settings.password_reset_code_expire_minutes,
+        )
+        if self.settings.debug_return_reset_code:
+            return AdminCodeResponse(message="Validation code sent (debug mode includes code).", validation_code=code)
+        return AdminCodeResponse(message="If the account exists, a validation code has been sent.")
+
+    def verify_forgot_password_code(self, payload: AdminVerifyResetCodeRequest) -> AdminVerifyCodeResponse:
+        admin = self._get_by_contact(payload.email_or_phone)
+        if not admin:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired validation code.")
+
+        is_valid = self.password_reset_repo.validate_and_consume_code(admin["id"], payload.validation_code)
+        if not is_valid:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired validation code.")
+
+        reset_token = self.password_reset_repo.create_reset_token(
+            admin_id=admin["id"], expires_in_minutes=self.settings.password_reset_token_expire_minutes
+        )
+        return AdminVerifyCodeResponse(message="Validation code verified.", reset_token=reset_token)
+
+    def reset_password(self, payload: AdminResetPasswordRequest) -> AdminMessageResponse:
+        token_doc = self.password_reset_repo.get_valid_reset_token(payload.reset_token)
+        if not token_doc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset token.")
+
+        admin_id = str(token_doc["admin_id"])
+        self.admin_repo.update_password_hash(admin_id, hash_password(payload.new_password))
+        self.password_reset_repo.mark_reset_token_used(payload.reset_token)
+        return AdminMessageResponse(message="Password has been reset successfully.")
+
+    def get_current_admin_from_token(self, token: str) -> dict[str, Any]:
+        payload = decode_access_token(token)
+        admin_id = payload.get("sub")
+        if not admin_id:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload.")
+        try:
+            admin = self.admin_repo.get_by_id(admin_id)
+        except InvalidId as exc:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject.") from exc
+        if not admin:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin not found.")
+        return admin
+
+    def _build_auth_response(self, admin: dict[str, Any]) -> AdminAuthResponse:
+        token = create_access_token(admin["id"])
+        return AdminAuthResponse(access_token=token, admin=AdminPublic.model_validate(admin))
+
+    def _get_by_contact(self, email_or_phone: str) -> dict[str, Any] | None:
+        email, phone = parse_email_or_phone(email_or_phone)
+        if email:
+            return self.admin_repo.get_by_email(email)
+        return self.admin_repo.get_by_phone(phone or "")
+

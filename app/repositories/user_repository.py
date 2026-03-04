@@ -43,6 +43,48 @@ class UserRepository:
     def get_by_id(self, user_id: str) -> dict[str, Any] | None:
         return self._serialize(self.collection.find_one({"_id": ObjectId(user_id)}))
 
+    def list_users(
+        self,
+        limit: int = 50,
+        skip: int = 0,
+        search: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        query: dict[str, Any] = {}
+        if search:
+            escaped = search.strip()
+            if escaped:
+                query["$or"] = [
+                    {"full_name": {"$regex": escaped, "$options": "i"}},
+                    {"email": {"$regex": escaped, "$options": "i"}},
+                    {"phone": {"$regex": escaped, "$options": "i"}},
+                ]
+        if status:
+            query["status"] = status
+        cursor = self.collection.find(query).sort("created_at", -1).skip(skip).limit(limit)
+        return [self._serialize(doc) for doc in cursor if doc]  # type: ignore[list-item]
+
+    def count_users(self, search: str | None = None, status: str | None = None) -> int:
+        query: dict[str, Any] = {}
+        if search:
+            escaped = search.strip()
+            if escaped:
+                query["$or"] = [
+                    {"full_name": {"$regex": escaped, "$options": "i"}},
+                    {"email": {"$regex": escaped, "$options": "i"}},
+                    {"phone": {"$regex": escaped, "$options": "i"}},
+                ]
+        if status:
+            query["status"] = status
+        return int(self.collection.count_documents(query))
+
+    def update_status(self, user_id: str, status: str) -> dict[str, Any] | None:
+        self.collection.update_one(
+            {"_id": ObjectId(user_id)},
+            {"$set": {"status": status, "updated_at": datetime.now(UTC)}},
+        )
+        return self.get_by_id(user_id)
+
     def update_password_hash(self, user_id: str, password_hash: str) -> None:
         self.collection.update_one(
             {"_id": ObjectId(user_id)},
