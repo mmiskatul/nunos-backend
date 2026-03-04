@@ -22,6 +22,8 @@ class VendorPortalRepository:
         self.notification_settings: Collection = db["vendor_notification_settings"]
 
         self.bookings.create_index([("vendor_id", 1), ("scheduled_date", 1), ("status", 1)])
+        self.bookings.create_index([("vendor_id", 1), ("customer_email", 1)])
+        self.bookings.create_index([("vendor_id", 1), ("customer_phone", 1)])
         self.assets.create_index([("vendor_id", 1), ("asset_type", 1), ("created_at", -1)])
         self.rooms.create_index([("vendor_id", 1), ("created_at", -1)])
         self.promotions.create_index([("vendor_id", 1), ("created_at", -1)])
@@ -33,6 +35,11 @@ class VendorPortalRepository:
         self.notifications.create_index([("vendor_id", 1), ("created_at", -1)])
         self.settings.create_index("vendor_id", unique=True)
         self.notification_settings.create_index("vendor_id", unique=True)
+
+    @staticmethod
+    def _sanitize_payload(payload: dict[str, Any]) -> dict[str, Any]:
+        blocked_keys = {"_id", "id", "vendor_id", "created_at", "updated_at"}
+        return {key: value for key, value in payload.items() if key not in blocked_keys}
 
     def ensure_seed_data(self, vendor_id: str) -> None:
         vid = ObjectId(vendor_id)
@@ -357,8 +364,9 @@ class VendorPortalRepository:
         return [self._serialize(doc) for doc in docs]
 
     def add_asset(self, vendor_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        sanitized = self._sanitize_payload(payload)
         inserted = self.assets.insert_one(
-            {"vendor_id": ObjectId(vendor_id), **payload, "created_at": datetime.now(UTC)}
+            {"vendor_id": ObjectId(vendor_id), **sanitized, "created_at": datetime.now(UTC)}
         )
         created = self.assets.find_one({"_id": inserted.inserted_id})
         return self._serialize(created)  # type: ignore[return-value]
@@ -373,11 +381,12 @@ class VendorPortalRepository:
 
     def create_room(self, vendor_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         now = datetime.now(UTC)
+        sanitized = self._sanitize_payload(payload)
         inserted = self.rooms.insert_one(
             {
                 "vendor_id": ObjectId(vendor_id),
-                **payload,
-                "available": payload.get("active_status", True),
+                **sanitized,
+                "available": sanitized.get("active_status", True),
                 "created_at": now,
                 "updated_at": now,
             }
@@ -391,9 +400,10 @@ class VendorPortalRepository:
         )
 
     def update_room(self, vendor_id: str, room_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+        sanitized = self._sanitize_payload(payload)
         self.rooms.update_one(
             {"_id": ObjectId(room_id), "vendor_id": ObjectId(vendor_id)},
-            {"$set": {**payload, "updated_at": datetime.now(UTC)}},
+            {"$set": {**sanitized, "updated_at": datetime.now(UTC)}},
         )
         return self.get_room(vendor_id, room_id)
 
@@ -427,8 +437,9 @@ class VendorPortalRepository:
 
     def create_promotion(self, vendor_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         now = datetime.now(UTC)
+        sanitized = self._sanitize_payload(payload)
         inserted = self.promotions.insert_one(
-            {"vendor_id": ObjectId(vendor_id), **payload, "created_at": now, "updated_at": now}
+            {"vendor_id": ObjectId(vendor_id), **sanitized, "created_at": now, "updated_at": now}
         )
         created = self.promotions.find_one({"_id": inserted.inserted_id})
         return self._serialize(created)  # type: ignore[return-value]
@@ -439,9 +450,10 @@ class VendorPortalRepository:
         )
 
     def update_promotion(self, vendor_id: str, promotion_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+        sanitized = self._sanitize_payload(payload)
         self.promotions.update_one(
             {"_id": ObjectId(promotion_id), "vendor_id": ObjectId(vendor_id)},
-            {"$set": {**payload, "updated_at": datetime.now(UTC)}},
+            {"$set": {**sanitized, "updated_at": datetime.now(UTC)}},
         )
         return self.get_promotion(vendor_id, promotion_id)
 
@@ -557,9 +569,10 @@ class VendorPortalRepository:
         return self._serialize(self.loyalty_settings.find_one({"vendor_id": ObjectId(vendor_id)})) or {}
 
     def update_loyalty_settings(self, vendor_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        sanitized = self._sanitize_payload(payload)
         self.loyalty_settings.update_one(
             {"vendor_id": ObjectId(vendor_id)},
-            {"$set": {**payload, "updated_at": datetime.now(UTC)}},
+            {"$set": {**sanitized, "updated_at": datetime.now(UTC)}},
             upsert=True,
         )
         return self.get_loyalty_settings(vendor_id)
@@ -615,17 +628,19 @@ class VendorPortalRepository:
         return self.get_settings(vendor_id).get("general", {})
 
     def update_settings_general(self, vendor_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        sanitized = self._sanitize_payload(payload)
         self.settings.update_one(
             {"vendor_id": ObjectId(vendor_id)},
-            {"$set": {"general": payload, "updated_at": datetime.now(UTC)}},
+            {"$set": {"general": sanitized, "updated_at": datetime.now(UTC)}},
             upsert=True,
         )
         return self.get_settings_general(vendor_id)
 
     def update_settings_commission(self, vendor_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        sanitized = self._sanitize_payload(payload)
         self.settings.update_one(
             {"vendor_id": ObjectId(vendor_id)},
-            {"$set": {"commission": payload, "updated_at": datetime.now(UTC)}},
+            {"$set": {"commission": sanitized, "updated_at": datetime.now(UTC)}},
             upsert=True,
         )
         return self.get_settings(vendor_id).get("commission", {})
@@ -653,9 +668,10 @@ class VendorPortalRepository:
         return self.get_settings(vendor_id).get("profile", {})
 
     def update_settings_profile(self, vendor_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        sanitized = self._sanitize_payload(payload)
         self.settings.update_one(
             {"vendor_id": ObjectId(vendor_id)},
-            {"$set": {"profile": payload, "updated_at": datetime.now(UTC)}},
+            {"$set": {"profile": sanitized, "updated_at": datetime.now(UTC)}},
             upsert=True,
         )
         return self.get_settings_profile(vendor_id)
@@ -702,9 +718,10 @@ class VendorPortalRepository:
         return int(result.deleted_count)
 
     def update_notification_settings(self, vendor_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        sanitized = self._sanitize_payload(payload)
         self.notification_settings.update_one(
             {"vendor_id": ObjectId(vendor_id)},
-            {"$set": {**payload, "updated_at": datetime.now(UTC)}},
+            {"$set": {**sanitized, "updated_at": datetime.now(UTC)}},
             upsert=True,
         )
         setting = self.notification_settings.find_one({"vendor_id": ObjectId(vendor_id)}) or {}
