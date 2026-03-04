@@ -1,7 +1,17 @@
-from fastapi import APIRouter
+from bson.errors import InvalidId
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from app.api.deps import get_current_user
+from app.modules.customer.deps import get_customer_service
+from app.modules.customer.schemas_live import (
+    CustomerAvailabilityRequest,
+    CustomerBookingCancelRequest,
+    CustomerBookingCreateRequest,
+    CustomerBookingQuoteRequest,
+    CustomerBookingRescheduleRequest,
+)
+from app.modules.customer.service_customer import CustomerService
 from app.modules.schemas import (
-    BookingCreateRequest,
     GenericPatchRequest,
     MessageCreateRequest,
     PlanForMeStepRequest,
@@ -20,13 +30,12 @@ def _planned(endpoint: str, description: str, connected_from: list[str]) -> Plan
     )
 
 
-@router.get("/home", tags=["Customer - Home"], response_model=PlannedEndpointResponse)
-def get_home_feed() -> PlannedEndpointResponse:
-    return _planned(
-        "/customer/home",
-        "Home composition endpoint for hero, quick access, trending, and featured sections.",
-        ["Home Screen"],
-    )
+@router.get("/home", tags=["Customer - Home"])
+def get_home_feed(
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    return customer_service.repo.get_home_feed(current_user["id"])
 
 
 @router.get("/location/current", tags=["Customer - Home"], response_model=PlannedEndpointResponse)
@@ -138,41 +147,77 @@ def list_discovery_categories() -> PlannedEndpointResponse:
     )
 
 
-@router.get("/restaurants", tags=["Customer - Restaurants"], response_model=PlannedEndpointResponse)
-def list_restaurants() -> PlannedEndpointResponse:
-    return _planned("/customer/restaurants", "Restaurant list with filters, sort, and pagination.", ["Dining list", "Map"])
-
-
-@router.get("/restaurants/{restaurant_id}", tags=["Customer - Restaurants"], response_model=PlannedEndpointResponse)
-def get_restaurant_details(restaurant_id: str) -> PlannedEndpointResponse:
-    _ = restaurant_id
-    return _planned(
-        "/customer/restaurants/{restaurant_id}",
-        "Restaurant detail with overview, reviews, amenities, open hours.",
-        ["Restaurant details screen"],
+@router.get("/restaurants", tags=["Customer - Restaurants"])
+def list_restaurants(
+    limit: int = Query(default=20, ge=1, le=100),
+    skip: int = Query(default=0, ge=0),
+    search: str | None = Query(default=None),
+    open_now: bool | None = Query(default=None),
+    top_rated: bool | None = Query(default=None),
+    offers: bool | None = Query(default=None),
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    return customer_service.repo.list_restaurants(
+        customer_id=current_user["id"],
+        limit=limit,
+        skip=skip,
+        search=search,
+        open_now=open_now,
+        top_rated=top_rated,
+        with_offers=offers,
     )
 
 
-@router.get("/restaurants/{restaurant_id}/menu", tags=["Customer - Restaurants"], response_model=PlannedEndpointResponse)
-def get_restaurant_menu(restaurant_id: str) -> PlannedEndpointResponse:
-    _ = restaurant_id
-    return _planned("/customer/restaurants/{restaurant_id}/menu", "Menu media list for restaurant.", ["Restaurant menu tab"])
+@router.get("/restaurants/{restaurant_id}", tags=["Customer - Restaurants"])
+def get_restaurant_details(
+    restaurant_id: str,
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    return customer_service.get_restaurant_or_404(current_user["id"], restaurant_id)
 
 
-@router.get("/restaurants/{restaurant_id}/gallery", tags=["Customer - Restaurants"], response_model=PlannedEndpointResponse)
-def get_restaurant_gallery(restaurant_id: str) -> PlannedEndpointResponse:
-    _ = restaurant_id
-    return _planned(
-        "/customer/restaurants/{restaurant_id}/gallery",
-        "Gallery media list for restaurant.",
-        ["Restaurant gallery tab"],
-    )
+@router.get("/restaurants/{restaurant_id}/menu", tags=["Customer - Restaurants"])
+def get_restaurant_menu(
+    restaurant_id: str,
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    _ = current_user
+    try:
+        items = customer_service.repo.list_restaurant_assets(restaurant_id, "menu")
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Restaurant not found.") from exc
+    return {"items": items}
 
 
-@router.get("/restaurants/{restaurant_id}/offers", tags=["Customer - Restaurants"], response_model=PlannedEndpointResponse)
-def get_restaurant_offers(restaurant_id: str) -> PlannedEndpointResponse:
-    _ = restaurant_id
-    return _planned("/customer/restaurants/{restaurant_id}/offers", "Active offers for restaurant.", ["Restaurant offers tab"])
+@router.get("/restaurants/{restaurant_id}/gallery", tags=["Customer - Restaurants"])
+def get_restaurant_gallery(
+    restaurant_id: str,
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    _ = current_user
+    try:
+        items = customer_service.repo.list_restaurant_assets(restaurant_id, "gallery")
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Restaurant not found.") from exc
+    return {"items": items}
+
+
+@router.get("/restaurants/{restaurant_id}/offers", tags=["Customer - Restaurants"])
+def get_restaurant_offers(
+    restaurant_id: str,
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    _ = current_user
+    try:
+        items = customer_service.repo.list_restaurant_offers(restaurant_id)
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Restaurant not found.") from exc
+    return {"items": items}
 
 
 @router.get("/spas", tags=["Customer - Spa"], response_model=PlannedEndpointResponse)
@@ -259,14 +304,28 @@ def clear_recent_searches() -> PlannedEndpointResponse:
     return _planned("/customer/search/recent", "Clear recent searches.", ["Search recent list"])
 
 
-@router.get("/map/pins", tags=["Customer - Search"], response_model=PlannedEndpointResponse)
-def get_map_pins() -> PlannedEndpointResponse:
-    return _planned("/customer/map/pins", "Get map markers with filter support.", ["Map discovery"])
+@router.get("/map/pins", tags=["Customer - Search"])
+def get_map_pins(
+    limit: int = Query(default=50, ge=1, le=200),
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    return {"items": customer_service.repo.map_pins(current_user["id"], limit=limit)}
 
 
-@router.get("/map/highlight", tags=["Customer - Search"], response_model=PlannedEndpointResponse)
-def get_map_highlight_card() -> PlannedEndpointResponse:
-    return _planned("/customer/map/highlight", "Bottom-sheet highlighted venue card for selected pin.", ["Map discovery"])
+@router.get("/map/highlight", tags=["Customer - Search"])
+def get_map_highlight_card(
+    restaurant_id: str | None = Query(default=None),
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    try:
+        item = customer_service.repo.map_highlight(current_user["id"], restaurant_id=restaurant_id)
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Restaurant not found.") from exc
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No highlighted venue found.")
+    return item
 
 
 @router.get("/filters", tags=["Customer - Search"], response_model=PlannedEndpointResponse)
@@ -274,50 +333,143 @@ def get_available_filters() -> PlannedEndpointResponse:
     return _planned("/customer/filters", "Get filter chips/options by category.", ["Map", "Lists"])
 
 
-@router.get("/bookings/availability", tags=["Customer - Bookings"], response_model=PlannedEndpointResponse)
-def get_booking_availability() -> PlannedEndpointResponse:
-    return _planned("/customer/bookings/availability", "Get date/time slot availability for a provider.", ["Book now/table"])
+@router.get("/bookings/availability", tags=["Customer - Bookings"])
+def get_booking_availability(
+    provider_id: str,
+    date: str,
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    _ = current_user
+    payload = CustomerAvailabilityRequest(provider_id=provider_id, date=date)
+    try:
+        return customer_service.repo.get_booking_availability(payload.provider_id, payload.date)
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider not found.") from exc
 
 
-@router.post("/bookings/quote", tags=["Customer - Bookings"], response_model=PlannedEndpointResponse)
-def get_booking_quote(payload: BookingCreateRequest) -> PlannedEndpointResponse:
-    _ = payload
-    return _planned("/customer/bookings/quote", "Calculate pricing/fees before booking confirmation.", ["Booking summary"])
+@router.post("/bookings/quote", tags=["Customer - Bookings"])
+def get_booking_quote(
+    payload: CustomerBookingQuoteRequest,
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    _ = current_user
+    try:
+        return customer_service.repo.get_booking_quote(
+            provider_id=payload.provider_id,
+            provider_type=payload.provider_type,
+            guests=payload.guests,
+            date=payload.date,
+            time=payload.time,
+            seating_preference=payload.seating_preference,
+        )
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
-@router.post("/bookings", tags=["Customer - Bookings"], response_model=PlannedEndpointResponse)
-def create_booking(payload: BookingCreateRequest) -> PlannedEndpointResponse:
-    _ = payload
-    return _planned("/customer/bookings", "Create booking for restaurant/spa/hotel/event.", ["Confirm booking"])
+@router.post("/bookings", tags=["Customer - Bookings"])
+def create_booking(
+    payload: CustomerBookingCreateRequest,
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    try:
+        return customer_service.repo.create_booking(
+            customer_id=current_user["id"],
+            provider_id=payload.provider_id,
+            provider_type=payload.provider_type,
+            date=payload.date,
+            time=payload.time,
+            guests=payload.guests,
+            seating_preference=payload.seating_preference,
+            special_notes=payload.special_notes,
+            auto_confirm=payload.auto_confirm,
+        )
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
-@router.get("/bookings", tags=["Customer - Bookings"], response_model=PlannedEndpointResponse)
-def list_my_bookings() -> PlannedEndpointResponse:
-    return _planned("/customer/bookings", "List customer bookings history and upcoming.", ["Profile > My bookings"])
+@router.get("/bookings", tags=["Customer - Bookings"])
+def list_my_bookings(
+    limit: int = Query(default=20, ge=1, le=200),
+    skip: int = Query(default=0, ge=0),
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    return customer_service.repo.list_customer_bookings(
+        customer_id=current_user["id"],
+        limit=limit,
+        skip=skip,
+    )
 
 
-@router.get("/bookings/{booking_id}", tags=["Customer - Bookings"], response_model=PlannedEndpointResponse)
-def get_booking(booking_id: str) -> PlannedEndpointResponse:
-    _ = booking_id
-    return _planned("/customer/bookings/{booking_id}", "Get booking details.", ["Booking details", "Booking confirmed"])
+@router.get("/bookings/{booking_id}", tags=["Customer - Bookings"])
+def get_booking(
+    booking_id: str,
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    return customer_service.get_booking_or_404(current_user["id"], booking_id)
 
 
-@router.post("/bookings/{booking_id}/confirm", tags=["Customer - Bookings"], response_model=PlannedEndpointResponse)
-def confirm_booking(booking_id: str) -> PlannedEndpointResponse:
-    _ = booking_id
-    return _planned("/customer/bookings/{booking_id}/confirm", "Finalize booking from summary screen.", ["Confirm booking"])
+@router.post("/bookings/{booking_id}/confirm", tags=["Customer - Bookings"])
+def confirm_booking(
+    booking_id: str,
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    try:
+        updated = customer_service.repo.confirm_booking(current_user["id"], booking_id)
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found.") from exc
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found.")
+    return updated
 
 
-@router.patch("/bookings/{booking_id}/cancel", tags=["Customer - Bookings"], response_model=PlannedEndpointResponse)
-def cancel_booking(booking_id: str, payload: GenericPatchRequest) -> PlannedEndpointResponse:
-    _ = (booking_id, payload)
-    return _planned("/customer/bookings/{booking_id}/cancel", "Cancel booking with reason.", ["Booking details"])
+@router.patch("/bookings/{booking_id}/cancel", tags=["Customer - Bookings"])
+def cancel_booking(
+    booking_id: str,
+    payload: CustomerBookingCancelRequest,
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    try:
+        updated = customer_service.repo.cancel_booking(current_user["id"], booking_id, payload.reason)
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found.") from exc
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found.")
+    return updated
 
 
-@router.patch("/bookings/{booking_id}/reschedule", tags=["Customer - Bookings"], response_model=PlannedEndpointResponse)
-def reschedule_booking(booking_id: str, payload: GenericPatchRequest) -> PlannedEndpointResponse:
-    _ = (booking_id, payload)
-    return _planned("/customer/bookings/{booking_id}/reschedule", "Reschedule booking date/time.", ["Booking details"])
+@router.patch("/bookings/{booking_id}/reschedule", tags=["Customer - Bookings"])
+def reschedule_booking(
+    booking_id: str,
+    payload: CustomerBookingRescheduleRequest,
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    try:
+        updated = customer_service.repo.reschedule_booking(
+            customer_id=current_user["id"],
+            booking_id=booking_id,
+            date=payload.date,
+            time=payload.time,
+            note=payload.note,
+        )
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found.")
+    return updated
 
 
 @router.get("/saved", tags=["Customer - Saved"], response_model=PlannedEndpointResponse)
@@ -387,4 +539,3 @@ def update_customer_notification_preferences(payload: GenericPatchRequest) -> Pl
 @router.get("/points/summary", tags=["Customer - Profile"], response_model=PlannedEndpointResponse)
 def get_points_summary() -> PlannedEndpointResponse:
     return _planned("/customer/points/summary", "Get loyalty points summary.", ["Profile points card"])
-

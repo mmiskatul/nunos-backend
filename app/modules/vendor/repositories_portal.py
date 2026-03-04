@@ -45,29 +45,90 @@ class VendorPortalRepository:
         vid = ObjectId(vendor_id)
         now = datetime.now(UTC)
         today = now.date().isoformat()
-        if self.bookings.count_documents({"vendor_id": vid}) == 0:
-            self.bookings.insert_many(
-                [
+        existing_booking_count = self.bookings.count_documents({"vendor_id": vid})
+        target_seed_bookings = 30
+        if existing_booking_count < target_seed_bookings:
+            first_names = [
+                "Eleanor",
+                "Julian",
+                "Michael",
+                "Sarah",
+                "Robert",
+                "Lisa",
+                "David",
+                "Marcus",
+                "Nina",
+                "Owen",
+                "Priya",
+                "Khaled",
+                "Amira",
+                "Sofia",
+                "Noah",
+                "Ava",
+                "Liam",
+                "Emma",
+                "Mason",
+                "Mia",
+                "Lucas",
+                "Zoe",
+                "Ethan",
+                "Olivia",
+                "Henry",
+                "Ella",
+                "Jack",
+                "Chloe",
+                "Leo",
+                "Layla",
+            ]
+            last_names = [
+                "Shellstrop",
+                "Casablancas",
+                "Scott",
+                "Jenkins",
+                "Vance",
+                "Anderson",
+                "Martinez",
+                "Taylor",
+                "Patel",
+                "Rahman",
+            ]
+            statuses = ["confirmed", "pending", "confirmed", "canceled", "complete", "check_in"]
+            payment_statuses = ["unpaid", "unpaid", "paid", "paid"]
+            services = ["Dinner Table", "Lunch Table", "Spa Session", "Family Table"]
+            time_slots = ["06:00 PM", "06:30 PM", "07:00 PM", "07:30 PM", "08:00 PM", "08:30 PM", "09:00 PM", "09:30 PM"]
+
+            booking_docs: list[dict[str, Any]] = []
+            start_index = int(existing_booking_count)
+            for i in range(start_index, target_seed_bookings):
+                fn = first_names[i % len(first_names)]
+                ln = last_names[i % len(last_names)]
+                full_name = f"{fn} {ln}"
+                day_offset = (i % 12) - 3
+                booking_date = (now + timedelta(days=day_offset)).date().isoformat()
+                status_value = statuses[i % len(statuses)]
+                total_amount = round(70 + ((i % 7) * 22.5) + ((i % 4) * 11), 2)
+                booking_docs.append(
                     {
                         "vendor_id": vid,
-                        "booking_code": "#BK-1029",
-                        "customer_name": "Eleanor Shellstrop",
-                        "customer_phone": "+1 (555) 234-5678",
-                        "customer_email": "eleanor@goodplace.com",
-                        "scheduled_date": today,
-                        "scheduled_time": "19:30",
-                        "service": "Dinner Table",
+                        "booking_code": f"#BK-{1000 + i}",
+                        "customer_name": full_name,
+                        "customer_phone": f"+1 (555) 12{i % 10}{(i + 3) % 10}-{34 + i:02d}{56 + i:02d}",
+                        "customer_email": f"{fn.lower()}.{ln.lower()}{i}@example.com",
+                        "scheduled_date": booking_date,
+                        "scheduled_time": time_slots[i % len(time_slots)],
+                        "service": services[i % len(services)],
                         "room_type": "Deluxe King Room",
-                        "guests": 4,
-                        "status": "confirmed",
-                        "payment_status": "unpaid",
-                        "special_requests": "Allergy: peanuts; quiet corner if available.",
-                        "total_amount": 1280.0,
-                        "created_at": now,
+                        "guests": (i % 6) + 1,
+                        "status": status_value,
+                        "payment_status": payment_statuses[i % len(payment_statuses)],
+                        "special_requests": "Allergy: peanuts; quiet corner if available." if i % 5 == 0 else "",
+                        "total_amount": total_amount,
+                        "created_at": now - timedelta(days=max(0, 10 - i), hours=i % 6),
                         "updated_at": now,
                     }
-                ]
-            )
+                )
+            if booking_docs:
+                self.bookings.insert_many(booking_docs)
         if self.rooms.count_documents({"vendor_id": vid}) == 0:
             self.rooms.insert_one(
                 {

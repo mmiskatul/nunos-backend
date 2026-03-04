@@ -73,3 +73,9 @@ def ensure_mongodb_indexes(db: Database) -> None:
     db["vendor_support_tickets"].create_index([("vendor_id", ASCENDING), ("created_at", DESCENDING)])
     db["vendor_notifications"].create_index([("vendor_id", ASCENDING), ("created_at", DESCENDING)])
     db["vendor_notification_settings"].create_index("vendor_id", unique=True)
+
+    db["customer_recent_searches"].create_index([("customer_id", ASCENDING), ("created_at", DESCENDING)])
+    db["customer_saved_items"].create_index(
+        [("customer_id", ASCENDING), ("entity_type", ASCENDING), ("entity_id", ASCENDING)],
+        unique=True,
+    )
