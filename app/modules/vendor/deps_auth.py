@@ -4,9 +4,11 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from app.core.config import get_settings
 from app.db.mongodb import MongoDatabase
 from app.modules.vendor.repositories_password_reset import VendorPasswordResetRepository
+from app.modules.vendor.repositories_portal import VendorPortalRepository
 from app.modules.vendor.repositories_signup import VendorSignupVerificationRepository
 from app.modules.vendor.repositories_vendor import VendorRepository
 from app.modules.vendor.service_auth import VendorAuthService
+from app.modules.vendor.service_portal import VendorPortalService
 from app.providers.email_sender import SMTPEmailSender
 
 vendor_bearer_scheme = HTTPBearer(auto_error=False)
@@ -32,6 +34,10 @@ def get_vendor_password_reset_repository(
     return VendorPasswordResetRepository(db.db)
 
 
+def get_vendor_portal_repository(db: MongoDatabase = Depends(get_db)) -> VendorPortalRepository:
+    return VendorPortalRepository(db.db)
+
+
 def get_vendor_auth_service(
     vendor_repo: VendorRepository = Depends(get_vendor_repository),
     signup_repo: VendorSignupVerificationRepository = Depends(get_vendor_signup_repository),
@@ -45,6 +51,12 @@ def get_vendor_auth_service(
     )
 
 
+def get_vendor_portal_service(
+    repo: VendorPortalRepository = Depends(get_vendor_portal_repository),
+) -> VendorPortalService:
+    return VendorPortalService(repo)
+
+
 def get_current_vendor(
     credentials: HTTPAuthorizationCredentials | None = Depends(vendor_bearer_scheme),
     auth_service: VendorAuthService = Depends(get_vendor_auth_service),
@@ -52,4 +64,3 @@ def get_current_vendor(
     if not credentials or credentials.scheme.lower() != "bearer":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated.")
     return auth_service.get_current_vendor_from_token(credentials.credentials)
-

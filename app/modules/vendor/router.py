@@ -1,300 +1,670 @@
-from fastapi import APIRouter
+from bson.errors import InvalidId
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 
-from app.modules.schemas import (
-    AssetUploadRequest,
-    GenericPatchRequest,
-    MessageCreateRequest,
-    PlannedEndpointResponse,
-    StatusUpdateRequest,
+from app.core.security import hash_password, verify_password
+from app.modules.vendor.deps_auth import (
+    get_current_vendor,
+    get_vendor_portal_service,
+    get_vendor_repository,
 )
+from app.modules.vendor.schemas_portal import (
+    AssetUploadRequest,
+    BookingRescheduleRequest,
+    BookingStatusUpdateRequest,
+    LoyaltySettingsRequest,
+    NotificationActionRequest,
+    NotificationSettingsRequest,
+    PlatformCampaignJoinRequest,
+    PromotionStatusRequest,
+    PromotionUpsertRequest,
+    ReviewReplyRequest,
+    RoomAvailabilityRequest,
+    RoomUpsertRequest,
+    VendorLegalDocRequest,
+    VendorPasswordChangeRequest,
+    VendorSettingsCommissionRequest,
+    VendorSettingsGeneralRequest,
+    VendorSettingsProfileRequest,
+    VendorSupportTicketCreateRequest,
+)
+from app.modules.vendor.service_portal import VendorPortalService
 
 router = APIRouter(prefix="/vendor")
 
 
-def _planned(endpoint: str, description: str, connected_from: list[str]) -> PlannedEndpointResponse:
-    return PlannedEndpointResponse(
-        endpoint=endpoint,
-        module="vendor",
-        description=description,
-        connected_from=connected_from,
+class MessageResponse(BaseModel):
+    message: str
+
+
+def _vendor_id(current_vendor: dict) -> str:
+    return current_vendor["id"]
+
+
+@router.get("/dashboard/overview", tags=["Vendor - Dashboard"])
+def get_vendor_dashboard_overview(
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    vendor_id = _vendor_id(current_vendor)
+    portal_service.initialize(vendor_id)
+    return portal_service.repo.get_dashboard_overview(vendor_id)
+
+
+@router.get("/dashboard/booking-trends", tags=["Vendor - Dashboard"])
+def get_vendor_booking_trends(
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    vendor_id = _vendor_id(current_vendor)
+    portal_service.initialize(vendor_id)
+    return {"trends": portal_service.repo.get_booking_trends(vendor_id)}
+
+
+@router.get("/dashboard/calendar-preview", tags=["Vendor - Dashboard"])
+def get_vendor_calendar_preview(
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    vendor_id = _vendor_id(current_vendor)
+    portal_service.initialize(vendor_id)
+    return portal_service.repo.get_calendar_preview(vendor_id)
+
+
+@router.get("/dashboard/upcoming-bookings", tags=["Vendor - Dashboard"])
+def get_vendor_upcoming_bookings(
+    limit: int = Query(default=10, ge=1, le=50),
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    vendor_id = _vendor_id(current_vendor)
+    portal_service.initialize(vendor_id)
+    return portal_service.repo.list_bookings(vendor_id, limit=limit, skip=0, status="upcoming")
+
+
+@router.get("/dashboard/recent-reviews", tags=["Vendor - Dashboard"])
+def get_vendor_recent_reviews(
+    limit: int = Query(default=5, ge=1, le=20),
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    vendor_id = _vendor_id(current_vendor)
+    portal_service.initialize(vendor_id)
+    return portal_service.repo.list_reviews(vendor_id, limit=limit, skip=0)
+
+
+@router.get("/booking-management/bookings", tags=["Vendor - Bookings"])
+def list_vendor_bookings(
+    limit: int = Query(default=50, ge=1, le=200),
+    skip: int = Query(default=0, ge=0),
+    search: str | None = Query(default=None),
+    status_filter: str | None = Query(default=None, alias="status"),
+    date_from: str | None = Query(default=None),
+    date_to: str | None = Query(default=None),
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    return portal_service.list_bookings(
+        _vendor_id(current_vendor),
+        limit=limit,
+        skip=skip,
+        search=search,
+        status=status_filter,
+        date_from=date_from,
+        date_to=date_to,
     )
 
 
-@router.get("/dashboard/overview", tags=["Vendor - Dashboard"], response_model=PlannedEndpointResponse)
-def get_vendor_dashboard_overview() -> PlannedEndpointResponse:
-    return _planned("/vendor/dashboard/overview", "Business KPI cards for vendor dashboard.", ["Vendor dashboard"])
+@router.get("/booking-management/bookings/{booking_id}", tags=["Vendor - Bookings"])
+def get_vendor_booking(
+    booking_id: str,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    return portal_service.get_booking_or_404(_vendor_id(current_vendor), booking_id)
 
 
-@router.get("/dashboard/booking-trends", tags=["Vendor - Dashboard"], response_model=PlannedEndpointResponse)
-def get_vendor_booking_trends() -> PlannedEndpointResponse:
-    return _planned("/vendor/dashboard/booking-trends", "Monthly booking trend chart.", ["Vendor dashboard"])
+@router.patch("/booking-management/bookings/{booking_id}/status", tags=["Vendor - Bookings"])
+def update_vendor_booking_status(
+    booking_id: str,
+    payload: BookingStatusUpdateRequest,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    vendor_id = _vendor_id(current_vendor)
+    try:
+        row = portal_service.repo.update_booking_status(vendor_id, booking_id, payload.status, payload.note)
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found.") from exc
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found.")
+    return row
 
 
-@router.get("/dashboard/calendar-preview", tags=["Vendor - Dashboard"], response_model=PlannedEndpointResponse)
-def get_vendor_calendar_preview() -> PlannedEndpointResponse:
-    return _planned("/vendor/dashboard/calendar-preview", "Calendar events preview.", ["Vendor dashboard"])
+@router.patch("/booking-management/bookings/{booking_id}/reschedule", tags=["Vendor - Bookings"])
+def reschedule_vendor_booking(
+    booking_id: str,
+    payload: BookingRescheduleRequest,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    vendor_id = _vendor_id(current_vendor)
+    try:
+        row = portal_service.repo.reschedule_booking(vendor_id, booking_id, payload.date, payload.time, payload.note)
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found.") from exc
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found.")
+    return row
 
 
-@router.get("/dashboard/upcoming-bookings", tags=["Vendor - Dashboard"], response_model=PlannedEndpointResponse)
-def get_vendor_upcoming_bookings() -> PlannedEndpointResponse:
-    return _planned("/vendor/dashboard/upcoming-bookings", "Upcoming bookings table.", ["Vendor dashboard"])
+@router.post("/booking-management/bookings/{booking_id}/receipt", tags=["Vendor - Bookings"])
+def generate_vendor_booking_receipt(
+    booking_id: str,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    vendor_id = _vendor_id(current_vendor)
+    try:
+        receipt = portal_service.repo.generate_receipt(vendor_id, booking_id)
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found.") from exc
+    if not receipt:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found.")
+    return receipt
 
 
-@router.get("/dashboard/recent-reviews", tags=["Vendor - Dashboard"], response_model=PlannedEndpointResponse)
-def get_vendor_recent_reviews() -> PlannedEndpointResponse:
-    return _planned("/vendor/dashboard/recent-reviews", "Recent customer reviews panel.", ["Vendor dashboard"])
+@router.get("/menu-services/assets", tags=["Vendor - Menu/Services"])
+def list_menu_assets(
+    asset_type: str | None = Query(default=None),
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    vendor_id = _vendor_id(current_vendor)
+    portal_service.initialize(vendor_id)
+    return {"items": portal_service.repo.list_assets(vendor_id, asset_type=asset_type)}
 
 
-@router.get("/booking-management/bookings", tags=["Vendor - Bookings"], response_model=PlannedEndpointResponse)
-def list_vendor_bookings() -> PlannedEndpointResponse:
-    return _planned("/vendor/booking-management/bookings", "List and filter vendor bookings.", ["Booking management table"])
+@router.post("/menu-services/menu-assets", tags=["Vendor - Menu/Services"])
+def upload_vendor_menu_asset(
+    payload: AssetUploadRequest,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    vendor_id = _vendor_id(current_vendor)
+    data = payload.model_dump()
+    data["asset_type"] = "menu"
+    return portal_service.repo.add_asset(vendor_id, data)
 
 
-@router.get("/booking-management/bookings/{booking_id}", tags=["Vendor - Bookings"], response_model=PlannedEndpointResponse)
-def get_vendor_booking(booking_id: str) -> PlannedEndpointResponse:
-    _ = booking_id
-    return _planned("/vendor/booking-management/bookings/{booking_id}", "View booking detail side panel.", ["Booking detail panel"])
+@router.post("/menu-services/gallery-assets", tags=["Vendor - Menu/Services"])
+def upload_vendor_gallery_asset(
+    payload: AssetUploadRequest,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    vendor_id = _vendor_id(current_vendor)
+    data = payload.model_dump()
+    data["asset_type"] = "gallery"
+    return portal_service.repo.add_asset(vendor_id, data)
 
 
-@router.patch(
-    "/booking-management/bookings/{booking_id}/status",
-    tags=["Vendor - Bookings"],
-    response_model=PlannedEndpointResponse,
-)
-def update_vendor_booking_status(booking_id: str, payload: StatusUpdateRequest) -> PlannedEndpointResponse:
-    _ = (booking_id, payload)
-    return _planned(
-        "/vendor/booking-management/bookings/{booking_id}/status",
-        "Update booking status (confirmed, check-in, complete, canceled).",
-        ["Booking table action", "Detail panel action"],
+@router.delete("/menu-services/assets/{asset_id}", tags=["Vendor - Menu/Services"], response_model=MessageResponse)
+def delete_vendor_asset(
+    asset_id: str,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> MessageResponse:
+    try:
+        deleted = portal_service.repo.delete_asset(_vendor_id(current_vendor), asset_id)
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found.") from exc
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found.")
+    return MessageResponse(message="Asset deleted.")
+
+
+@router.get("/rooms-services/rooms", tags=["Vendor - Rooms/Services"])
+def list_vendor_rooms(
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    vendor_id = _vendor_id(current_vendor)
+    portal_service.initialize(vendor_id)
+    return {"items": portal_service.repo.list_rooms(vendor_id)}
+
+
+@router.post("/rooms-services/rooms", tags=["Vendor - Rooms/Services"])
+def create_vendor_room(
+    payload: RoomUpsertRequest,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    return portal_service.repo.create_room(_vendor_id(current_vendor), payload.model_dump())
+
+
+@router.get("/rooms-services/rooms/{room_id}", tags=["Vendor - Rooms/Services"])
+def get_vendor_room(
+    room_id: str,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    return portal_service.get_room_or_404(_vendor_id(current_vendor), room_id)
+
+
+@router.patch("/rooms-services/rooms/{room_id}", tags=["Vendor - Rooms/Services"])
+def update_vendor_room(
+    room_id: str,
+    payload: RoomUpsertRequest,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    try:
+        row = portal_service.repo.update_room(_vendor_id(current_vendor), room_id, payload.model_dump())
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found.") from exc
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found.")
+    return row
+
+
+@router.patch("/rooms-services/rooms/{room_id}/availability", tags=["Vendor - Rooms/Services"])
+def update_vendor_room_availability(
+    room_id: str,
+    payload: RoomAvailabilityRequest,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    try:
+        row = portal_service.repo.update_room_availability(
+            _vendor_id(current_vendor), room_id, payload.available, payload.maintenance_note
+        )
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found.") from exc
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found.")
+    return row
+
+
+@router.delete("/rooms-services/rooms/{room_id}", tags=["Vendor - Rooms/Services"], response_model=MessageResponse)
+def delete_vendor_room(
+    room_id: str,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> MessageResponse:
+    try:
+        deleted = portal_service.repo.delete_room(_vendor_id(current_vendor), room_id)
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found.") from exc
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found.")
+    return MessageResponse(message="Room deleted.")
+
+
+@router.get("/promotions", tags=["Vendor - Promotions"])
+def list_vendor_promotions(
+    search: str | None = Query(default=None),
+    active: bool | None = Query(default=None),
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    vendor_id = _vendor_id(current_vendor)
+    portal_service.initialize(vendor_id)
+    return {
+        "business_promotions": portal_service.repo.list_promotions(vendor_id, search=search, active=active),
+        "platform_campaigns": portal_service.repo.list_platform_campaigns(vendor_id),
+    }
+
+
+@router.post("/promotions", tags=["Vendor - Promotions"])
+def create_vendor_promotion(
+    payload: PromotionUpsertRequest,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    return portal_service.repo.create_promotion(_vendor_id(current_vendor), payload.model_dump())
+
+
+@router.get("/promotions/{promotion_id}", tags=["Vendor - Promotions"])
+def get_vendor_promotion(
+    promotion_id: str,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    return portal_service.get_promotion_or_404(_vendor_id(current_vendor), promotion_id)
+
+
+@router.patch("/promotions/{promotion_id}", tags=["Vendor - Promotions"])
+def update_vendor_promotion(
+    promotion_id: str,
+    payload: PromotionUpsertRequest,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    try:
+        row = portal_service.repo.update_promotion(_vendor_id(current_vendor), promotion_id, payload.model_dump())
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Promotion not found.") from exc
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Promotion not found.")
+    return row
+
+
+@router.patch("/promotions/{promotion_id}/status", tags=["Vendor - Promotions"])
+def update_vendor_promotion_status(
+    promotion_id: str,
+    payload: PromotionStatusRequest,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    try:
+        row = portal_service.repo.update_promotion_status(
+            _vendor_id(current_vendor), promotion_id, payload.active
+        )
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Promotion not found.") from exc
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Promotion not found.")
+    return row
+
+
+@router.delete("/promotions/{promotion_id}", tags=["Vendor - Promotions"], response_model=MessageResponse)
+def delete_vendor_promotion(
+    promotion_id: str,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> MessageResponse:
+    try:
+        deleted = portal_service.repo.delete_promotion(_vendor_id(current_vendor), promotion_id)
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Promotion not found.") from exc
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Promotion not found.")
+    return MessageResponse(message="Promotion deleted.")
+
+
+@router.patch("/promotions/platform-campaigns/{campaign_id}/join", tags=["Vendor - Promotions"])
+def join_platform_campaign(
+    campaign_id: str,
+    payload: PlatformCampaignJoinRequest,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    try:
+        return portal_service.repo.set_platform_campaign_join(
+            _vendor_id(current_vendor), campaign_id, payload.join
+        )
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Campaign not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.get("/analytics/overview", tags=["Vendor - Analytics"])
+def get_vendor_analytics_overview(
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    vendor_id = _vendor_id(current_vendor)
+    portal_service.initialize(vendor_id)
+    return portal_service.repo.get_analytics_overview(vendor_id)
+
+
+@router.get("/analytics/demographics", tags=["Vendor - Analytics"])
+def get_vendor_analytics_demographics(
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    vendor_id = _vendor_id(current_vendor)
+    portal_service.initialize(vendor_id)
+    return portal_service.repo.get_demographics(vendor_id)
+
+
+@router.get("/analytics/occupancy", tags=["Vendor - Analytics"])
+def get_vendor_analytics_occupancy(
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    vendor_id = _vendor_id(current_vendor)
+    portal_service.initialize(vendor_id)
+    return portal_service.repo.get_occupancy_metrics(vendor_id)
+
+
+@router.get("/analytics/reviews-summary", tags=["Vendor - Analytics"])
+def get_vendor_analytics_reviews_summary(
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    vendor_id = _vendor_id(current_vendor)
+    portal_service.initialize(vendor_id)
+    return portal_service.repo.get_reviews_summary(vendor_id)
+
+
+@router.get("/analytics/export", tags=["Vendor - Analytics"])
+def export_vendor_analytics(
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    return portal_service.repo.export_analytics(_vendor_id(current_vendor))
+
+
+@router.get("/loyalty/settings", tags=["Vendor - Loyalty"])
+def get_vendor_loyalty_settings(
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    vendor_id = _vendor_id(current_vendor)
+    portal_service.initialize(vendor_id)
+    return portal_service.repo.get_loyalty_settings(vendor_id)
+
+
+@router.patch("/loyalty/settings", tags=["Vendor - Loyalty"])
+def update_vendor_loyalty_settings(
+    payload: LoyaltySettingsRequest,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    return portal_service.repo.update_loyalty_settings(_vendor_id(current_vendor), payload.model_dump())
+
+
+@router.get("/reviews", tags=["Vendor - Reviews"])
+def list_vendor_reviews(
+    limit: int = Query(default=50, ge=1, le=200),
+    skip: int = Query(default=0, ge=0),
+    search: str | None = Query(default=None),
+    star_rating: int | None = Query(default=None, ge=1, le=5),
+    replied: bool | None = Query(default=None),
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    vendor_id = _vendor_id(current_vendor)
+    portal_service.initialize(vendor_id)
+    return portal_service.repo.list_reviews(
+        vendor_id, limit=limit, skip=skip, search=search, star_rating=star_rating, replied=replied
     )
 
 
-@router.patch(
-    "/booking-management/bookings/{booking_id}/reschedule",
-    tags=["Vendor - Bookings"],
-    response_model=PlannedEndpointResponse,
-)
-def reschedule_vendor_booking(booking_id: str, payload: GenericPatchRequest) -> PlannedEndpointResponse:
-    _ = (booking_id, payload)
-    return _planned(
-        "/vendor/booking-management/bookings/{booking_id}/reschedule",
-        "Reschedule booking date/time.",
-        ["Detail panel action"],
+@router.post("/reviews/{review_id}/reply", tags=["Vendor - Reviews"])
+def reply_vendor_review(
+    review_id: str,
+    payload: ReviewReplyRequest,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    try:
+        row = portal_service.repo.reply_review(_vendor_id(current_vendor), review_id, payload.reply_text)
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found.") from exc
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found.")
+    return row
+
+
+@router.get("/settings/general", tags=["Vendor - Settings"])
+def get_vendor_settings_general(
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    vendor_id = _vendor_id(current_vendor)
+    portal_service.initialize(vendor_id)
+    return portal_service.repo.get_settings_general(vendor_id)
+
+
+@router.get("/settings", tags=["Vendor - Settings"])
+def get_vendor_settings_bundle(
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    vendor_id = _vendor_id(current_vendor)
+    portal_service.initialize(vendor_id)
+    return portal_service.repo.get_settings(vendor_id)
+
+
+@router.patch("/settings/general", tags=["Vendor - Settings"])
+def update_vendor_settings_general(
+    payload: VendorSettingsGeneralRequest,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    return portal_service.repo.update_settings_general(_vendor_id(current_vendor), payload.model_dump())
+
+
+@router.patch("/settings/commission", tags=["Vendor - Settings"])
+def update_vendor_settings_commission(
+    payload: VendorSettingsCommissionRequest,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    return portal_service.repo.update_settings_commission(_vendor_id(current_vendor), payload.model_dump())
+
+
+@router.get("/settings/legal/{doc_type}", tags=["Vendor - Settings"])
+def get_vendor_legal_doc(
+    doc_type: str,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    return portal_service.repo.get_legal_doc(_vendor_id(current_vendor), doc_type)
+
+
+@router.patch("/settings/legal/{doc_type}", tags=["Vendor - Settings"])
+def update_vendor_legal_doc(
+    doc_type: str,
+    payload: VendorLegalDocRequest,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    return portal_service.repo.update_legal_doc(
+        _vendor_id(current_vendor), doc_type, payload.content, payload.audience
     )
 
 
-@router.post(
-    "/booking-management/bookings/{booking_id}/receipt",
-    tags=["Vendor - Bookings"],
-    response_model=PlannedEndpointResponse,
-)
-def generate_vendor_booking_receipt(booking_id: str) -> PlannedEndpointResponse:
-    _ = booking_id
-    return _planned(
-        "/vendor/booking-management/bookings/{booking_id}/receipt",
-        "Generate booking receipt.",
-        ["Detail panel action"],
+@router.get("/settings/profile", tags=["Vendor - Settings"])
+def get_vendor_profile_settings(
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    vendor_id = _vendor_id(current_vendor)
+    portal_service.initialize(vendor_id)
+    return portal_service.repo.get_settings_profile(vendor_id)
+
+
+@router.patch("/settings/profile", tags=["Vendor - Settings"])
+def update_vendor_profile_settings(
+    payload: VendorSettingsProfileRequest,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    return portal_service.repo.update_settings_profile(_vendor_id(current_vendor), payload.model_dump())
+
+
+@router.patch("/settings/password", tags=["Vendor - Settings"], response_model=MessageResponse)
+def update_vendor_password(
+    payload: VendorPasswordChangeRequest,
+    current_vendor: dict = Depends(get_current_vendor),
+    vendor_repo=Depends(get_vendor_repository),
+) -> MessageResponse:
+    if not verify_password(payload.old_password, current_vendor["password_hash"]):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Old password is incorrect.")
+    vendor_repo.update_password_hash(current_vendor["id"], hash_password(payload.new_password))
+    return MessageResponse(message="Password updated successfully.")
+
+
+@router.get("/support/tickets", tags=["Vendor - Support"])
+def list_support_tickets(
+    limit: int = Query(default=50, ge=1, le=200),
+    skip: int = Query(default=0, ge=0),
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    vendor_id = _vendor_id(current_vendor)
+    portal_service.initialize(vendor_id)
+    return portal_service.repo.list_support_tickets(vendor_id, limit=limit, skip=skip)
+
+
+@router.post("/support/tickets", tags=["Vendor - Support"])
+def submit_support_ticket(
+    payload: VendorSupportTicketCreateRequest,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    return portal_service.repo.create_support_ticket(
+        _vendor_id(current_vendor), payload.subject, payload.description
     )
 
 
-@router.post("/menu-services/menu-assets", tags=["Vendor - Menu/Services"], response_model=PlannedEndpointResponse)
-def upload_vendor_menu_asset(payload: AssetUploadRequest) -> PlannedEndpointResponse:
-    _ = payload
-    return _planned("/vendor/menu-services/menu-assets", "Upload menu image or document.", ["Menu/services upload"])
+@router.get("/support/tickets/{ticket_id}", tags=["Vendor - Support"])
+def get_support_ticket(
+    ticket_id: str,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    return portal_service.get_support_ticket_or_404(_vendor_id(current_vendor), ticket_id)
 
 
-@router.post("/menu-services/gallery-assets", tags=["Vendor - Menu/Services"], response_model=PlannedEndpointResponse)
-def upload_vendor_gallery_asset(payload: AssetUploadRequest) -> PlannedEndpointResponse:
-    _ = payload
-    return _planned("/vendor/menu-services/gallery-assets", "Upload gallery media asset.", ["Menu/services upload"])
+@router.get("/notifications", tags=["Vendor - Notifications"])
+def list_notifications(
+    limit: int = Query(default=50, ge=1, le=200),
+    skip: int = Query(default=0, ge=0),
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    vendor_id = _vendor_id(current_vendor)
+    portal_service.initialize(vendor_id)
+    return portal_service.repo.list_notifications(vendor_id, limit=limit, skip=skip)
 
 
-@router.delete(
-    "/menu-services/assets/{asset_id}",
-    tags=["Vendor - Menu/Services"],
-    response_model=PlannedEndpointResponse,
-)
-def delete_vendor_asset(asset_id: str) -> PlannedEndpointResponse:
-    _ = asset_id
-    return _planned("/vendor/menu-services/assets/{asset_id}", "Delete menu/gallery asset.", ["Menu/services upload"])
+@router.patch("/notifications/settings", tags=["Vendor - Notifications"])
+def update_notification_settings(
+    payload: NotificationSettingsRequest,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    return portal_service.repo.update_notification_settings(_vendor_id(current_vendor), payload.model_dump())
 
 
-@router.get("/rooms-services/rooms", tags=["Vendor - Rooms/Services"], response_model=PlannedEndpointResponse)
-def list_vendor_rooms() -> PlannedEndpointResponse:
-    return _planned("/vendor/rooms-services/rooms", "List vendor room inventory.", ["Rooms & services"])
+@router.delete("/notifications/clear", tags=["Vendor - Notifications"], response_model=MessageResponse)
+def clear_notifications(
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> MessageResponse:
+    count = portal_service.repo.clear_notifications(_vendor_id(current_vendor))
+    return MessageResponse(message=f"Cleared {count} notifications.")
 
 
-@router.post("/rooms-services/rooms", tags=["Vendor - Rooms/Services"], response_model=PlannedEndpointResponse)
-def create_vendor_room(payload: GenericPatchRequest) -> PlannedEndpointResponse:
-    _ = payload
-    return _planned("/vendor/rooms-services/rooms", "Create a new room listing.", ["Add new room"])
-
-
-@router.get("/rooms-services/rooms/{room_id}", tags=["Vendor - Rooms/Services"], response_model=PlannedEndpointResponse)
-def get_vendor_room(room_id: str) -> PlannedEndpointResponse:
-    _ = room_id
-    return _planned("/vendor/rooms-services/rooms/{room_id}", "Get room details.", ["Rooms & services"])
-
-
-@router.patch("/rooms-services/rooms/{room_id}", tags=["Vendor - Rooms/Services"], response_model=PlannedEndpointResponse)
-def update_vendor_room(room_id: str, payload: GenericPatchRequest) -> PlannedEndpointResponse:
-    _ = (room_id, payload)
-    return _planned("/vendor/rooms-services/rooms/{room_id}", "Update room listing details.", ["Rooms & services"])
-
-
-@router.patch(
-    "/rooms-services/rooms/{room_id}/availability",
-    tags=["Vendor - Rooms/Services"],
-    response_model=PlannedEndpointResponse,
-)
-def update_vendor_room_availability(room_id: str, payload: StatusUpdateRequest) -> PlannedEndpointResponse:
-    _ = (room_id, payload)
-    return _planned(
-        "/vendor/rooms-services/rooms/{room_id}/availability",
-        "Toggle room availability / maintenance state.",
-        ["Rooms & services card toggle"],
-    )
-
-
-@router.delete("/rooms-services/rooms/{room_id}", tags=["Vendor - Rooms/Services"], response_model=PlannedEndpointResponse)
-def delete_vendor_room(room_id: str) -> PlannedEndpointResponse:
-    _ = room_id
-    return _planned("/vendor/rooms-services/rooms/{room_id}", "Delete room listing.", ["Rooms & services"])
-
-
-@router.get("/promotions", tags=["Vendor - Promotions"], response_model=PlannedEndpointResponse)
-def list_vendor_promotions() -> PlannedEndpointResponse:
-    return _planned("/vendor/promotions", "List vendor promotions and campaign cards.", ["Promotions list"])
-
-
-@router.post("/promotions", tags=["Vendor - Promotions"], response_model=PlannedEndpointResponse)
-def create_vendor_promotion(payload: GenericPatchRequest) -> PlannedEndpointResponse:
-    _ = payload
-    return _planned("/vendor/promotions", "Create promotion.", ["Add promotion form"])
-
-
-@router.get("/promotions/{promotion_id}", tags=["Vendor - Promotions"], response_model=PlannedEndpointResponse)
-def get_vendor_promotion(promotion_id: str) -> PlannedEndpointResponse:
-    _ = promotion_id
-    return _planned("/vendor/promotions/{promotion_id}", "Get promotion details.", ["Promotions list"])
-
-
-@router.patch("/promotions/{promotion_id}", tags=["Vendor - Promotions"], response_model=PlannedEndpointResponse)
-def update_vendor_promotion(promotion_id: str, payload: GenericPatchRequest) -> PlannedEndpointResponse:
-    _ = (promotion_id, payload)
-    return _planned("/vendor/promotions/{promotion_id}", "Update promotion details.", ["Promotion details"])
-
-
-@router.patch(
-    "/promotions/{promotion_id}/status",
-    tags=["Vendor - Promotions"],
-    response_model=PlannedEndpointResponse,
-)
-def update_vendor_promotion_status(promotion_id: str, payload: StatusUpdateRequest) -> PlannedEndpointResponse:
-    _ = (promotion_id, payload)
-    return _planned(
-        "/vendor/promotions/{promotion_id}/status",
-        "Enable/disable a promotion campaign.",
-        ["Promotions list switch"],
-    )
-
-
-@router.delete("/promotions/{promotion_id}", tags=["Vendor - Promotions"], response_model=PlannedEndpointResponse)
-def delete_vendor_promotion(promotion_id: str) -> PlannedEndpointResponse:
-    _ = promotion_id
-    return _planned("/vendor/promotions/{promotion_id}", "Delete promotion.", ["Promotions list"])
-
-
-@router.get("/analytics/overview", tags=["Vendor - Analytics"], response_model=PlannedEndpointResponse)
-def get_vendor_analytics_overview() -> PlannedEndpointResponse:
-    return _planned("/vendor/analytics/overview", "Primary analytics KPIs.", ["Analytics"])
-
-
-@router.get("/analytics/demographics", tags=["Vendor - Analytics"], response_model=PlannedEndpointResponse)
-def get_vendor_analytics_demographics() -> PlannedEndpointResponse:
-    return _planned("/vendor/analytics/demographics", "Customer demographic charts.", ["Analytics"])
-
-
-@router.get("/analytics/occupancy", tags=["Vendor - Analytics"], response_model=PlannedEndpointResponse)
-def get_vendor_analytics_occupancy() -> PlannedEndpointResponse:
-    return _planned("/vendor/analytics/occupancy", "Occupancy utilization metrics.", ["Analytics"])
-
-
-@router.get("/analytics/reviews-summary", tags=["Vendor - Analytics"], response_model=PlannedEndpointResponse)
-def get_vendor_analytics_reviews_summary() -> PlannedEndpointResponse:
-    return _planned("/vendor/analytics/reviews-summary", "Ratings and sentiment summary.", ["Analytics"])
-
-
-@router.get("/analytics/export", tags=["Vendor - Analytics"], response_model=PlannedEndpointResponse)
-def export_vendor_analytics() -> PlannedEndpointResponse:
-    return _planned("/vendor/analytics/export", "Export analytics report.", ["Analytics export"])
-
-
-@router.get("/loyalty/settings", tags=["Vendor - Loyalty"], response_model=PlannedEndpointResponse)
-def get_vendor_loyalty_settings() -> PlannedEndpointResponse:
-    return _planned("/vendor/loyalty/settings", "Get loyalty points configuration.", ["Loyalty settings"])
-
-
-@router.patch("/loyalty/settings", tags=["Vendor - Loyalty"], response_model=PlannedEndpointResponse)
-def update_vendor_loyalty_settings(payload: GenericPatchRequest) -> PlannedEndpointResponse:
-    _ = payload
-    return _planned("/vendor/loyalty/settings", "Update loyalty points configuration.", ["Loyalty settings"])
-
-
-@router.get("/reviews", tags=["Vendor - Reviews"], response_model=PlannedEndpointResponse)
-def list_vendor_reviews() -> PlannedEndpointResponse:
-    return _planned("/vendor/reviews", "List and filter reviews.", ["Review management"])
-
-
-@router.post("/reviews/{review_id}/reply", tags=["Vendor - Reviews"], response_model=PlannedEndpointResponse)
-def reply_vendor_review(review_id: str, payload: MessageCreateRequest) -> PlannedEndpointResponse:
-    _ = (review_id, payload)
-    return _planned("/vendor/reviews/{review_id}/reply", "Reply to customer review.", ["Review management"])
-
-
-@router.get("/settings/general", tags=["Vendor - Settings"], response_model=PlannedEndpointResponse)
-def get_vendor_settings_general() -> PlannedEndpointResponse:
-    return _planned("/vendor/settings/general", "Get vendor general settings.", ["Settings"])
-
-
-@router.patch("/settings/general", tags=["Vendor - Settings"], response_model=PlannedEndpointResponse)
-def update_vendor_settings_general(payload: GenericPatchRequest) -> PlannedEndpointResponse:
-    _ = payload
-    return _planned("/vendor/settings/general", "Update vendor general settings.", ["Settings"])
-
-
-@router.patch("/settings/commission", tags=["Vendor - Settings"], response_model=PlannedEndpointResponse)
-def update_vendor_settings_commission(payload: GenericPatchRequest) -> PlannedEndpointResponse:
-    _ = payload
-    return _planned("/vendor/settings/commission", "Update commission configuration values.", ["Settings"])
-
-
-@router.get("/settings/legal/{doc_type}", tags=["Vendor - Settings"], response_model=PlannedEndpointResponse)
-def get_vendor_legal_doc(doc_type: str) -> PlannedEndpointResponse:
-    _ = doc_type
-    return _planned("/vendor/settings/legal/{doc_type}", "Get legal content draft.", ["Legal editor"])
-
-
-@router.patch("/settings/legal/{doc_type}", tags=["Vendor - Settings"], response_model=PlannedEndpointResponse)
-def update_vendor_legal_doc(doc_type: str, payload: GenericPatchRequest) -> PlannedEndpointResponse:
-    _ = (doc_type, payload)
-    return _planned("/vendor/settings/legal/{doc_type}", "Update legal content draft.", ["Legal editor"])
-
-
-@router.get("/settings/profile", tags=["Vendor - Settings"], response_model=PlannedEndpointResponse)
-def get_vendor_profile_settings() -> PlannedEndpointResponse:
-    return _planned("/vendor/settings/profile", "Get vendor profile settings.", ["Profile settings"])
-
-
-@router.patch("/settings/profile", tags=["Vendor - Settings"], response_model=PlannedEndpointResponse)
-def update_vendor_profile_settings(payload: GenericPatchRequest) -> PlannedEndpointResponse:
-    _ = payload
-    return _planned("/vendor/settings/profile", "Update vendor profile settings.", ["Profile settings"])
-
-
-@router.patch("/settings/password", tags=["Vendor - Settings"], response_model=PlannedEndpointResponse)
-def update_vendor_password(payload: GenericPatchRequest) -> PlannedEndpointResponse:
-    _ = payload
-    return _planned("/vendor/settings/password", "Update vendor account password.", ["Settings password"])
-
+@router.post("/notifications/{notification_id}/action", tags=["Vendor - Notifications"])
+def perform_notification_action(
+    notification_id: str,
+    payload: NotificationActionRequest,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    try:
+        row = portal_service.repo.apply_notification_action(
+            _vendor_id(current_vendor), notification_id, payload.action
+        )
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification not found.") from exc
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification not found.")
+    return row
