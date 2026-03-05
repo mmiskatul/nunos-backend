@@ -1,118 +1,110 @@
-# Nunos Backend (FastAPI + MongoDB)
+# Nuno Backend (FastAPI + MongoDB + AI Concierge)
 
-Backend API scaffolding based on the provided **Login** and **Sign Up** UI screens.
+Production-ready async backend for Nuno mobile app: discover + book + AI concierge for Restaurants, Events, Spas, and Hotels near metro stations.
 
-## Tech
+## Stack
+- Python 3.11+
 - FastAPI
-- Pydantic
-- MongoDB (PyMongo)
+- Pydantic v2 + pydantic-settings
+- MongoDB + Motor (async)
+- JWT (access + refresh)
+- Passlib + bcrypt
+- Pytest + HTTPX (async)
 
-## Architecture
-- Repository Pattern: `app/repositories/*`
-- Service Layer: `app/services/auth_service.py`
-- Strategy + Factory Pattern (social login providers): `app/providers/social_auth.py`
-- Singleton Pattern (Mongo client): `app/db/mongodb.py`
-- Full feature module routers:
-  - `app/modules/customer/router.py`
-  - `app/modules/vendor/router.py`
-  - `app/modules/platform_admin/router.py`
+## Project Structure
+- `app/main.py` - FastAPI app + lifespan
+- `app/core/config.py` - env settings
+- `app/core/security.py` - JWT + hashing
+- `app/db/mongo.py` - Motor manager + indexes + DB dependency
+- `app/models/` - request/response schemas
+- `app/domain/` - enums/value objects
+- `app/repositories/` - Mongo repositories
+- `app/services/` - business logic
+- `app/services/bookings/` - Strategy + Factory for booking polymorphism
+- `app/api/v1/routers/` - API routes
+- `app/ai/` - prompt templates + LLM client + output schema
+- `scripts/seed_demo.py` - demo data seed
+- `tests/` - async endpoint tests
 
-## Run
+## Setup
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 copy .env.example .env
+```
+
+## Required Env Variables
+```env
+MONGODB_URI=mongodb://localhost:27017
+MONGODB_DB_NAME=nuno
+JWT_SECRET_KEY=replace-with-a-strong-secret
+OPENAI_API_KEY=
+OPENAI_MODEL=gpt-4.1-mini
+```
+
+If `OPENAI_API_KEY` is empty, `/ai/plan` automatically uses a local stub LLM client.
+
+## Run
+```bash
 uvicorn app.main:app --reload
 ```
 
-## UI-to-Endpoint Mapping
-- Login form:
-  - `POST /api/v1/auth/login`
-  - `POST /api/v1/auth/forgot-password/request`
-  - `POST /api/v1/auth/forgot-password/verify-code`
-  - `POST /api/v1/auth/forgot-password/reset`
-  - `POST /api/v1/auth/social-login` (Google / Apple)
-- Sign up form:
-  - `POST /api/v1/auth/signup/request-code`
-  - `POST /api/v1/auth/signup/verify-code`
-  - `POST /api/v1/auth/signup`
-  - `PATCH /api/v1/users/me/location` (enable location toggle)
-- Common authenticated user:
-  - `GET /api/v1/auth/me`
-  - `PATCH /api/v1/users/me/location`
+OpenAPI docs:
+- `http://localhost:8000/docs`
+- `http://localhost:8000/redoc`
 
-## Vendor Auth Endpoints
-- `POST /api/v1/vendor/auth/register/request-code`
-- `POST /api/v1/vendor/auth/register/verify-code`
-- `POST /api/v1/vendor/auth/register`
-- `GET /api/v1/vendor/auth/registration-status?email_or_phone=...`
-- `POST /api/v1/vendor/auth/login`
-- `POST /api/v1/vendor/auth/forgot-password/request`
-- `POST /api/v1/vendor/auth/forgot-password/verify-code`
-- `POST /api/v1/vendor/auth/forgot-password/reset`
-- `POST /api/v1/vendor/auth/kyc/submit`
-- `GET /api/v1/vendor/auth/kyc/status`
+## Docker
+```bash
+docker-compose up --build
+```
 
-## Platform Admin Auth Endpoints
-- `POST /api/v1/platform-admin/auth/register/request-code`
-- `POST /api/v1/platform-admin/auth/register/verify-code`
-- `POST /api/v1/platform-admin/auth/register`
-- `POST /api/v1/platform-admin/auth/login`
-- `POST /api/v1/platform-admin/auth/forgot-password/request`
-- `POST /api/v1/platform-admin/auth/forgot-password/verify-code`
-- `POST /api/v1/platform-admin/auth/forgot-password/reset`
-- `GET /api/v1/platform-admin/auth/me`
+## Seed Demo Data
+```bash
+python scripts/seed_demo.py
+```
 
-`POST /api/v1/vendor/auth/register` now requires business registration + verification fields from vendor onboarding UI:
-- `address`, `city`, `website`, `business_description`
-- `trade_license_number`
-- `trade_license_document_url`
-- `owner_manager_id_document_url`
-- `terms_accepted=true`
+## Key API Endpoints
+### Auth
+- `POST /api/v1/auth/register`
+- `POST /api/v1/auth/login`
+- `POST /api/v1/auth/refresh`
+- `POST /api/v1/auth/forgot-password`
+- `POST /api/v1/auth/verify-otp`
+- `POST /api/v1/auth/reset-password`
 
-Vendor approval behavior:
-- New vendor is created with `status=pending_approval`
-- Vendor cannot login until admin approves (`status=approved`)
-- UI can poll `GET /api/v1/vendor/auth/registration-status` to show "Waiting for admin approval"
-- Admin live approval endpoints:
-  - `GET /api/v1/platform-admin/users`
-  - `GET /api/v1/platform-admin/users/{user_id}`
-  - `PATCH /api/v1/platform-admin/users/{user_id}/status`
-  - `GET /api/v1/platform-admin/vendors`
-  - `GET /api/v1/platform-admin/vendors/pending`
-  - `GET /api/v1/platform-admin/vendors/{vendor_id}`
-  - `GET /api/v1/platform-admin/vendors/{vendor_id}/sections`
-  - `PATCH /api/v1/platform-admin/vendors/{vendor_id}/verification`
+### Listings + Reviews + Favorites
+- `GET /api/v1/listings`
+- `GET /api/v1/listings/{listing_id}`
+- `POST /api/v1/listings/{listing_id}/reviews`
+- `POST /api/v1/listings/{listing_id}/favorite`
+- `DELETE /api/v1/listings/{listing_id}/favorite`
+- `GET /api/v1/listings/me/favorites`
 
-Vendor users endpoints:
-- `GET /api/v1/vendor/users`
-- `GET /api/v1/vendor/users/{user_id}`
+### Bookings
+- `POST /api/v1/bookings`
+- `GET /api/v1/bookings/{id}`
+- `PATCH /api/v1/bookings/{id}/cancel`
+- `PATCH /api/v1/bookings/{id}/reschedule`
+- `GET /api/v1/users/me/bookings?status=upcoming|past`
 
-MongoDB segmented storage for vendor registration:
-- `vendors` (auth/core status)
-- `vendor_profiles` (owner + contact section)
-- `vendor_business_details` (business details section)
-- `vendor_verification_details` (license/docs section)
-- `vendor_admin_reviews` (admin review subsection)
+### Loyalty + Offers
+- `GET /api/v1/users/me/loyalty`
+- `POST /api/v1/offers/validate`
 
-## Notes
-- Social login strategy is wired for extension. Replace the development token parser in
-  `app/providers/social_auth.py` with real Google/Apple token verification.
-- Password reset flow now uses an email validation code:
-  1. request code
-  2. verify code (returns reset token)
-  3. reset password using that token
-- Signup now also requires email validation:
-  1. request signup code
-  2. verify signup code (returns signup token)
-  3. call signup with `signup_token`
-- Configure SMTP in `.env` (`SMTP_*` fields) so validation codes can be sent by email.
-- If you add more UI screens, follow the same module split:
-  - request/response models in `app/schemas`
-  - business rules in `app/services`
-  - DB access in `app/repositories`
-  - expose routes in `app/api/routes`
-- Full multi-app blueprint from provided UI images is in:
-  - `project_blueprint/README.md`
-  - `project_blueprint/ENDPOINT_INDEX.md`
+### AI Concierge
+- `POST /api/v1/ai/plan`
+
+## Booking Strategy/Factory
+`BookingService` uses `BookingStrategyFactory` to route booking validation and normalization by `booking_type`:
+- `table` -> `TableBookingStrategy`
+- `room` -> `RoomBookingStrategy`
+- `spa` -> `SpaBookingStrategy`
+- `ticket` -> `TicketBookingStrategy`
+
+Each strategy validates required fields and returns a normalized `details` payload + `scheduled_at` for Mongo storage.
+
+## Tests
+```bash
+pytest -q
+```

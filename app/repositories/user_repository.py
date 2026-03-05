@@ -1,99 +1,39 @@
-from datetime import UTC, datetime
-from typing import Any
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from bson import ObjectId
-from pymongo.collection import Collection
-from pymongo.database import Database
+from app.repositories.base import oid, utcnow
 
 
 class UserRepository:
-    """Repository pattern for user persistence."""
+    def __init__(self, db: AsyncIOMotorDatabase):
+        self.collection = db.users
 
-    def __init__(self, db: Database):
-        self.collection: Collection = db["users"]
-        self.collection.create_index("email", unique=True, sparse=True)
-        self.collection.create_index("phone", unique=True, sparse=True)
-        self.collection.create_index("provider_user_id", unique=True, sparse=True)
+    async def create_user(self, payload: dict) -> dict:
+        now = utcnow()
+        payload.update({"created_at": now, "updated_at": now})
+        result = await self.collection.insert_one(payload)
+        return await self.find_by_id(str(result.inserted_id))
 
-    def _serialize(self, document: dict[str, Any] | None) -> dict[str, Any] | None:
-        if not document:
-            return None
-        document["id"] = str(document.pop("_id"))
-        return document
+    async def find_by_id(self, user_id: str) -> dict | None:
+        return await self.collection.find_one({"_id": oid(user_id)})
 
-    def create_user(self, payload: dict[str, Any]) -> dict[str, Any]:
-        now = datetime.now(UTC)
-        # Do not store explicit nulls on sparse+unique indexed fields (email/phone/provider_user_id).
-        insert_payload = {key: value for key, value in payload.items() if value is not None}
-        insert_payload["created_at"] = now
-        insert_payload["updated_at"] = now
-        inserted = self.collection.insert_one(insert_payload)
-        created = self.collection.find_one({"_id": inserted.inserted_id})
-        return self._serialize(created)  # type: ignore[return-value]
+    async def find_by_email(self, email: str) -> dict | None:
+        return await self.collection.find_one({"email": email})
 
-    def get_by_email(self, email: str) -> dict[str, Any] | None:
-        return self._serialize(self.collection.find_one({"email": email}))
+    async def find_by_phone(self, phone: str) -> dict | None:
+        return await self.collection.find_one({"phone": phone})
 
-    def get_by_phone(self, phone: str) -> dict[str, Any] | None:
-        return self._serialize(self.collection.find_one({"phone": phone}))
+    async def find_by_email_or_phone(self, identifier: str) -> dict | None:
+        return await self.collection.find_one({"$or": [{"email": identifier}, {"phone": identifier}]})
 
-    def get_by_provider_user_id(self, provider_user_id: str) -> dict[str, Any] | None:
-        return self._serialize(self.collection.find_one({"provider_user_id": provider_user_id}))
-
-    def get_by_id(self, user_id: str) -> dict[str, Any] | None:
-        return self._serialize(self.collection.find_one({"_id": ObjectId(user_id)}))
-
-    def list_users(
-        self,
-        limit: int = 50,
-        skip: int = 0,
-        search: str | None = None,
-        status: str | None = None,
-    ) -> list[dict[str, Any]]:
-        query: dict[str, Any] = {}
-        if search:
-            escaped = search.strip()
-            if escaped:
-                query["$or"] = [
-                    {"full_name": {"$regex": escaped, "$options": "i"}},
-                    {"email": {"$regex": escaped, "$options": "i"}},
-                    {"phone": {"$regex": escaped, "$options": "i"}},
-                ]
-        if status:
-            query["status"] = status
-        cursor = self.collection.find(query).sort("created_at", -1).skip(skip).limit(limit)
-        return [self._serialize(doc) for doc in cursor if doc]  # type: ignore[list-item]
-
-    def count_users(self, search: str | None = None, status: str | None = None) -> int:
-        query: dict[str, Any] = {}
-        if search:
-            escaped = search.strip()
-            if escaped:
-                query["$or"] = [
-                    {"full_name": {"$regex": escaped, "$options": "i"}},
-                    {"email": {"$regex": escaped, "$options": "i"}},
-                    {"phone": {"$regex": escaped, "$options": "i"}},
-                ]
-        if status:
-            query["status"] = status
-        return int(self.collection.count_documents(query))
-
-    def update_status(self, user_id: str, status: str) -> dict[str, Any] | None:
-        self.collection.update_one(
-            {"_id": ObjectId(user_id)},
-            {"$set": {"status": status, "updated_at": datetime.now(UTC)}},
+    async def update_password_by_email(self, email: str, password_hash: str) -> bool:
+        result = await self.collection.update_one(
+            {"email": email},
+            {"$set": {"password_hash": password_hash, "updated_at": utcnow()}},
         )
-        return self.get_by_id(user_id)
+        return result.modified_count == 1
 
-    def update_password_hash(self, user_id: str, password_hash: str) -> None:
-        self.collection.update_one(
-            {"_id": ObjectId(user_id)},
-            {"$set": {"password_hash": password_hash, "updated_at": datetime.now(UTC)}},
+    async def add_points(self, user_id: str, points: int) -> None:
+        await self.collection.update_one(
+            {"_id": oid(user_id)},
+            {"$inc": {"points_balance": points}, "$set": {"updated_at": utcnow()}},
         )
-
-    def update_location_preference(self, user_id: str, enable_location: bool) -> dict[str, Any] | None:
-        self.collection.update_one(
-            {"_id": ObjectId(user_id)},
-            {"$set": {"enable_location": enable_location, "updated_at": datetime.now(UTC)}},
-        )
-        return self.get_by_id(user_id)

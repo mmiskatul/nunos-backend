@@ -1,39 +1,34 @@
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    app_name: str = "Nunos Backend"
+    app_name: str = "Nuno Backend"
+    environment: str = "development"
     api_v1_prefix: str = "/api/v1"
+    debug: bool = True
 
     mongodb_uri: str = "mongodb://localhost:27017"
-    mongodb_db_name: str = "nunos"
+    mongodb_db_name: str = "nuno"
 
-    jwt_secret_key: str = "change-me-in-production"
+    jwt_secret_key: str = Field("change-me", min_length=16)
     jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 60 * 24
+    access_token_expire_minutes: int = 30
+    refresh_token_expire_minutes: int = 60 * 24 * 14
+    reset_token_expire_minutes: int = 15
 
-    signup_verification_code_expire_minutes: int = 10
-    signup_verification_code_length: int = 6
-    signup_verification_token_expire_minutes: int = 30
-    debug_return_signup_code: bool = True
+    otp_expire_minutes: int = 10
+    otp_length: int = 6
 
-    password_reset_token_expire_minutes: int = 30
-    password_reset_code_expire_minutes: int = 10
-    password_reset_code_length: int = 6
-    debug_return_reset_code: bool = True
+    loyalty_points_on_confirm: int = 50
 
-    smtp_host: str = ""
-    smtp_port: int = 587
-    smtp_username: str = ""
-    smtp_password: str = ""
-    smtp_from_email: str = ""
-    smtp_from_name: str = "Nunos"
-    smtp_use_tls: bool = True
-    smtp_use_ssl: bool = False
+    openai_api_key: str | None = None
+    openai_model: str = "gpt-4.1-mini"
+    openai_timeout_seconds: int = 20
 
 
 @lru_cache

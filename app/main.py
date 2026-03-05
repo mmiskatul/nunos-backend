@@ -3,31 +3,42 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api.router import api_router
-from app.core.config import get_settings
-from app.db.bootstrap import ensure_mongodb_indexes
-from app.db.mongodb import MongoDatabaseSingleton
-
-settings = get_settings()
+from app.core.config import Settings, get_settings
+from app.db.mongo import MongoManager
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    db = MongoDatabaseSingleton.get_instance(settings)
-    app.state.db = db
-    ensure_mongodb_indexes(db.db)
-    yield
-    db.close()
+def create_app(*, settings: Settings | None = None, disable_startup_db: bool = False) -> FastAPI:
+    app_settings = settings or get_settings()
+    mongo_manager = MongoManager(app_settings)
 
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        if disable_startup_db:
+            app.state.db = None
+            yield
+            return
 
-def create_app() -> FastAPI:
-    application = FastAPI(title=settings.app_name, lifespan=lifespan)
-    application.include_router(api_router, prefix=settings.api_v1_prefix)
+        db = await mongo_manager.connect()
+        app.state.db = db
+        yield
+        await mongo_manager.close()
 
-    @application.get("/health", tags=["Health"])
-    def health_check() -> dict[str, str]:
+    app = FastAPI(
+        title=app_settings.app_name,
+        version="1.0.0",
+        lifespan=lifespan,
+        openapi_url=f"{app_settings.api_v1_prefix}/openapi.json",
+        docs_url="/docs",
+        redoc_url="/redoc",
+    )
+
+    app.include_router(api_router, prefix=app_settings.api_v1_prefix)
+
+    @app.get("/health", tags=["Health"])
+    async def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    return application
+    return app
 
 
 app = create_app()
