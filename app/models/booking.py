@@ -1,4 +1,4 @@
-from datetime import date, datetime, time
+from datetime import date, datetime, time as dt_time
 from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -8,7 +8,7 @@ from app.domain.enums import BookingStatus, BookingType
 
 class TableBookingDetails(BaseModel):
     date: date
-    time: time
+    time: dt_time
     guests: int = Field(ge=1, le=20)
     seating_preference: str | None = None
     special_notes: str | None = None
@@ -47,7 +47,7 @@ class RoomBookingDetails(BaseModel):
 class SpaBookingDetails(BaseModel):
     service_id: str
     date: date
-    time: time
+    time: dt_time
     notes: str | None = None
 
 
@@ -122,7 +122,7 @@ class BookingResponse(BaseModel):
 
 class RescheduleRequest(BaseModel):
     date: date
-    time: time | None = None
+    time: dt_time | None = None
 
 
 class BookingTimelineFilter(BaseModel):
