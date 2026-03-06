@@ -75,12 +75,3 @@ async def remove_favorite(
 ):
     await service.remove_favorite(user_id, listing_id)
     return envelope({"message": "Removed from favorites"})
-
-
-@router.get("/me/favorites")
-async def list_favorites(
-    user_id: str = Depends(get_current_user_id),
-    service: ListingService = Depends(get_listing_service),
-):
-    favorites = await service.list_favorites(user_id)
-    return envelope(to_jsonable(favorites), meta={"count": len(favorites)})
