@@ -3,6 +3,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from mongomock_motor import AsyncMongoMockClient
 
+from app.api.deps import get_email_sender
 from app.db.mongo import get_database
 from app.main import create_app
 
@@ -20,7 +21,15 @@ def app(test_db):
     async def _override_get_db():
         return test_db
 
+    class FakeEmailSender:
+        def send_signup_verification_code(self, recipient_email: str, full_name: str, code: str, expires_in: int) -> None:
+            return None
+
+        def send_password_reset_code(self, recipient_email: str, full_name: str, code: str, expires_in: int) -> None:
+            return None
+
     application.dependency_overrides[get_database] = _override_get_db
+    application.dependency_overrides[get_email_sender] = lambda: FakeEmailSender()
     return application
 
 

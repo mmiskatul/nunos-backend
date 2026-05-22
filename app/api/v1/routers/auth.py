@@ -5,10 +5,12 @@ from app.core.responses import envelope
 from app.models.user import (
     ForgotPasswordRequest,
     LoginRequest,
+    RegistrationResponse,
     RefreshTokenRequest,
     ResetPasswordRequest,
     TokenPair,
     UserCreateRequest,
+    VerifyEmailRequest,
     VerifyOtpRequest,
 )
 from app.services.auth_service import AuthService
@@ -18,7 +20,13 @@ router = APIRouter(prefix="/auth", tags=["Auth"])
 
 @router.post("/register")
 async def register(payload: UserCreateRequest, service: AuthService = Depends(get_auth_service)):
-    token_pair: TokenPair = await service.register(payload)
+    result: RegistrationResponse = await service.register(payload)
+    return envelope(result.model_dump())
+
+
+@router.post("/verify-email")
+async def verify_email(payload: VerifyEmailRequest, service: AuthService = Depends(get_auth_service)):
+    token_pair: TokenPair = await service.verify_email(payload)
     return envelope(token_pair.model_dump())
 
 

@@ -1,3 +1,4 @@
+import asyncio
 import random
 from datetime import UTC, datetime, timedelta
 
@@ -16,35 +17,109 @@ from app.core.security import (
 from app.models.user import (
     ForgotPasswordRequest,
     LoginRequest,
+    RegistrationResponse,
     RefreshTokenRequest,
     ResetPasswordRequest,
     TokenPair,
     UserCreateRequest,
+    VerifyEmailRequest,
 )
+from app.providers.email_sender import EmailSender
 from app.repositories.otp_repository import OTPRepository
+from app.repositories.pending_signup_repository import PendingSignupRepository
 from app.repositories.user_repository import UserRepository
 
 
 class AuthService:
-    def __init__(self, user_repo: UserRepository, otp_repo: OTPRepository, settings: Settings):
+    def __init__(
+        self,
+        user_repo: UserRepository,
+        otp_repo: OTPRepository,
+        pending_signup_repo: PendingSignupRepository,
+        email_sender: EmailSender,
+        settings: Settings,
+    ):
         self.user_repo = user_repo
         self.otp_repo = otp_repo
+        self.pending_signup_repo = pending_signup_repo
+        self.email_sender = email_sender
         self.settings = settings
 
-    async def register(self, payload: UserCreateRequest) -> TokenPair:
+    async def register(self, payload: UserCreateRequest) -> RegistrationResponse:
+        if not payload.email:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email is required for registration")
+
+        existing_user = await self.user_repo.find_by_email(payload.email)
+        if existing_user:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already exists")
+
+        if payload.phone:
+            existing_phone = await self.user_repo.find_by_phone(payload.phone)
+            if existing_phone:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Phone already exists")
+
+        password_hash = hash_password(payload.password)
+        await self.pending_signup_repo.upsert_signup(
+            email=payload.email,
+            full_name=payload.full_name,
+            phone=payload.phone,
+            password_hash=password_hash,
+            location_enabled=payload.location_enabled,
+            latitude=payload.latitude,
+            longitude=payload.longitude,
+            location_accuracy_meters=payload.location_accuracy_meters,
+            expires_in_minutes=self.settings.signup_pending_expire_minutes,
+        )
+
+        otp = self._generate_otp()
+        expires_at = datetime.now(UTC) + timedelta(minutes=self.settings.otp_expire_minutes)
+        await self.otp_repo.upsert_code(
+            email=payload.email,
+            purpose="signup_verification",
+            code=otp,
+            expires_at=expires_at,
+        )
+        await asyncio.to_thread(
+            self.email_sender.send_signup_verification_code,
+            payload.email,
+            payload.full_name,
+            otp,
+            self.settings.otp_expire_minutes,
+        )
+        return RegistrationResponse(message="Verification code sent to email.", email=payload.email)
+
+    async def verify_email(self, payload: VerifyEmailRequest) -> TokenPair:
+        signup_doc = await self.pending_signup_repo.get_valid_signup(email=payload.email)
+        if not signup_doc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Registration request expired or missing")
+
+        is_valid = await self.otp_repo.verify_code(
+            email=payload.email,
+            purpose="signup_verification",
+            code=payload.otp,
+            now=datetime.now(UTC),
+        )
+        if not is_valid:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired verification code")
+
         user_doc = {
-            "full_name": payload.full_name,
+            "full_name": signup_doc["full_name"],
             "email": payload.email,
-            "phone": payload.phone,
-            "password_hash": hash_password(payload.password),
+            "phone": signup_doc.get("phone"),
+            "password_hash": signup_doc["password_hash"],
             "points_balance": 0,
             "is_active": True,
+            "location_enabled": signup_doc.get("location_enabled", False),
+            "latitude": signup_doc.get("latitude"),
+            "longitude": signup_doc.get("longitude"),
+            "location_accuracy_meters": signup_doc.get("location_accuracy_meters"),
         }
         try:
             user = await self.user_repo.create_user(user_doc)
         except DuplicateKeyError as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email or phone already exists") from exc
 
+        await self.pending_signup_repo.delete_signup(email=payload.email)
         user_id = str(user["_id"])
         return TokenPair(access_token=create_access_token(user_id), refresh_token=create_refresh_token(user_id))
 
@@ -83,7 +158,14 @@ class AuthService:
             expires_at=expires_at,
         )
 
-        await self._send_email_stub(payload.email, otp)
+        full_name = user.get("full_name") or "there"
+        await asyncio.to_thread(
+            self.email_sender.send_password_reset_code,
+            payload.email,
+            full_name,
+            otp,
+            self.settings.otp_expire_minutes,
+        )
         return {"message": "OTP sent"}
 
     async def verify_otp(self, email: str, otp: str) -> dict:
@@ -113,9 +195,6 @@ class AuthService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
         return {"message": "Password reset successful"}
-
-    async def _send_email_stub(self, email: str, otp: str) -> None:
-        print(f"[stub-email] sending OTP {otp} to {email}")
 
     def _generate_otp(self) -> str:
         return "".join(str(random.randint(0, 9)) for _ in range(self.settings.otp_length))

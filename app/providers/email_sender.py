@@ -9,7 +9,11 @@ from app.core.config import Settings
 
 class EmailSender(ABC):
     @abstractmethod
-    def send_validation_code(self, recipient_email: str, full_name: str, code: str, expires_in: int) -> None:
+    def send_signup_verification_code(self, recipient_email: str, full_name: str, code: str, expires_in: int) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def send_password_reset_code(self, recipient_email: str, full_name: str, code: str, expires_in: int) -> None:
         raise NotImplementedError
 
 
@@ -19,7 +23,39 @@ class SMTPEmailSender(EmailSender):
     def __init__(self, settings: Settings):
         self.settings = settings
 
-    def send_validation_code(self, recipient_email: str, full_name: str, code: str, expires_in: int) -> None:
+    def send_signup_verification_code(self, recipient_email: str, full_name: str, code: str, expires_in: int) -> None:
+        self._send_code_email(
+            recipient_email=recipient_email,
+            full_name=full_name,
+            code=code,
+            expires_in=expires_in,
+            subject="Your Email Verification Code",
+            action_line="Use this verification code to complete your registration:",
+            failure_detail="Failed to send verification email.",
+        )
+
+    def send_password_reset_code(self, recipient_email: str, full_name: str, code: str, expires_in: int) -> None:
+        self._send_code_email(
+            recipient_email=recipient_email,
+            full_name=full_name,
+            code=code,
+            expires_in=expires_in,
+            subject="Your Password Reset Code",
+            action_line="Use this validation code to reset your password:",
+            failure_detail="Failed to send reset code email.",
+        )
+
+    def _send_code_email(
+        self,
+        *,
+        recipient_email: str,
+        full_name: str,
+        code: str,
+        expires_in: int,
+        subject: str,
+        action_line: str,
+        failure_detail: str,
+    ) -> None:
         if not self.settings.smtp_host or not self.settings.smtp_from_email:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -27,7 +63,7 @@ class SMTPEmailSender(EmailSender):
             )
 
         message = EmailMessage()
-        message["Subject"] = "Your Password Reset Code"
+        message["Subject"] = subject
         message["From"] = f'{self.settings.smtp_from_name} <{self.settings.smtp_from_email}>'
         message["To"] = recipient_email
         message.set_content(
@@ -35,7 +71,7 @@ class SMTPEmailSender(EmailSender):
                 [
                     f"Hi {full_name},",
                     "",
-                    "Use this validation code to reset your password:",
+                    action_line,
                     f"{code}",
                     "",
                     f"This code expires in {expires_in} minutes.",
@@ -59,7 +95,7 @@ class SMTPEmailSender(EmailSender):
         except Exception as exc:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to send reset code email.",
+                detail=failure_detail,
             ) from exc
 
     def _authenticate(self, server: smtplib.SMTP) -> None:

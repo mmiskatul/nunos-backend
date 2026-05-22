@@ -5,17 +5,21 @@ from app.ai.client import OpenAILLMClient, StubLLMClient
 from app.core.config import Settings, get_settings
 from app.core.security import decode_token
 from app.db.mongo import get_database
+from app.providers.email_sender import EmailSender, SMTPEmailSender
 from app.repositories.booking_repository import BookingRepository
 from app.repositories.favorite_repository import FavoriteRepository
 from app.repositories.listing_repository import ListingRepository
 from app.repositories.offer_repository import OfferRepository
 from app.repositories.otp_repository import OTPRepository
+from app.repositories.pending_signup_repository import PendingSignupRepository
+from app.repositories.platform_admin_repository import PlatformAdminRepository
 from app.repositories.review_repository import ReviewRepository
 from app.repositories.user_repository import UserRepository
 from app.services.ai_service import AIPlannerService
 from app.services.auth_service import AuthService
 from app.services.booking_service import BookingService
 from app.services.bookings.factory import BookingStrategyFactory
+from app.services.dashboard_auth_service import DashboardAuthService
 from app.services.listing_service import ListingService
 from app.services.loyalty_service import LoyaltyService
 from app.services.offer_service import OfferService
@@ -32,12 +36,34 @@ def get_otp_repo(db=Depends(get_database)) -> OTPRepository:
     return OTPRepository(db)
 
 
+def get_pending_signup_repo(db=Depends(get_database)) -> PendingSignupRepository:
+    return PendingSignupRepository(db)
+
+
+def get_email_sender(settings: Settings = Depends(get_settings)) -> EmailSender:
+    return SMTPEmailSender(settings)
+
+
+def get_platform_admin_repo(db=Depends(get_database)) -> PlatformAdminRepository:
+    return PlatformAdminRepository(db)
+
+
 def get_auth_service(
     user_repo: UserRepository = Depends(get_user_repo),
     otp_repo: OTPRepository = Depends(get_otp_repo),
+    pending_signup_repo: PendingSignupRepository = Depends(get_pending_signup_repo),
+    email_sender: EmailSender = Depends(get_email_sender),
     settings: Settings = Depends(get_settings),
 ) -> AuthService:
-    return AuthService(user_repo, otp_repo, settings)
+    return AuthService(user_repo, otp_repo, pending_signup_repo, email_sender, settings)
+
+
+def get_dashboard_auth_service(
+    admin_repo: PlatformAdminRepository = Depends(get_platform_admin_repo),
+    otp_repo: OTPRepository = Depends(get_otp_repo),
+    email_sender: EmailSender = Depends(get_email_sender),
+) -> DashboardAuthService:
+    return DashboardAuthService(admin_repo, otp_repo, email_sender)
 
 
 def get_listing_repo(db=Depends(get_database)) -> ListingRepository:

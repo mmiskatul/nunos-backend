@@ -17,12 +17,22 @@ class Settings(BaseSettings):
 
     jwt_secret_key: str = Field("change-me", min_length=16)
     jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 30
-    refresh_token_expire_minutes: int = 60 * 24 * 14
+    access_token_expire_minutes: int = 10
+    refresh_token_expire_minutes: int = 60 * 24 * 30
     reset_token_expire_minutes: int = 15
 
     otp_expire_minutes: int = 10
     otp_length: int = 6
+    signup_pending_expire_minutes: int = 30
+
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_from_email: str | None = None
+    smtp_from_name: str = "Nuno"
+    smtp_use_tls: bool = True
+    smtp_use_ssl: bool = False
 
     loyalty_points_on_confirm: int = 50
 
