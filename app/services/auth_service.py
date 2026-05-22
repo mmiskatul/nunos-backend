@@ -6,6 +6,7 @@ from fastapi import HTTPException, status
 from pymongo.errors import DuplicateKeyError
 
 from app.core.config import Settings
+from app.core.mongo_errors import duplicate_contact_conflict_detail
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -117,7 +118,15 @@ class AuthService:
         try:
             user = await self.user_repo.create_user(user_doc)
         except DuplicateKeyError as exc:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email or phone already exists") from exc
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=duplicate_contact_conflict_detail(
+                    exc,
+                    email_detail="Email already exists",
+                    phone_detail="Phone already exists",
+                    default_detail="Email or phone already exists",
+                ),
+            ) from exc
 
         await self.pending_signup_repo.delete_signup(email=payload.email)
         user_id = str(user["_id"])

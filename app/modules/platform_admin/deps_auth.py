@@ -1,8 +1,9 @@
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pymongo.database import Database
 
-from app.core.config import get_settings
-from app.db.mongodb import MongoDatabase
+from app.core.config import Settings, get_settings
+from app.db.mongodb import MongoDatabaseSingleton
 from app.modules.platform_admin.repositories_admin import PlatformAdminRepository
 from app.modules.platform_admin.repositories_password_reset import AdminPasswordResetRepository
 from app.modules.platform_admin.repositories_signup import AdminSignupVerificationRepository
@@ -12,20 +13,20 @@ from app.providers.email_sender import SMTPEmailSender
 admin_bearer_scheme = HTTPBearer(auto_error=False)
 
 
-def get_db(request: Request) -> MongoDatabase:
-    return request.app.state.db  # type: ignore[return-value]
+def get_platform_admin_db(settings: Settings = Depends(get_settings)) -> Database:
+    return MongoDatabaseSingleton.get_instance(settings).db
 
 
-def get_admin_repository(db: MongoDatabase = Depends(get_db)) -> PlatformAdminRepository:
-    return PlatformAdminRepository(db.db)
+def get_admin_repository(db: Database = Depends(get_platform_admin_db)) -> PlatformAdminRepository:
+    return PlatformAdminRepository(db)
 
 
-def get_admin_signup_repository(db: MongoDatabase = Depends(get_db)) -> AdminSignupVerificationRepository:
-    return AdminSignupVerificationRepository(db.db)
+def get_admin_signup_repository(db: Database = Depends(get_platform_admin_db)) -> AdminSignupVerificationRepository:
+    return AdminSignupVerificationRepository(db)
 
 
-def get_admin_password_reset_repository(db: MongoDatabase = Depends(get_db)) -> AdminPasswordResetRepository:
-    return AdminPasswordResetRepository(db.db)
+def get_admin_password_reset_repository(db: Database = Depends(get_platform_admin_db)) -> AdminPasswordResetRepository:
+    return AdminPasswordResetRepository(db)
 
 
 def get_platform_admin_auth_service(

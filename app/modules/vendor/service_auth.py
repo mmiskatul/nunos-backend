@@ -7,6 +7,7 @@ from pymongo.errors import DuplicateKeyError
 
 from app.core.config import get_settings
 from app.core.contact import parse_email_or_phone
+from app.core.mongo_errors import duplicate_contact_conflict_detail
 from app.core.security import create_access_token, decode_token, hash_password, verify_password
 from app.modules.vendor.repositories_password_reset import VendorPasswordResetRepository
 from app.modules.vendor.repositories_signup import VendorSignupVerificationRepository
@@ -60,7 +61,7 @@ class VendorAuthService:
 
         existing = self.vendor_repo.get_by_email(email)
         if existing:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Vendor already exists.")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already exists")
 
         code = self.signup_repo.create_validation_code(
             email=email,
@@ -117,11 +118,11 @@ class VendorAuthService:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired signup token.")
 
         if self.vendor_repo.get_by_email(email):
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Vendor already exists.")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already exists")
 
         phone = explicit_phone or phone_from_contact
         if phone and self.vendor_repo.get_by_phone(phone):
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Phone already in use.")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Phone already exists")
 
         try:
             vendor = self.vendor_repo.create_vendor(
@@ -140,7 +141,15 @@ class VendorAuthService:
                 }
             )
         except DuplicateKeyError as exc:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Vendor already exists.") from exc
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=duplicate_contact_conflict_detail(
+                    exc,
+                    email_detail="Email already exists",
+                    phone_detail="Phone already exists",
+                    default_detail="Email or phone already exists",
+                ),
+            ) from exc
 
         self.vendor_repo.create_vendor_sections(
             vendor_id=vendor["id"],

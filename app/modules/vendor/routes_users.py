@@ -3,6 +3,7 @@ from bson.errors import InvalidId
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
+from app.core.serializers import to_jsonable
 from app.modules.vendor.deps_auth import get_current_vendor, get_vendor_portal_repository
 from app.modules.vendor.repositories_portal import VendorPortalRepository
 from app.modules.platform_admin.deps import get_user_repository
@@ -82,15 +83,15 @@ def list_all_users(
 
 
 @router.get("/{user_id}", response_model=dict)
-def get_user_details(
+async def get_user_details(
     user_id: str,
     current_vendor: dict = Depends(get_current_vendor),
     portal_repo: VendorPortalRepository = Depends(get_vendor_portal_repository),
     user_repo: UserRepository = Depends(get_user_repository),
 ) -> dict:
     try:
-        user = user_repo.get_by_id(user_id)
-    except InvalidId as exc:
+        user = await user_repo.get_by_id(user_id)
+    except (InvalidId, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.") from exc
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
@@ -109,4 +110,4 @@ def get_user_details(
     )
     if not has_relationship:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
-    return user
+    return to_jsonable(user)

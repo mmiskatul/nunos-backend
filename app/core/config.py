@@ -1,11 +1,19 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+BASE_DIR = Path(__file__).resolve().parents[2]
+
+
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=BASE_DIR / ".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     app_name: str = "Nuno Backend"
     environment: str = "development"
@@ -17,7 +25,7 @@ class Settings(BaseSettings):
     mongodb_uri: str = "mongodb://localhost:27017"
     mongodb_db_name: str = "nuno"
 
-    jwt_secret_key: str = Field("change-me", min_length=16)
+    jwt_secret_key: str = Field("change-me-please", min_length=16)
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 10
     refresh_token_expire_minutes: int = 60 * 24 * 30

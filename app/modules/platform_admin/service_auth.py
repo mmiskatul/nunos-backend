@@ -6,6 +6,7 @@ from pymongo.errors import DuplicateKeyError
 
 from app.core.config import get_settings
 from app.core.contact import parse_email_or_phone
+from app.core.mongo_errors import duplicate_contact_conflict_detail
 from app.core.security import create_access_token, decode_token, hash_password, verify_password
 from app.modules.platform_admin.repositories_admin import PlatformAdminRepository
 from app.modules.platform_admin.repositories_password_reset import AdminPasswordResetRepository
@@ -51,7 +52,7 @@ class PlatformAdminAuthService:
                 detail="Admin registration requires email verification.",
             )
         if self.admin_repo.get_by_email(email):
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Admin already exists.")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already exists")
 
         code = self.signup_repo.create_validation_code(
             email=email,
@@ -101,7 +102,7 @@ class PlatformAdminAuthService:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired signup token.")
 
         if self.admin_repo.get_by_email(email):
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Admin already exists.")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already exists")
 
         try:
             admin = self.admin_repo.create_admin(
@@ -115,7 +116,15 @@ class PlatformAdminAuthService:
                 }
             )
         except DuplicateKeyError as exc:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Admin already exists.") from exc
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=duplicate_contact_conflict_detail(
+                    exc,
+                    email_detail="Email already exists",
+                    phone_detail="Phone already exists",
+                    default_detail="Email or phone already exists",
+                ),
+            ) from exc
 
         self.signup_repo.mark_signup_token_used(payload.signup_token)
         return self._build_auth_response(admin)
