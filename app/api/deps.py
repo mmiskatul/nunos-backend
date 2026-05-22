@@ -5,6 +5,7 @@ from app.ai.client import OpenAILLMClient, StubLLMClient
 from app.core.config import Settings, get_settings
 from app.core.security import decode_token
 from app.db.mongo import get_database
+from app.providers.cloudinary_uploader import CloudinaryUploader
 from app.providers.email_sender import EmailSender, SMTPEmailSender
 from app.repositories.booking_repository import BookingRepository
 from app.repositories.favorite_repository import FavoriteRepository
@@ -42,6 +43,10 @@ def get_pending_signup_repo(db=Depends(get_database)) -> PendingSignupRepository
 
 def get_email_sender(settings: Settings = Depends(get_settings)) -> EmailSender:
     return SMTPEmailSender(settings)
+
+
+def get_cloudinary_uploader(settings: Settings = Depends(get_settings)) -> CloudinaryUploader:
+    return CloudinaryUploader(settings)
 
 
 def get_platform_admin_repo(db=Depends(get_database)) -> PlatformAdminRepository:
@@ -133,3 +138,11 @@ async def get_current_user_id(
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     return str(user["_id"])
+
+
+# Alias used by customer module router — returns {"id": user_id} dict
+async def get_current_user(user_id: str = Depends(get_current_user_id)) -> dict:
+    return {"id": user_id}
+
+# Alias for direct DB access (raw AsyncIOMotorDatabase)
+get_db = get_database

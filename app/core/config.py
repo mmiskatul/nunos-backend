@@ -51,6 +51,11 @@ class Settings(BaseSettings):
 
     loyalty_points_on_confirm: int = 50
 
+    cloudinary_cloud_name: str | None = None
+    cloudinary_api_key: str | None = None
+    cloudinary_api_secret: str | None = None
+    cloudinary_folder: str = "nunu-service-provider"
+
     openai_api_key: str | None = None
     openai_model: str = "gpt-4.1-mini"
     openai_timeout_seconds: int = 20

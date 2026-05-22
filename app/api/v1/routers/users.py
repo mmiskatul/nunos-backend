@@ -1,15 +1,17 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 
 from app.api.deps import (
     get_booking_service,
+    get_cloudinary_uploader,
     get_current_user_id,
     get_loyalty_service,
     get_user_repo,
 )
 from app.core.responses import envelope
 from app.core.serializers import to_jsonable
+from app.providers.cloudinary_uploader import CloudinaryUploader
 from app.repositories.user_repository import UserRepository
-from app.schemas.user import PersonalDetailsResponse, PersonalDetailsUpdate
+from app.schemas.user import ImageUploadResponse, PersonalDetailsResponse, PersonalDetailsUpdate
 from app.services.booking_service import BookingService
 from app.services.loyalty_service import LoyaltyService
 
@@ -96,3 +98,25 @@ async def my_loyalty(
 ):
     loyalty = await service.get_loyalty(user_id)
     return envelope(loyalty)
+
+
+@router.post("/me/profile-image", response_model=ImageUploadResponse, tags=["Users"])
+async def upload_profile_image(
+    file: UploadFile = File(..., description="Image file to set as profile picture"),
+    user_id: str = Depends(get_current_user_id),
+    user_repo: UserRepository = Depends(get_user_repo),
+    uploader: CloudinaryUploader = Depends(get_cloudinary_uploader),
+) -> ImageUploadResponse:
+    """Upload an image to Cloudinary and save the secure URL to the user's profile."""
+    # 1. Upload to Cloudinary
+    secure_url = await uploader.upload_image(
+        file,
+        folder_suffix=f"user-{user_id}/profile",
+    )
+
+    # 2. Persist URL in MongoDB
+    updated_user = await user_repo.update_profile(user_id, {"profile_image_url": secure_url})
+    if not updated_user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    return ImageUploadResponse(profile_image_url=secure_url)

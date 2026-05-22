@@ -2,7 +2,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pymongo.database import Database
 
-from app.api.deps import get_email_sender
+from app.api.deps import get_cloudinary_uploader, get_email_sender
 from app.core.config import Settings, get_settings
 from app.db.mongodb import MongoDatabaseSingleton
 from app.modules.vendor.repositories_password_reset import VendorPasswordResetRepository
@@ -45,12 +45,14 @@ def get_vendor_auth_service(
     signup_repo: VendorSignupVerificationRepository = Depends(get_vendor_signup_repository),
     password_reset_repo: VendorPasswordResetRepository = Depends(get_vendor_password_reset_repository),
     email_sender: EmailSender = Depends(get_email_sender),
+    cloudinary_uploader=Depends(get_cloudinary_uploader),
 ) -> VendorAuthService:
     return VendorAuthService(
         vendor_repo=vendor_repo,
         signup_repo=signup_repo,
         password_reset_repo=password_reset_repo,
         email_sender=email_sender,
+        cloudinary_uploader=cloudinary_uploader,
     )
 
 

@@ -35,7 +35,13 @@ def get_home_feed(
     current_user: dict = Depends(get_current_user),
     customer_service: CustomerService = Depends(get_customer_service),
 ) -> dict:
-    return customer_service.repo.get_home_feed(current_user["id"])
+    try:
+        return customer_service.repo.get_home_feed(current_user["id"])
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to load home feed: {exc}",
+        ) from exc
 
 
 @router.get("/location/current", tags=["Customer - Home"], response_model=PlannedEndpointResponse)

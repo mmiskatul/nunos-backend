@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any
 
 from bson.errors import InvalidId
-from fastapi import HTTPException, status
+from fastapi import HTTPException, UploadFile, status
 from pymongo.errors import DuplicateKeyError
 
 from app.core.config import get_settings
@@ -14,6 +14,7 @@ from app.modules.vendor.repositories_vendor import VendorRepository
 from app.modules.vendor.schemas_auth import (
     VendorAuthResponse,
     VendorCodeRequestResponse,
+    VendorDocumentUploadResponse,
     VendorForgotPasswordRequest,
     VendorKycStatusResponse,
     VendorKycSubmitRequest,
@@ -27,6 +28,7 @@ from app.modules.vendor.schemas_auth import (
     VendorVerifyResetCodeRequest,
     VendorVerifySignupCodeRequest,
 )
+from app.providers.cloudinary_uploader import CloudinaryUploader
 from app.providers.email_sender import EmailSender
 
 
@@ -39,12 +41,14 @@ class VendorAuthService:
         signup_repo: VendorSignupVerificationRepository,
         password_reset_repo: VendorPasswordResetRepository,
         email_sender: EmailSender,
+        cloudinary_uploader: CloudinaryUploader,
     ):
         self.vendor_repo = vendor_repo
         self.signup_repo = signup_repo
         self.password_reset_repo = password_reset_repo
         self.email_sender = email_sender
         self.settings = get_settings()
+        self.cloudinary_uploader = cloudinary_uploader
 
     def request_register_code(self, payload: VendorForgotPasswordRequest) -> VendorCodeRequestResponse:
         email, _ = parse_email_or_phone(payload.email_or_phone)
@@ -161,6 +165,21 @@ class VendorAuthService:
 
         self.signup_repo.mark_signup_token_used(payload.signup_token)
         return self._build_auth_response(vendor)
+
+    async def upload_registration_document(
+        self,
+        file: UploadFile,
+        *,
+        folder_suffix: str = "vendor-documents",
+    ) -> VendorDocumentUploadResponse:
+        secure_url = await self.cloudinary_uploader.upload_vendor_document(
+            file,
+            folder_suffix=folder_suffix,
+        )
+        return VendorDocumentUploadResponse(
+            message="Document uploaded successfully.",
+            url=secure_url,
+        )
 
     def login(self, payload: VendorLoginRequest) -> VendorAuthResponse:
         vendor = self._get_by_contact(payload.email_or_phone)

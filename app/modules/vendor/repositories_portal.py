@@ -514,6 +514,39 @@ class VendorPortalRepository:
         )
         return self.get_settings_profile(vendor_id)
 
+    # ------------------------------------------------------------------
+    # Targeted image URL helpers — update only a single image field so
+    # the rest of the vendor settings document is never overwritten.
+    # ------------------------------------------------------------------
+
+    def update_logo_url(self, vendor_id: str, url: str) -> dict[str, Any]:
+        """Persist a Cloudinary secure_url as the vendor's logo."""
+        self.settings.update_one(
+            {"vendor_id": ObjectId(vendor_id)},
+            {"$set": {"general.logo_url": url, "updated_at": datetime.now(UTC)}},
+            upsert=True,
+        )
+        return self.get_settings_general(vendor_id)
+
+    def update_cover_image_url(self, vendor_id: str, url: str) -> dict[str, Any]:
+        """Persist a Cloudinary secure_url as the vendor's cover image."""
+        self.settings.update_one(
+            {"vendor_id": ObjectId(vendor_id)},
+            {"$set": {"general.cover_image_url": url, "updated_at": datetime.now(UTC)}},
+            upsert=True,
+        )
+        return self.get_settings_general(vendor_id)
+
+    def update_avatar_url(self, vendor_id: str, url: str) -> dict[str, Any]:
+        """Persist a Cloudinary secure_url as the vendor's profile avatar."""
+        self.settings.update_one(
+            {"vendor_id": ObjectId(vendor_id)},
+            {"$set": {"profile.avatar_url": url, "updated_at": datetime.now(UTC)}},
+            upsert=True,
+        )
+        return self.get_settings_profile(vendor_id)
+
+
     def create_support_ticket(self, vendor_id: str, subject: str, description: str) -> dict[str, Any]:
         ticket_code = f"#SP-{datetime.now(UTC).year}-{str(ObjectId())[-3:]}"
         inserted = self.support_tickets.insert_one(

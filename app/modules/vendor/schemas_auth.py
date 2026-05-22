@@ -142,6 +142,11 @@ class VendorMessageResponse(BaseModel):
     message: str
 
 
+class VendorDocumentUploadResponse(BaseModel):
+    message: str
+    url: str
+
+
 class VendorCodeRequestResponse(VendorMessageResponse):
     validation_code: str | None = None
 

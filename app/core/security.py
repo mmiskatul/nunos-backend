@@ -1,6 +1,19 @@
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
+# ── Compatibility shim ──────────────────────────────────────────────────────
+# passlib 1.7.4 reads bcrypt.__about__.__version__ which was removed in
+# bcrypt >= 4.0. Inject a fake __about__ so passlib's internal check is
+# silent. This does NOT affect password hashing — purely cosmetic.
+import bcrypt as _bcrypt_mod
+
+if not hasattr(_bcrypt_mod, "__about__"):
+    import types as _types
+
+    _about = _types.SimpleNamespace(__version__=_bcrypt_mod.__version__)
+    _bcrypt_mod.__about__ = _about
+# ────────────────────────────────────────────────────────────────────────────
+
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 

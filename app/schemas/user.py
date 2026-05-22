@@ -56,3 +56,7 @@ class PersonalDetailsResponse(BaseModel):
     points_balance: int = 0
     location_enabled: bool = False
 
+
+class ImageUploadResponse(BaseModel):
+    profile_image_url: str
+    message: str = "Profile image updated successfully."

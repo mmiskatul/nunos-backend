@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, File, UploadFile, status
 
 from app.modules.vendor.deps_auth import get_current_vendor, get_vendor_auth_service
 from app.modules.vendor.schemas_auth import (
     VendorAuthResponse,
     VendorCodeRequestResponse,
+    VendorDocumentUploadResponse,
     VendorForgotPasswordRequest,
     VendorKycStatusResponse,
     VendorKycSubmitRequest,
@@ -43,6 +44,14 @@ def register_vendor(
     auth_service: VendorAuthService = Depends(get_vendor_auth_service),
 ) -> VendorAuthResponse:
     return auth_service.register(payload)
+
+
+@router.post("/upload-document", response_model=VendorDocumentUploadResponse)
+async def upload_vendor_registration_document(
+    file: UploadFile = File(...),
+    auth_service: VendorAuthService = Depends(get_vendor_auth_service),
+) -> VendorDocumentUploadResponse:
+    return await auth_service.upload_registration_document(file)
 
 
 @router.get("/registration-status", response_model=VendorRegistrationStatusResponse)

@@ -1,15 +1,18 @@
 from bson.errors import InvalidId
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
 
 from app.core.security import hash_password, verify_password
 from app.modules.vendor.deps_auth import (
     get_current_vendor,
+    get_vendor_auth_service,
+    get_vendor_portal_repository,
     get_vendor_portal_service,
     get_vendor_repository,
 )
+from app.modules.vendor.schemas_auth import VendorDocumentUploadResponse
 from app.modules.vendor.schemas_portal import (
-    AssetUploadRequest,
+    AssetUploadRequest,  # kept for backward-compat but no longer used by file-upload endpoints
     BookingRescheduleRequest,
     BookingStatusUpdateRequest,
     LoyaltySettingsRequest,
@@ -28,6 +31,7 @@ from app.modules.vendor.schemas_portal import (
     VendorSettingsProfileRequest,
     VendorSupportTicketCreateRequest,
 )
+from app.modules.vendor.service_auth import VendorAuthService
 from app.modules.vendor.service_portal import VendorPortalService
 
 router = APIRouter(prefix="/vendor")
@@ -41,6 +45,29 @@ def _vendor_id(current_vendor: dict) -> str:
     return current_vendor["id"]
 
 
+def _safe_call(func, *args, detail: str = "Operation failed", **kwargs):
+    """Wrap a repository/service call with proper error handling."""
+    try:
+        return func(*args, **kwargs)
+    except HTTPException:
+        raise
+    except InvalidId as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid ID format: {exc}",
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"{detail}: {exc}",
+        ) from exc
+
+
+# ---------------------------------------------------------------------------
+# Dashboard
+# ---------------------------------------------------------------------------
+
+
 @router.get("/dashboard/overview", tags=["Vendor - Dashboard"])
 def get_vendor_dashboard_overview(
     current_vendor: dict = Depends(get_current_vendor),
@@ -48,7 +75,7 @@ def get_vendor_dashboard_overview(
 ) -> dict:
     vendor_id = _vendor_id(current_vendor)
     portal_service.initialize(vendor_id)
-    return portal_service.repo.get_dashboard_overview(vendor_id)
+    return _safe_call(portal_service.repo.get_dashboard_overview, vendor_id, detail="Failed to load dashboard")
 
 
 @router.get("/dashboard/booking-trends", tags=["Vendor - Dashboard"])
@@ -58,7 +85,7 @@ def get_vendor_booking_trends(
 ) -> dict:
     vendor_id = _vendor_id(current_vendor)
     portal_service.initialize(vendor_id)
-    return {"trends": portal_service.repo.get_booking_trends(vendor_id)}
+    return {"trends": _safe_call(portal_service.repo.get_booking_trends, vendor_id, detail="Failed to load booking trends")}
 
 
 @router.get("/dashboard/calendar-preview", tags=["Vendor - Dashboard"])
@@ -68,7 +95,7 @@ def get_vendor_calendar_preview(
 ) -> dict:
     vendor_id = _vendor_id(current_vendor)
     portal_service.initialize(vendor_id)
-    return portal_service.repo.get_calendar_preview(vendor_id)
+    return _safe_call(portal_service.repo.get_calendar_preview, vendor_id, detail="Failed to load calendar")
 
 
 @router.get("/dashboard/upcoming-bookings", tags=["Vendor - Dashboard"])
@@ -79,7 +106,7 @@ def get_vendor_upcoming_bookings(
 ) -> dict:
     vendor_id = _vendor_id(current_vendor)
     portal_service.initialize(vendor_id)
-    return portal_service.repo.list_bookings(vendor_id, limit=limit, skip=0, status="upcoming")
+    return _safe_call(portal_service.repo.list_bookings, vendor_id, limit=limit, skip=0, status="upcoming", detail="Failed to load bookings")
 
 
 @router.get("/dashboard/recent-reviews", tags=["Vendor - Dashboard"])
@@ -90,7 +117,50 @@ def get_vendor_recent_reviews(
 ) -> dict:
     vendor_id = _vendor_id(current_vendor)
     portal_service.initialize(vendor_id)
-    return portal_service.repo.list_reviews(vendor_id, limit=limit, skip=0)
+    return _safe_call(portal_service.repo.list_reviews, vendor_id, limit=limit, skip=0, detail="Failed to load reviews")
+
+
+# ---------------------------------------------------------------------------
+# Uploads — Cloudinary image upload with optional MongoDB persistence
+# ---------------------------------------------------------------------------
+
+
+@router.post("/uploads/image", response_model=VendorDocumentUploadResponse, tags=["Vendor - Uploads"])
+async def upload_vendor_image(
+    file: UploadFile = File(...),
+    context: str | None = Query(
+        default=None,
+        pattern="^(profile_avatar|cover_image|logo)$",
+        description="Optional: where to save the returned URL in MongoDB.",
+    ),
+    current_vendor: dict = Depends(get_current_vendor),
+    auth_service: VendorAuthService = Depends(get_vendor_auth_service),
+    portal_repo=Depends(get_vendor_portal_repository),
+) -> VendorDocumentUploadResponse:
+    """Upload an image file to Cloudinary.
+
+    Optionally saves the returned URL to MongoDB based on *context*:
+    - ``profile_avatar`` → ``vendor_portal_settings.profile.avatar_url``
+    - ``cover_image``    → ``vendor_portal_settings.general.cover_image_url``
+    - ``logo``           → ``vendor_portal_settings.general.logo_url``
+    """
+    vendor_id = _vendor_id(current_vendor)
+    result = await auth_service.upload_registration_document(
+        file,
+        folder_suffix=f"vendor-{vendor_id}/images",
+    )
+    if context == "profile_avatar":
+        portal_repo.update_avatar_url(vendor_id, result.url)
+    elif context == "cover_image":
+        portal_repo.update_cover_image_url(vendor_id, result.url)
+    elif context == "logo":
+        portal_repo.update_logo_url(vendor_id, result.url)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Booking Management
+# ---------------------------------------------------------------------------
 
 
 @router.get("/booking-management/bookings", tags=["Vendor - Bookings"])
@@ -174,6 +244,11 @@ def generate_vendor_booking_receipt(
     return receipt
 
 
+# ---------------------------------------------------------------------------
+# Menu / Services — file upload endpoints (Cloudinary + MongoDB persistence)
+# ---------------------------------------------------------------------------
+
+
 @router.get("/menu-services/assets", tags=["Vendor - Menu/Services"])
 def list_menu_assets(
     asset_type: str | None = Query(default=None),
@@ -200,26 +275,50 @@ def get_menu_services_overview(
 
 
 @router.post("/menu-services/menu-assets", tags=["Vendor - Menu/Services"])
-def upload_vendor_menu_asset(
-    payload: AssetUploadRequest,
+async def upload_vendor_menu_asset(
+    file: UploadFile = File(..., description="Menu image or PDF to upload"),
+    file_name: str | None = Form(default=None),
+    mime_type: str | None = Form(default=None),
     current_vendor: dict = Depends(get_current_vendor),
     portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+    auth_service: VendorAuthService = Depends(get_vendor_auth_service),
 ) -> dict:
+    """Upload a menu asset file to Cloudinary and save the URL in MongoDB."""
     vendor_id = _vendor_id(current_vendor)
-    data = payload.model_dump()
-    data["asset_type"] = "menu"
+    result = await auth_service.upload_registration_document(
+        file,
+        folder_suffix=f"vendor-{vendor_id}/menu",
+    )
+    data = {
+        "asset_url": result.url,
+        "asset_type": "menu",
+        "file_name": file_name or file.filename,
+        "mime_type": mime_type or file.content_type,
+    }
     return portal_service.repo.add_asset(vendor_id, data)
 
 
 @router.post("/menu-services/gallery-assets", tags=["Vendor - Menu/Services"])
-def upload_vendor_gallery_asset(
-    payload: AssetUploadRequest,
+async def upload_vendor_gallery_asset(
+    file: UploadFile = File(..., description="Gallery image to upload"),
+    file_name: str | None = Form(default=None),
+    mime_type: str | None = Form(default=None),
     current_vendor: dict = Depends(get_current_vendor),
     portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+    auth_service: VendorAuthService = Depends(get_vendor_auth_service),
 ) -> dict:
+    """Upload a gallery image to Cloudinary and save the URL in MongoDB."""
     vendor_id = _vendor_id(current_vendor)
-    data = payload.model_dump()
-    data["asset_type"] = "gallery"
+    result = await auth_service.upload_registration_document(
+        file,
+        folder_suffix=f"vendor-{vendor_id}/gallery",
+    )
+    data = {
+        "asset_url": result.url,
+        "asset_type": "gallery",
+        "file_name": file_name or file.filename,
+        "mime_type": mime_type or file.content_type,
+    }
     return portal_service.repo.add_asset(vendor_id, data)
 
 
@@ -236,6 +335,11 @@ def delete_vendor_asset(
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found.")
     return MessageResponse(message="Asset deleted.")
+
+
+# ---------------------------------------------------------------------------
+# Rooms / Services
+# ---------------------------------------------------------------------------
 
 
 @router.get("/rooms-services/rooms", tags=["Vendor - Rooms/Services"])
@@ -313,6 +417,11 @@ def delete_vendor_room(
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found.")
     return MessageResponse(message="Room deleted.")
+
+
+# ---------------------------------------------------------------------------
+# Promotions
+# ---------------------------------------------------------------------------
 
 
 @router.get("/promotions", tags=["Vendor - Promotions"])
@@ -423,6 +532,11 @@ def join_platform_campaign(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
+# ---------------------------------------------------------------------------
+# Analytics
+# ---------------------------------------------------------------------------
+
+
 @router.get("/analytics/overview", tags=["Vendor - Analytics"])
 def get_vendor_analytics_overview(
     current_vendor: dict = Depends(get_current_vendor),
@@ -471,6 +585,11 @@ def export_vendor_analytics(
     return portal_service.repo.export_analytics(_vendor_id(current_vendor))
 
 
+# ---------------------------------------------------------------------------
+# Loyalty
+# ---------------------------------------------------------------------------
+
+
 @router.get("/loyalty/settings", tags=["Vendor - Loyalty"])
 def get_vendor_loyalty_settings(
     current_vendor: dict = Depends(get_current_vendor),
@@ -488,6 +607,11 @@ def update_vendor_loyalty_settings(
     portal_service: VendorPortalService = Depends(get_vendor_portal_service),
 ) -> dict:
     return portal_service.repo.update_loyalty_settings(_vendor_id(current_vendor), payload.model_dump())
+
+
+# ---------------------------------------------------------------------------
+# Reviews
+# ---------------------------------------------------------------------------
 
 
 @router.get("/reviews", tags=["Vendor - Reviews"])
@@ -521,6 +645,11 @@ def reply_vendor_review(
     if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found.")
     return row
+
+
+# ---------------------------------------------------------------------------
+# Settings — general, profile, commission, legal
+# ---------------------------------------------------------------------------
 
 
 @router.get("/settings/general", tags=["Vendor - Settings"])
@@ -601,6 +730,67 @@ def update_vendor_profile_settings(
     return portal_service.repo.update_settings_profile(_vendor_id(current_vendor), payload.model_dump())
 
 
+# ---------------------------------------------------------------------------
+# Settings — image upload endpoints (Cloudinary → MongoDB)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/settings/general/logo", tags=["Vendor - Settings"])
+async def upload_vendor_logo(
+    file: UploadFile = File(..., description="Logo image to upload"),
+    current_vendor: dict = Depends(get_current_vendor),
+    auth_service: VendorAuthService = Depends(get_vendor_auth_service),
+    portal_repo=Depends(get_vendor_portal_repository),
+) -> dict:
+    """Upload a logo image to Cloudinary and save the URL to vendor general settings."""
+    vendor_id = _vendor_id(current_vendor)
+    result = await auth_service.upload_registration_document(
+        file,
+        folder_suffix=f"vendor-{vendor_id}/logo",
+    )
+    saved = portal_repo.update_logo_url(vendor_id, result.url)
+    return {"logo_url": result.url, "settings": saved, "message": "Logo updated successfully."}
+
+
+@router.post("/settings/general/cover-image", tags=["Vendor - Settings"])
+async def upload_vendor_cover_image(
+    file: UploadFile = File(..., description="Cover image to upload"),
+    current_vendor: dict = Depends(get_current_vendor),
+    auth_service: VendorAuthService = Depends(get_vendor_auth_service),
+    portal_repo=Depends(get_vendor_portal_repository),
+) -> dict:
+    """Upload a cover image to Cloudinary and save the URL to vendor general settings."""
+    vendor_id = _vendor_id(current_vendor)
+    result = await auth_service.upload_registration_document(
+        file,
+        folder_suffix=f"vendor-{vendor_id}/cover",
+    )
+    saved = portal_repo.update_cover_image_url(vendor_id, result.url)
+    return {"cover_image_url": result.url, "settings": saved, "message": "Cover image updated successfully."}
+
+
+@router.post("/settings/profile/avatar", tags=["Vendor - Settings"])
+async def upload_vendor_profile_avatar(
+    file: UploadFile = File(..., description="Profile avatar image to upload"),
+    current_vendor: dict = Depends(get_current_vendor),
+    auth_service: VendorAuthService = Depends(get_vendor_auth_service),
+    portal_repo=Depends(get_vendor_portal_repository),
+) -> dict:
+    """Upload a profile avatar image to Cloudinary and save the URL to vendor profile settings."""
+    vendor_id = _vendor_id(current_vendor)
+    result = await auth_service.upload_registration_document(
+        file,
+        folder_suffix=f"vendor-{vendor_id}/avatar",
+    )
+    saved = portal_repo.update_avatar_url(vendor_id, result.url)
+    return {"avatar_url": result.url, "settings": saved, "message": "Avatar updated successfully."}
+
+
+# ---------------------------------------------------------------------------
+# Settings — password change
+# ---------------------------------------------------------------------------
+
+
 @router.patch("/settings/password", tags=["Vendor - Settings"], response_model=MessageResponse)
 def update_vendor_password(
     payload: VendorPasswordChangeRequest,
@@ -611,6 +801,11 @@ def update_vendor_password(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Old password is incorrect.")
     vendor_repo.update_password_hash(current_vendor["id"], hash_password(payload.new_password))
     return MessageResponse(message="Password updated successfully.")
+
+
+# ---------------------------------------------------------------------------
+# Support
+# ---------------------------------------------------------------------------
 
 
 @router.get("/support/tickets", tags=["Vendor - Support"])
@@ -643,6 +838,11 @@ def get_support_ticket(
     portal_service: VendorPortalService = Depends(get_vendor_portal_service),
 ) -> dict:
     return portal_service.get_support_ticket_or_404(_vendor_id(current_vendor), ticket_id)
+
+
+# ---------------------------------------------------------------------------
+# Notifications
+# ---------------------------------------------------------------------------
 
 
 @router.get("/notifications", tags=["Vendor - Notifications"])
