@@ -1,53 +1,56 @@
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pymongo.database import Database
 
-from app.core.config import get_settings
-from app.db.mongodb import MongoDatabase
+from app.api.deps import get_email_sender
+from app.core.config import Settings, get_settings
+from app.db.mongodb import MongoDatabaseSingleton
 from app.modules.vendor.repositories_password_reset import VendorPasswordResetRepository
 from app.modules.vendor.repositories_portal import VendorPortalRepository
 from app.modules.vendor.repositories_signup import VendorSignupVerificationRepository
 from app.modules.vendor.repositories_vendor import VendorRepository
 from app.modules.vendor.service_auth import VendorAuthService
 from app.modules.vendor.service_portal import VendorPortalService
-from app.providers.email_sender import SMTPEmailSender
+from app.providers.email_sender import EmailSender
 
 vendor_bearer_scheme = HTTPBearer(auto_error=False)
 
 
-def get_db(request: Request) -> MongoDatabase:
-    return request.app.state.db  # type: ignore[return-value]
+def get_vendor_db(settings: Settings = Depends(get_settings)) -> Database:
+    return MongoDatabaseSingleton.get_instance(settings).db
 
 
-def get_vendor_repository(db: MongoDatabase = Depends(get_db)) -> VendorRepository:
-    return VendorRepository(db.db)
+def get_vendor_repository(db: Database = Depends(get_vendor_db)) -> VendorRepository:
+    return VendorRepository(db)
 
 
 def get_vendor_signup_repository(
-    db: MongoDatabase = Depends(get_db),
+    db: Database = Depends(get_vendor_db),
 ) -> VendorSignupVerificationRepository:
-    return VendorSignupVerificationRepository(db.db)
+    return VendorSignupVerificationRepository(db)
 
 
 def get_vendor_password_reset_repository(
-    db: MongoDatabase = Depends(get_db),
+    db: Database = Depends(get_vendor_db),
 ) -> VendorPasswordResetRepository:
-    return VendorPasswordResetRepository(db.db)
+    return VendorPasswordResetRepository(db)
 
 
-def get_vendor_portal_repository(db: MongoDatabase = Depends(get_db)) -> VendorPortalRepository:
-    return VendorPortalRepository(db.db)
+def get_vendor_portal_repository(db: Database = Depends(get_vendor_db)) -> VendorPortalRepository:
+    return VendorPortalRepository(db)
 
 
 def get_vendor_auth_service(
     vendor_repo: VendorRepository = Depends(get_vendor_repository),
     signup_repo: VendorSignupVerificationRepository = Depends(get_vendor_signup_repository),
     password_reset_repo: VendorPasswordResetRepository = Depends(get_vendor_password_reset_repository),
+    email_sender: EmailSender = Depends(get_email_sender),
 ) -> VendorAuthService:
     return VendorAuthService(
         vendor_repo=vendor_repo,
         signup_repo=signup_repo,
         password_reset_repo=password_reset_repo,
-        email_sender=SMTPEmailSender(get_settings()),
+        email_sender=email_sender,
     )
 
 

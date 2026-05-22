@@ -64,6 +64,48 @@ async def test_register_verify_and_login(client, test_db):
 
 
 @pytest.mark.asyncio
+async def test_personal_details_get_and_update(client, test_db):
+    register_res = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "full_name": "Profile User",
+            "email": "profile@example.com",
+            "phone": "+15550002222",
+            "password": "StrongPass123!",
+        },
+    )
+    assert register_res.status_code == 200
+
+    signup_code = await test_db.otp_codes.find_one({"email": "profile@example.com", "purpose": "signup_verification"})
+    verify_res = await client.post(
+        "/api/v1/auth/verify-email",
+        json={"email": "profile@example.com", "otp": signup_code["code"]},
+    )
+    token = verify_res.json()["data"]["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    get_res = await client.get("/api/v1/users/me", headers=headers)
+    assert get_res.status_code == 200
+    assert get_res.json()["data"]["email"] == "profile@example.com"
+    assert "password_hash" not in get_res.json()["data"]
+
+    patch_res = await client.patch(
+        "/api/v1/users/me/personal-details",
+        headers=headers,
+        json={
+            "full_name": "Updated Profile User",
+            "email": "profile@example.com",
+            "phone": "+15550003333",
+            "date_of_birth": "1992-03-15",
+        },
+    )
+    assert patch_res.status_code == 200
+    assert patch_res.json()["data"]["full_name"] == "Updated Profile User"
+    assert patch_res.json()["data"]["phone"] == "+15550003333"
+    assert patch_res.json()["data"]["date_of_birth"] == "1992-03-15"
+
+
+@pytest.mark.asyncio
 async def test_table_booking_flow(client, test_db):
     now = datetime.now(UTC)
     listing_id = (
@@ -223,3 +265,58 @@ async def test_dashboard_forgot_password_flow(client, test_db):
         json={"email_or_phone": "reset-admin@example.com", "password": "NewStrongPass123!"},
     )
     assert login_res.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_vendor_register_and_login_flow(client, test_db):
+    request_code_res = await client.post(
+        "/api/v1/vendor/auth/register/request-code",
+        json={"email_or_phone": "vendor@example.com"},
+    )
+    assert request_code_res.status_code == 200
+    verification_code = request_code_res.json()["validation_code"]
+    assert verification_code
+
+    verify_code_res = await client.post(
+        "/api/v1/vendor/auth/register/verify-code",
+        json={"email_or_phone": "vendor@example.com", "validation_code": verification_code},
+    )
+    assert verify_code_res.status_code == 200
+    signup_token = verify_code_res.json()["signup_token"]
+    assert signup_token
+
+    register_res = await client.post(
+        "/api/v1/vendor/auth/register",
+        json={
+            "business_name": "Demo Vendor",
+            "owner_full_name": "Vendor Owner",
+            "email_or_phone": "vendor@example.com",
+            "phone": "+15550110011",
+            "address": "123 Market Street",
+            "city": "Dhaka",
+            "website": "https://vendor.example.com",
+            "business_description": "A demo service provider account for testing.",
+            "trade_license_number": "TL-12345",
+            "trade_license_document_url": "https://files.example.com/license.pdf",
+            "owner_manager_id_document_url": "https://files.example.com/id.pdf",
+            "terms_accepted": True,
+            "password": "VendorPass123!",
+            "confirm_password": "VendorPass123!",
+            "signup_token": signup_token,
+        },
+    )
+    assert register_res.status_code == 201
+    assert register_res.json()["vendor"]["email"] == "vendor@example.com"
+    assert register_res.json()["vendor"]["status"] == "pending_approval"
+
+    vendor = await test_db.vendors.find_one({"email": "vendor@example.com"})
+    assert vendor
+    await test_db.vendors.update_one({"_id": vendor["_id"]}, {"$set": {"status": "approved"}})
+
+    login_res = await client.post(
+        "/api/v1/vendor/auth/login",
+        json={"email_or_phone": "vendor@example.com", "password": "VendorPass123!"},
+    )
+    assert login_res.status_code == 200
+    assert login_res.json()["access_token"]
+    assert login_res.json()["vendor"]["email"] == "vendor@example.com"

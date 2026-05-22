@@ -25,6 +25,13 @@ class UserRepository:
     async def find_by_email_or_phone(self, identifier: str) -> dict | None:
         return await self.collection.find_one({"$or": [{"email": identifier}, {"phone": identifier}]})
 
+    async def update_profile(self, user_id: str, payload: dict) -> dict | None:
+        await self.collection.update_one(
+            {"_id": oid(user_id)},
+            {"$set": {**payload, "updated_at": utcnow()}},
+        )
+        return await self.find_by_id(user_id)
+
     async def update_password_by_email(self, email: str, password_hash: str) -> bool:
         result = await self.collection.update_one(
             {"email": email},

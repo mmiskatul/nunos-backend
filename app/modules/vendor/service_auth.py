@@ -7,7 +7,7 @@ from pymongo.errors import DuplicateKeyError
 
 from app.core.config import get_settings
 from app.core.contact import parse_email_or_phone
-from app.core.security import create_access_token, decode_access_token, hash_password, verify_password
+from app.core.security import create_access_token, decode_token, hash_password, verify_password
 from app.modules.vendor.repositories_password_reset import VendorPasswordResetRepository
 from app.modules.vendor.repositories_signup import VendorSignupVerificationRepository
 from app.modules.vendor.repositories_vendor import VendorRepository
@@ -63,7 +63,7 @@ class VendorAuthService:
             code_length=self.settings.signup_verification_code_length,
             expires_in_minutes=self.settings.signup_verification_code_expire_minutes,
         )
-        self.email_sender.send_validation_code(
+        self.email_sender.send_signup_verification_code(
             recipient_email=email,
             full_name="vendor",
             code=code,
@@ -194,7 +194,7 @@ class VendorAuthService:
             code_length=self.settings.password_reset_code_length,
             expires_in_minutes=self.settings.password_reset_code_expire_minutes,
         )
-        self.email_sender.send_validation_code(
+        self.email_sender.send_password_reset_code(
             recipient_email=vendor["email"],
             full_name=vendor["owner_full_name"],
             code=code,
@@ -248,7 +248,10 @@ class VendorAuthService:
         )
 
     def get_current_vendor_from_token(self, token: str) -> dict[str, Any]:
-        payload = decode_access_token(token)
+        try:
+            payload = decode_token(token, expected_type="access")
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid access token.") from exc
         vendor_id = payload.get("sub")
         if not vendor_id:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload.")

@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     environment: str = "development"
     api_v1_prefix: str = "/api/v1"
     debug: bool = True
+    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
+    cors_origin_regex: str = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
 
     mongodb_uri: str = "mongodb://localhost:27017"
     mongodb_db_name: str = "nuno"
@@ -24,6 +26,14 @@ class Settings(BaseSettings):
     otp_expire_minutes: int = 10
     otp_length: int = 6
     signup_pending_expire_minutes: int = 30
+    signup_verification_code_length: int = 6
+    signup_verification_code_expire_minutes: int = 10
+    signup_verification_token_expire_minutes: int = 30
+    debug_return_signup_code: bool = False
+    password_reset_code_length: int = 6
+    password_reset_code_expire_minutes: int = 10
+    password_reset_token_expire_minutes: int = 15
+    debug_return_reset_code: bool = False
 
     smtp_host: str | None = None
     smtp_port: int = 587

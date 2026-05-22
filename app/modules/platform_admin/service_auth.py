@@ -6,7 +6,7 @@ from pymongo.errors import DuplicateKeyError
 
 from app.core.config import get_settings
 from app.core.contact import parse_email_or_phone
-from app.core.security import create_access_token, decode_access_token, hash_password, verify_password
+from app.core.security import create_access_token, decode_token, hash_password, verify_password
 from app.modules.platform_admin.repositories_admin import PlatformAdminRepository
 from app.modules.platform_admin.repositories_password_reset import AdminPasswordResetRepository
 from app.modules.platform_admin.repositories_signup import AdminSignupVerificationRepository
@@ -178,7 +178,10 @@ class PlatformAdminAuthService:
         return AdminMessageResponse(message="Password has been reset successfully.")
 
     def get_current_admin_from_token(self, token: str) -> dict[str, Any]:
-        payload = decode_access_token(token)
+        try:
+            payload = decode_token(token, expected_type="access")
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid access token.") from exc
         admin_id = payload.get("sub")
         if not admin_id:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload.")
