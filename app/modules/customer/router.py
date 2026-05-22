@@ -13,7 +13,6 @@ from app.modules.customer.schemas_live import (
 from app.modules.customer.service_customer import CustomerService
 from app.modules.schemas import (
     GenericPatchRequest,
-    MessageCreateRequest,
     PlanForMeStepRequest,
     PlannedEndpointResponse,
 )
@@ -493,28 +492,6 @@ def add_saved_item(entity_type: str, entity_id: str) -> PlannedEndpointResponse:
 def remove_saved_item(entity_type: str, entity_id: str) -> PlannedEndpointResponse:
     _ = (entity_type, entity_id)
     return _planned("/customer/saved/{entity_type}/{entity_id}", "Unsave an entity.", ["Saved tab", "Cards with favorite icon"])
-
-
-@router.get("/ai-concierge/sessions", tags=["Customer - AI Chat"], response_model=PlannedEndpointResponse)
-def list_ai_sessions() -> PlannedEndpointResponse:
-    return _planned("/customer/ai-concierge/sessions", "List customer AI concierge sessions.", ["Chat tab"])
-
-
-@router.post("/ai-concierge/sessions", tags=["Customer - AI Chat"], response_model=PlannedEndpointResponse)
-def create_ai_session() -> PlannedEndpointResponse:
-    return _planned("/customer/ai-concierge/sessions", "Start a new AI concierge session.", ["Chat tab"])
-
-
-@router.get("/ai-concierge/sessions/{session_id}/messages", tags=["Customer - AI Chat"], response_model=PlannedEndpointResponse)
-def list_ai_messages(session_id: str) -> PlannedEndpointResponse:
-    _ = session_id
-    return _planned("/customer/ai-concierge/sessions/{session_id}/messages", "Get chat messages in a session.", ["Chat conversation"])
-
-
-@router.post("/ai-concierge/sessions/{session_id}/messages", tags=["Customer - AI Chat"], response_model=PlannedEndpointResponse)
-def send_ai_message(session_id: str, payload: MessageCreateRequest) -> PlannedEndpointResponse:
-    _ = (session_id, payload)
-    return _planned("/customer/ai-concierge/sessions/{session_id}/messages", "Send message to AI concierge and receive response.", ["Chat conversation"])
 
 
 @router.get("/profile", tags=["Customer - Profile"], response_model=PlannedEndpointResponse)

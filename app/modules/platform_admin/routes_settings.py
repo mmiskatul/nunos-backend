@@ -1,9 +1,14 @@
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Body, Depends, HTTPException, status
+from bson import ObjectId
+from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile, status
 from pymongo.database import Database
 
+from app.api.deps import get_cloudinary_uploader
+from app.core.security import hash_password, verify_password
+from app.modules.platform_admin.deps_auth import get_current_platform_admin
 from app.modules.platform_admin.deps import get_platform_admin_db
+from app.providers.cloudinary_uploader import CloudinaryUploader
 
 router = APIRouter(prefix="/platform-admin/settings", tags=["Platform Admin - Settings (Live)"])
 
@@ -110,6 +115,13 @@ def _legal_content_response(db: Database) -> dict:
     return settings.get("legalContent") or _default_settings(_first_admin(db))["legalContent"]
 
 
+def _admin_profile_response(db: Database) -> dict:
+    settings = _settings_response(db)
+    return {
+        "admin": settings.get("admin") or {},
+    }
+
+
 @router.get("/general")
 def get_admin_settings_general(
     db: Database = Depends(get_platform_admin_db),
@@ -127,6 +139,140 @@ def update_admin_settings_general(
     updated["updated_at"] = datetime.now(UTC)
     _persist_settings(db, updated)
     return _settings_response(db)
+
+
+@router.get("/commission")
+def get_admin_settings_commission(
+    db: Database = Depends(get_platform_admin_db),
+) -> dict:
+    return {
+        "commission": _settings_response(db).get("commission") or {},
+    }
+
+
+@router.patch("/commission")
+def update_admin_settings_commission(
+    payload: dict = Body(...),
+    db: Database = Depends(get_platform_admin_db),
+) -> dict:
+    commission = payload.get("commission") if isinstance(payload.get("commission"), dict) else payload
+    current = _settings_response(db)
+    current["commission"] = _deep_merge(current.get("commission") or {}, commission if isinstance(commission, dict) else {})
+    current["updated_at"] = datetime.now(UTC)
+    _persist_settings(db, current)
+    return {
+        "commission": _settings_response(db).get("commission") or {},
+    }
+
+
+@router.get("/profile")
+def get_admin_settings_profile(
+    db: Database = Depends(get_platform_admin_db),
+    current_admin: dict = Depends(get_current_platform_admin),
+) -> dict:
+    return _admin_profile_response(db)
+
+
+@router.patch("/profile")
+def update_admin_settings_profile(
+    payload: dict = Body(...),
+    db: Database = Depends(get_platform_admin_db),
+    current_admin: dict = Depends(get_current_platform_admin),
+) -> dict:
+    admin_payload = payload.get("admin") if isinstance(payload.get("admin"), dict) else payload
+    name = str(admin_payload.get("name") or current_admin.get("full_name") or current_admin.get("name") or "").strip()
+    email = str(admin_payload.get("email") or current_admin.get("email") or "").strip().lower()
+    avatar = str(admin_payload.get("avatar") or admin_payload.get("avatar_url") or current_admin.get("avatar") or current_admin.get("avatar_url") or "").strip()
+
+    if not name:
+      raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Admin name is required.")
+    if not email:
+      raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Admin email is required.")
+
+    existing = db["platform_admins"].find_one({"email": email})
+    if existing and str(existing.get("_id")) != str(current_admin.get("id")):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already exists.")
+
+    db["platform_admins"].update_one(
+        {"_id": ObjectId(str(current_admin["id"]))},
+        {
+            "$set": {
+                "full_name": name,
+                "email": email,
+                "avatar": avatar,
+                "avatar_url": avatar,
+                "updated_at": datetime.now(UTC),
+            }
+        },
+    )
+
+    current = _settings_response(db)
+    current["admin"] = _deep_merge(current.get("admin") or {}, {"name": name, "email": email, "avatar": avatar})
+    current["general"] = _deep_merge(
+        current.get("general") or {},
+        {"supportEmail": current.get("general", {}).get("supportEmail") or email},
+    )
+    current["updated_at"] = datetime.now(UTC)
+    _persist_settings(db, current)
+    return _admin_profile_response(db)
+
+
+@router.post("/profile/avatar")
+async def upload_admin_profile_avatar(
+    file: UploadFile = File(..., description="Profile avatar image to upload"),
+    db: Database = Depends(get_platform_admin_db),
+    current_admin: dict = Depends(get_current_platform_admin),
+    uploader: CloudinaryUploader = Depends(get_cloudinary_uploader),
+) -> dict:
+    secure_url = await uploader.upload_image(
+        file,
+        folder_suffix=f"platform-admin/{current_admin['id']}/profile",
+    )
+
+    db["platform_admins"].update_one(
+        {"_id": ObjectId(str(current_admin["id"]))},
+        {
+            "$set": {
+                "avatar": secure_url,
+                "avatar_url": secure_url,
+                "updated_at": datetime.now(UTC),
+            }
+        },
+    )
+
+    current = _settings_response(db)
+    current["admin"] = _deep_merge(current.get("admin") or {}, {"avatar": secure_url})
+    current["updated_at"] = datetime.now(UTC)
+    _persist_settings(db, current)
+    return {"avatar": secure_url, "profile_image_url": secure_url}
+
+
+@router.patch("/password")
+def update_admin_settings_password(
+    payload: dict = Body(...),
+    db: Database = Depends(get_platform_admin_db),
+    current_admin: dict = Depends(get_current_platform_admin),
+) -> dict:
+    current_password = str(payload.get("currentPassword") or payload.get("current_password") or "").strip()
+    new_password = str(payload.get("newPassword") or payload.get("new_password") or "").strip()
+    confirm_password = str(payload.get("confirmPassword") or payload.get("confirm_password") or "").strip()
+
+    if not current_password or not new_password or not confirm_password:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="All password fields are required.")
+    if len(new_password) < 8:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="New password must be at least 8 characters.")
+    if new_password != confirm_password:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="New password and confirmation do not match.")
+
+    admin_doc = db["platform_admins"].find_one({"_id": ObjectId(str(current_admin["id"]))})
+    if not admin_doc or not verify_password(current_password, str(admin_doc.get("password_hash") or "")):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect.")
+
+    db["platform_admins"].update_one(
+        {"_id": admin_doc["_id"]},
+        {"$set": {"password_hash": hash_password(new_password), "updated_at": datetime.now(UTC)}},
+    )
+    return {"message": "Password updated successfully."}
 
 
 @router.get("/legal-content")
