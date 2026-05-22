@@ -483,21 +483,61 @@ class VendorPortalRepository:
         )
         return self.get_settings(vendor_id).get("commission", {})
 
+    def _default_legal_docs(self) -> dict[str, Any]:
+        return {
+            "documents": {
+                "terms": "Terms of Service",
+                "privacy": "Privacy Policy",
+            },
+            "content": {
+                "terms": {
+                    "business": "# Business Terms of Service\n\n### 1. Commercial Eligibility\nBusiness accounts must provide accurate company information and maintain an active point of contact for compliance updates.",
+                },
+                "privacy": {
+                    "business": "# Business Privacy Policy\n\n### 1. Business Contact Data\nWe collect administrator details, team member information, and account-level configuration data required to deliver business services.",
+                },
+            },
+            "lastUpdated": "January 15, 2025 at 2:30 PM",
+        }
+
+    def _platform_legal_content(self) -> dict[str, Any]:
+        settings_doc = self.settings.database["platform_admin_settings"].find_one({"_id": "platform_admin_settings"}) or {}
+        legal_content = settings_doc.get("legalContent")
+        if isinstance(legal_content, dict):
+            return legal_content
+        return self._default_legal_docs()
+
     def get_legal_doc(self, vendor_id: str, doc_type: str) -> dict[str, Any]:
-        legal_docs = self.get_settings(vendor_id).get("legal_docs", {})
-        raw_doc = legal_docs.get(doc_type, {})
-        if isinstance(raw_doc, dict):
-            return {
-                "doc_type": doc_type,
-                "content": raw_doc.get("content", ""),
-                "audience": raw_doc.get("audience", "apps"),
-            }
-        return {"doc_type": doc_type, "content": str(raw_doc), "audience": "apps"}
+        _ = vendor_id
+        legal_content = self._platform_legal_content()
+        content_map = legal_content.get("content", {}).get(doc_type, {})
+        return {
+            "doc_type": doc_type,
+            "title": legal_content.get("documents", {}).get(doc_type, doc_type.title()),
+            "content": str(content_map.get("business") or ""),
+            "audience": "business",
+            "last_updated": legal_content.get("lastUpdated", ""),
+        }
 
     def update_legal_doc(self, vendor_id: str, doc_type: str, content: str, audience: str) -> dict[str, Any]:
-        self.settings.update_one(
-            {"vendor_id": ObjectId(vendor_id)},
-            {"$set": {f"legal_docs.{doc_type}": {"content": content, "audience": audience}, "updated_at": datetime.now(UTC)}},
+        _ = vendor_id
+        normalized_doc_type = str(doc_type).strip().lower()
+        normalized_audience = str(audience).strip().lower() or "business"
+        settings_collection = self.settings.database["platform_admin_settings"]
+        settings_doc = settings_collection.find_one({"_id": "platform_admin_settings"}) or {"_id": "platform_admin_settings"}
+        legal_content = settings_doc.get("legalContent")
+        if not isinstance(legal_content, dict):
+            legal_content = self._default_legal_docs()
+        legal_content.setdefault("content", {}).setdefault(normalized_doc_type, {})[normalized_audience] = content
+        legal_content["lastUpdated"] = datetime.now(UTC).strftime("%B %d, %Y at %I:%M %p").replace(" 0", " ")
+        settings_doc["legalContent"] = legal_content
+        settings_doc["updated_at"] = datetime.now(UTC)
+        settings_collection.update_one(
+            {"_id": "platform_admin_settings"},
+            {
+                "$set": {key: value for key, value in settings_doc.items() if key not in {"_id", "created_at"}},
+                "$setOnInsert": {"created_at": datetime.now(UTC)},
+            },
             upsert=True,
         )
         return self.get_legal_doc(vendor_id, doc_type)
