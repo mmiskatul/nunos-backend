@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     smtp_use_tls: bool = True
     smtp_use_ssl: bool = False
 
+    platform_admin_email: str | None = None
+    platform_admin_password: str | None = None
+    platform_admin_full_name: str = "Platform Admin"
+    platform_admin_phone: str | None = None
+
     loyalty_points_on_confirm: int = 50
 
     openai_api_key: str | None = None

@@ -39,11 +39,14 @@ copy .env.example .env
 MONGODB_URI=mongodb://localhost:27017
 MONGODB_DB_NAME=nuno
 JWT_SECRET_KEY=replace-with-a-strong-secret
+PLATFORM_ADMIN_EMAIL=admin@example.com
+PLATFORM_ADMIN_PASSWORD=replace-with-a-strong-admin-password
 OPENAI_API_KEY=
 OPENAI_MODEL=gpt-4.1-mini
 ```
 
 If `OPENAI_API_KEY` is empty, `/ai/plan` automatically uses a local stub LLM client.
+If `PLATFORM_ADMIN_EMAIL` and `PLATFORM_ADMIN_PASSWORD` are set, the backend bootstraps the platform admin account from `.env` on startup.
 
 ## Run
 ```bash

@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from collections.abc import AsyncIterator
 
 from fastapi import Request
@@ -5,6 +7,7 @@ from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from pymongo import ASCENDING, GEOSPHERE, TEXT
 
 from app.core.config import Settings
+from app.core.security import hash_password
 
 
 class MongoManager:
@@ -16,6 +19,7 @@ class MongoManager:
         self._client = AsyncIOMotorClient(self._settings.mongodb_uri)
         db = self._client[self._settings.mongodb_db_name]
         await ensure_indexes(db)
+        await ensure_platform_admin(db, self._settings)
         return db
 
     async def close(self) -> None:
@@ -26,6 +30,9 @@ class MongoManager:
 async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.users.create_index("email", unique=True, sparse=True)
     await db.users.create_index("phone", unique=True, sparse=True)
+    await db.platform_admins.create_index("email", unique=True, sparse=True)
+    await db.platform_admins.create_index("phone", unique=True, sparse=True)
+    await db.platform_admins.create_index("status")
 
     await db.otp_codes.create_index([("expires_at", ASCENDING)], expireAfterSeconds=0)
     await db.otp_codes.create_index([("email", ASCENDING), ("purpose", ASCENDING)])
@@ -45,6 +52,32 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.bookings.create_index([("status", ASCENDING), ("scheduled_at", ASCENDING)])
 
     await db.offers.create_index([("listing_id", ASCENDING), ("promo_code", ASCENDING)])
+
+
+async def ensure_platform_admin(db: AsyncIOMotorDatabase, settings: Settings) -> None:
+    if not settings.platform_admin_email or not settings.platform_admin_password:
+        return
+
+    now = datetime.now(UTC)
+    email = settings.platform_admin_email.strip().lower()
+    phone = settings.platform_admin_phone.strip() if settings.platform_admin_phone else None
+
+    await db.platform_admins.update_one(
+        {"email": email},
+        {
+            "$set": {
+                "full_name": settings.platform_admin_full_name.strip() or "Platform Admin",
+                "email": email,
+                "phone": phone,
+                "password_hash": hash_password(settings.platform_admin_password),
+                "role": "platform_admin",
+                "status": "active",
+                "updated_at": now,
+            },
+            "$setOnInsert": {"created_at": now},
+        },
+        upsert=True,
+    )
 
 
 async def get_database(request: Request) -> AsyncIOMotorDatabase:
