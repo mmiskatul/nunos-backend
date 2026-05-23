@@ -75,6 +75,46 @@ def _infer_topics(text: str) -> list[str]:
     return topics
 
 
+def _is_greeting(text: str) -> bool:
+    normalized = " ".join(text.lower().strip().split())
+    greetings = {
+        "hi",
+        "hey",
+        "hello",
+        "heyy",
+        "helo",
+        "yo",
+        "good morning",
+        "good afternoon",
+        "good evening",
+        "assalamu alaikum",
+        "salam",
+    }
+    return normalized in greetings
+
+
+def _is_unclear_message(text: str) -> bool:
+    normalized = " ".join(text.lower().strip().split())
+    if len(normalized) <= 2:
+        return True
+    vague_values = {
+        "ok",
+        "okay",
+        "okk",
+        "hmm",
+        "hmmm",
+        "hii",
+        "hlo",
+        "test",
+        "checking",
+        "what",
+        "help",
+        "jjj",
+        "okw jjj",
+    }
+    return normalized in vague_values
+
+
 def _memory_summary(user: dict, bookings: list[dict], topics: list[str]) -> dict:
     upcoming_count = 0
     now = _utcnow()
@@ -203,6 +243,11 @@ def _compose_reply(message: str, user: dict, bookings: list[dict], memory: dict,
     known_topics = memory.get("topics") if isinstance(memory.get("topics"), list) else []
     user_name = profile["name"] or "there"
 
+    if _is_greeting(message):
+        if known_topics:
+            return f"Hi {user_name}. What do you want help with now? You were recently asking about {', '.join(known_topics[:2])}."
+        return f"Hi {user_name}. What can I help you with today?"
+
     if any(keyword in lowered for keyword in ["my detail", "my details", "profile", "account", "email", "phone", "points"]):
         parts = [
             f"I have your profile as {profile['name'] or 'Unnamed user'}.",
@@ -283,11 +328,20 @@ def _compose_reply(message: str, user: dict, bookings: list[dict], memory: dict,
         lines.append("If you want, tell me your budget or preferred area and I can narrow this down.")
         return "\n".join(lines)
 
-    previous_topic_text = f" Your recent topics are {', '.join(known_topics[:3])}." if known_topics else ""
+    if _is_unclear_message(message):
+        if known_topics:
+            return (
+                f"I’m here, {user_name}. Do you want help with {', '.join(known_topics[:2])}, "
+                "or do you want to ask something new?"
+            )
+        return (
+            f"I’m here, {user_name}. Tell me one thing you want help with, like a restaurant, hotel, spa, event, booking, or your profile."
+        )
+
+    previous_topic_text = f" You were recently asking about {', '.join(known_topics[:3])}." if known_topics else ""
     return (
-        f"I understood your message as: \"{message.strip()[:120]}\".{previous_topic_text} "
-        "I can help with restaurants, hotels, spas, events, bookings, and your profile details. "
-        "Tell me one concrete thing like area, budget, date, cuisine, stay type, or treatment type, and I will respond more specifically."
+        f"I’m not fully sure what you want from \"{message.strip()[:120]}\".{previous_topic_text} "
+        "Tell me one clear thing like area, budget, date, cuisine, stay type, treatment type, booking status, or profile details, and I’ll answer properly."
     )
 
 

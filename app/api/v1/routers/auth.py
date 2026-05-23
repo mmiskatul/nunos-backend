@@ -8,6 +8,7 @@ from app.models.user import (
     RegistrationResponse,
     RefreshTokenRequest,
     ResetPasswordRequest,
+    SocialLoginRequest,
     TokenPair,
     UserCreateRequest,
     VerifyEmailRequest,
@@ -33,6 +34,12 @@ async def verify_email(payload: VerifyEmailRequest, service: AuthService = Depen
 @router.post("/login")
 async def login(payload: LoginRequest, service: AuthService = Depends(get_auth_service)):
     token_pair: TokenPair = await service.login(payload)
+    return envelope(token_pair.model_dump())
+
+
+@router.post("/social-login")
+async def social_login(payload: SocialLoginRequest, service: AuthService = Depends(get_auth_service)):
+    token_pair: TokenPair = await service.social_login(payload)
     return envelope(token_pair.model_dump())
 
 

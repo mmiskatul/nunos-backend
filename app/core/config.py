@@ -68,6 +68,9 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4.1-mini"
     openai_timeout_seconds: int = 20
 
+    google_api_key: str | None = None
+    google_oauth_client_ids: list[str] = Field(default_factory=list)
+
 
 @lru_cache
 def get_settings() -> Settings:
