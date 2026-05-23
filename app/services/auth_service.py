@@ -21,11 +21,13 @@ from app.models.user import (
     RegistrationResponse,
     RefreshTokenRequest,
     ResetPasswordRequest,
+    SocialLoginRequest,
     TokenPair,
     UserCreateRequest,
     VerifyEmailRequest,
 )
 from app.providers.email_sender import EmailSender
+from app.providers.social_auth import SocialAuthStrategyFactory
 from app.repositories.otp_repository import OTPRepository
 from app.repositories.pending_signup_repository import PendingSignupRepository
 from app.repositories.user_repository import UserRepository
@@ -45,6 +47,7 @@ class AuthService:
         self.pending_signup_repo = pending_signup_repo
         self.email_sender = email_sender
         self.settings = settings
+        self.social_auth_factory = SocialAuthStrategyFactory(settings)
 
     async def register(self, payload: UserCreateRequest) -> RegistrationResponse:
         if not payload.email:
@@ -134,8 +137,55 @@ class AuthService:
 
     async def login(self, payload: LoginRequest) -> TokenPair:
         user = await self.user_repo.find_by_email_or_phone(payload.email_or_phone)
-        if not user or not verify_password(payload.password, user["password_hash"]):
+        password_hash = user.get("password_hash") if user else None
+        if not user or not password_hash or not verify_password(payload.password, password_hash):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+
+        user_id = str(user["_id"])
+        return TokenPair(access_token=create_access_token(user_id), refresh_token=create_refresh_token(user_id))
+
+    async def social_login(self, payload: SocialLoginRequest) -> TokenPair:
+        try:
+            strategy = self.social_auth_factory.get_strategy(payload.provider)
+            social_user = await strategy.verify_token(payload.id_token)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
+
+        user = await self.user_repo.find_by_email(social_user.email)
+        if user:
+            updates: dict[str, str] = {}
+            if social_user.full_name and social_user.full_name != user.get("full_name"):
+                updates["full_name"] = social_user.full_name
+            if social_user.profile_image_url and social_user.profile_image_url != user.get("profile_image_url"):
+                updates["profile_image_url"] = social_user.profile_image_url
+            if updates:
+                user = await self.user_repo.update_profile(str(user["_id"]), updates)
+        else:
+            try:
+                user = await self.user_repo.create_user(
+                    {
+                        "full_name": social_user.full_name,
+                        "email": social_user.email,
+                        "phone": None,
+                        "password_hash": "",
+                        "auth_provider": social_user.provider,
+                        "social_provider_user_id": social_user.provider_user_id,
+                        "profile_image_url": social_user.profile_image_url,
+                        "points_balance": 0,
+                        "is_active": True,
+                        "location_enabled": False,
+                    }
+                )
+            except DuplicateKeyError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=duplicate_contact_conflict_detail(
+                        exc,
+                        email_detail="Email already exists",
+                        phone_detail="Phone already exists",
+                        default_detail="Email or phone already exists",
+                    ),
+                ) from exc
 
         user_id = str(user["_id"])
         return TokenPair(access_token=create_access_token(user_id), refresh_token=create_refresh_token(user_id))
