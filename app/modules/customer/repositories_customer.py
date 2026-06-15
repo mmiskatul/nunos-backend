@@ -149,6 +149,182 @@ class CustomerRepository:
         total = len(cards)
         return {"items": cards[skip : skip + limit], "total": total}
 
+    def list_hotels(
+        self,
+        customer_id: str,
+        limit: int,
+        skip: int,
+        search: str | None = None,
+    ) -> dict[str, Any]:
+        query: dict[str, Any] = {"status": "approved"}
+        if search:
+            query["$or"] = [
+                {"business_name": {"$regex": search, "$options": "i"}},
+            ]
+        vendor_docs = list(self.vendors.find(query).sort("created_at", DESCENDING))
+        cards: list[dict[str, Any]] = []
+        for vendor in vendor_docs:
+            vendor_id = vendor["_id"]
+            bundle = self._get_vendor_bundle(vendor_id)
+            if bundle["category"].lower() != "hotel":
+                continue
+            rooms = list(self.vendor_rooms.find({"vendor_id": vendor_id, "available": True}))
+            min_price = 150.0
+            if rooms:
+                min_price = min(float(r.get("base_price", 150.0)) for r in rooms)
+            has_rooms = len(rooms) > 0
+            cards.append(
+                {
+                    "id": str(vendor_id),
+                    "title": bundle["vendor"].get("business_name") or bundle["profile"].get("business_name") or "Unnamed Hotel",
+                    "rating": str(bundle["rating"]),
+                    "reviews": str(bundle["reviews_count"]),
+                    "location": f"{bundle['general'].get('business_address') or bundle['business'].get('city') or 'Qatar'}",
+                    "price": str(int(min_price)),
+                    "status": "Available" if has_rooms else "Limited",
+                    "badge": (bundle["active_offer"] or {}).get("promotion_name"),
+                    "badgeColor": "#3b82f6",
+                    "amenities": ["WiFi", "Pool", "Breakfast"] if has_rooms else ["WiFi"],
+                    "image": bundle["cover_image"] or "https://images.unsplash.com/photo-1566073771259-6a8506099945?w=800",
+                }
+            )
+        total = len(cards)
+        return {"items": cards[skip : skip + limit], "total": total}
+
+    def get_hotel_details(self, customer_id: str, hotel_id: str) -> dict[str, Any] | None:
+        vendor = self.vendors.find_one({"_id": self._oid(hotel_id), "status": "approved"})
+        if not vendor:
+            return None
+        vendor_id = vendor["_id"]
+        bundle = self._get_vendor_bundle(vendor_id)
+        if bundle["category"].lower() != "hotel":
+            return None
+        rooms_count = self.vendor_rooms.count_documents({"vendor_id": vendor_id, "available": True})
+        gallery_count = self.vendor_assets.count_documents({"vendor_id": vendor_id, "asset_type": "gallery"})
+        offers_count = self.vendor_promotions.count_documents({"vendor_id": vendor_id, "active": True})
+        rooms = list(self.vendor_rooms.find({"vendor_id": vendor_id, "available": True}))
+        min_price = 150.0
+        if rooms:
+            min_price = min(float(r.get("base_price", 150.0)) for r in rooms)
+        return {
+            "id": str(vendor_id),
+            "title": bundle["vendor"].get("business_name") or bundle["profile"].get("business_name") or "Unnamed Hotel",
+            "category": bundle["category"],
+            "rating": str(bundle["rating"]),
+            "reviews": str(bundle["reviews_count"]),
+            "location": f"{bundle['general'].get('business_address') or bundle['business'].get('city') or 'Qatar'}",
+            "address": bundle["general"].get("business_address") or bundle["business"].get("address") or "Qatar",
+            "about": bundle["business"].get("business_description") or bundle["profile"].get("about_business") or "Welcome to our hotel.",
+            "image": bundle["cover_image"] or "https://images.unsplash.com/photo-1566073771259-6a8506099945?w=800",
+            "price": str(int(min_price)),
+            "status": "Available",
+            "amenities": ["Free WiFi", "Breakfast", "Pool", "Gym", "Parking", "Room Service"],
+            "tabs": {
+                "overview": True,
+                "rooms_count": int(rooms_count),
+                "gallery_count": int(gallery_count),
+                "offers_count": int(offers_count),
+            },
+            "contact": {
+                "phone": bundle["general"].get("front_desk_phone"),
+                "reservations_email": bundle["general"].get("reservations_email"),
+            }
+        }
+
+    def list_hotel_rooms(self, hotel_id: str) -> list[dict[str, Any]]:
+        docs = list(self.vendor_rooms.find({"vendor_id": self._oid(hotel_id), "available": True}).sort("created_at", DESCENDING))
+        rooms = []
+        for doc in docs:
+            base_price = float(doc.get("base_price", 150.0))
+            images = doc.get("images") or []
+            rooms.append({
+                "id": str(doc["_id"]),
+                "title": doc.get("name") or "Standard Room",
+                "bed": doc.get("bed_type") or "King Bed",
+                "guests": f"Max {doc.get('max_guests', 2)} guests",
+                "price": str(int(base_price)),
+                "totalPrice": str(int(base_price * 2)),
+                "nights": "2 nights",
+                "image": images[0] if images else "https://images.unsplash.com/photo-1618773928121-c32242e63f39?w=800",
+                "amenities": doc.get("amenities") or ["WiFi", "AC"],
+            })
+        return rooms
+
+    def get_hotel_room_details(self, room_id: str) -> dict[str, Any] | None:
+        doc = self.vendor_rooms.find_one({"_id": self._oid(room_id)})
+        if not doc:
+            return None
+        base_price = float(doc.get("base_price", 298.0))
+        raw_amenities = doc.get("amenities") or []
+        amenities_with_icons = []
+        for name in raw_amenities:
+            lower_name = name.lower()
+            icon = "wifi"
+            if "air" in lower_name or "ac" in lower_name:
+                icon = "snow"
+            elif "tv" in lower_name:
+                icon = "tv-outline"
+            elif "coffee" in lower_name or "cafe" in lower_name:
+                icon = "cafe-outline"
+            elif "bath" in lower_name:
+                icon = "water-outline"
+            elif "balcony" in lower_name:
+                icon = "business-outline"
+            amenities_with_icons.append({"name": name, "icon": icon})
+        return {
+            "id": str(doc["_id"]),
+            "title": doc.get("name") or "Standard Room",
+            "status": "Available" if doc.get("available", True) else "Unavailable",
+            "size": f"{doc.get('size_sqm', 45)} m²",
+            "guests": f"{doc.get('max_guests', 2)} Guests",
+            "bed": doc.get("bed_type") or "King Bed",
+            "view": "City View",
+            "images": doc.get("images") or ["https://images.unsplash.com/photo-1618773928121-c32242e63f39?w=800"],
+            "amenities": amenities_with_icons,
+            "price": {
+                "rate": str(int(base_price * 2)),
+                "taxes": str(int(base_price * 0.2)),
+                "total": str(int(base_price * 2.2)),
+            }
+        }
+
+    def list_hotel_assets(self, hotel_id: str, asset_type: str) -> list[dict[str, Any]]:
+        docs = self.vendor_assets.find(
+            {"vendor_id": self._oid(hotel_id), "asset_type": asset_type}
+        ).sort("created_at", DESCENDING)
+        return [self._serialize(doc) for doc in docs]
+
+    def get_hotel_reviews_payload(self, hotel_id: str) -> dict[str, Any]:
+        vendor_id = self._oid(hotel_id)
+        docs = list(self.vendor_reviews.find({"vendor_id": vendor_id}).sort("created_at", DESCENDING))
+        total = len(docs)
+        avg_rating = round(sum(float(doc.get("rating", 5)) for doc in docs) / total, 1) if total else 4.8
+        
+        reviews = []
+        for doc in docs:
+            created_at = doc.get("created_at")
+            if isinstance(created_at, datetime):
+                date_str = created_at.strftime("%b %d, %Y")
+            elif isinstance(created_at, str):
+                try:
+                    date_str = datetime.fromisoformat(created_at).strftime("%b %d, %Y")
+                except ValueError:
+                    date_str = "Recently"
+            else:
+                date_str = "Recently"
+            reviews.append({
+                "id": str(doc["_id"]),
+                "user": doc.get("customer_name") or "Anonymous",
+                "date": date_str,
+                "rating": int(doc.get("rating", 5)),
+                "comment": doc.get("review_text") or doc.get("comment") or "",
+            })
+        return {
+            "average_rating": str(avg_rating),
+            "total_reviews": total,
+            "items": reviews
+        }
+
     def get_home_feed(self, customer_id: str) -> dict[str, Any]:
         restaurants = self.list_restaurants(customer_id=customer_id, limit=50, skip=0).get("items", [])
         trending = sorted(restaurants, key=lambda row: row.get("rating", 0), reverse=True)[:6]

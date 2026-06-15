@@ -42,6 +42,16 @@ class RoomAvailabilityRequest(BaseModel):
     maintenance_note: str | None = None
 
 
+class ServiceUpsertRequest(BaseModel):
+    name: str
+    category: str
+    price: float = Field(ge=0)
+    delivery_time: str = ""
+    description: str = ""
+    images: list[str] = Field(default_factory=list)
+    active_status: bool = True
+
+
 class PromotionUpsertRequest(BaseModel):
     promotion_name: str
     internal_description: str = ""

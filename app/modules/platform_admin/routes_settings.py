@@ -115,10 +115,14 @@ def _legal_content_response(db: Database) -> dict:
     return settings.get("legalContent") or _default_settings(_first_admin(db))["legalContent"]
 
 
-def _admin_profile_response(db: Database) -> dict:
-    settings = _settings_response(db)
+def _admin_profile_response(db: Database, admin_id: str) -> dict:
+    admin = db["platform_admins"].find_one({"_id": ObjectId(admin_id)}) or {}
     return {
-        "admin": settings.get("admin") or {},
+        "admin": {
+            "name": admin.get("full_name") or admin.get("name") or "Platform Admin",
+            "email": admin.get("email") or "admin@nuno.app",
+            "avatar": admin.get("avatar") or admin.get("avatar_url") or "",
+        }
     }
 
 
@@ -170,7 +174,7 @@ def get_admin_settings_profile(
     db: Database = Depends(get_platform_admin_db),
     current_admin: dict = Depends(get_current_platform_admin),
 ) -> dict:
-    return _admin_profile_response(db)
+    return _admin_profile_response(db, str(current_admin["id"]))
 
 
 @router.patch("/profile")
@@ -214,7 +218,7 @@ def update_admin_settings_profile(
     )
     current["updated_at"] = datetime.now(UTC)
     _persist_settings(db, current)
-    return _admin_profile_response(db)
+    return _admin_profile_response(db, str(current_admin["id"]))
 
 
 @router.post("/profile/avatar")

@@ -19,14 +19,24 @@ class Settings(BaseSettings):
     environment: str = "development"
     api_v1_prefix: str = "/api/v1"
     debug: bool = True
-    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
-    cors_origin_regex: str = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+    cors_origins: list[str] = Field(default_factory=lambda: [
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://localhost:8081",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
+        "http://127.0.0.1:8081",
+    ])
+    # Allows: localhost, 127.x.x.x, 192.168.x.x, 10.x.x.x, 172.16-31.x.x (all LAN)
+    cors_origin_regex: str = (
+        r"^https?://(localhost|127\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|"
+        r"10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$"
+    )
 
     mongodb_uri: str = "mongodb://localhost:27017"
     mongodb_db_name: str = "nuno"
 
     jwt_secret_key: str = Field("change-me-please", min_length=16)
-    jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 10
     refresh_token_expire_minutes: int = 60 * 24 * 30
     reset_token_expire_minutes: int = 15

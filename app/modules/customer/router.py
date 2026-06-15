@@ -271,27 +271,80 @@ def get_event_directions(event_id: str) -> PlannedEndpointResponse:
     return _planned("/customer/events/{event_id}/directions", "Map directions deep link payload.", ["Event details"])
 
 
-@router.get("/hotels", tags=["Customer - Hotels"], response_model=PlannedEndpointResponse)
-def list_hotels() -> PlannedEndpointResponse:
-    return _planned("/customer/hotels", "Hotel list with map/list mode and filters.", ["Hotels list"])
+@router.get("/hotels", tags=["Customer - Hotels"])
+def list_hotels(
+    limit: int = Query(default=20, ge=1, le=100),
+    skip: int = Query(default=0, ge=0),
+    search: str | None = Query(default=None),
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    return customer_service.repo.list_hotels(
+        customer_id=current_user["id"],
+        limit=limit,
+        skip=skip,
+        search=search,
+    )
 
 
-@router.get("/hotels/{hotel_id}", tags=["Customer - Hotels"], response_model=PlannedEndpointResponse)
-def get_hotel_details(hotel_id: str) -> PlannedEndpointResponse:
-    _ = hotel_id
-    return _planned("/customer/hotels/{hotel_id}", "Hotel detail with rooms, gallery, reviews, offers.", ["Hotel details"])
+@router.get("/hotels/{hotel_id}", tags=["Customer - Hotels"])
+def get_hotel_details(
+    hotel_id: str,
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    row = customer_service.repo.get_hotel_details(current_user["id"], hotel_id)
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hotel not found.")
+    return row
 
 
-@router.get("/hotels/{hotel_id}/rooms", tags=["Customer - Hotels"], response_model=PlannedEndpointResponse)
-def list_hotel_rooms(hotel_id: str) -> PlannedEndpointResponse:
-    _ = hotel_id
-    return _planned("/customer/hotels/{hotel_id}/rooms", "List hotel room inventory by date and occupancy.", ["Rooms list"])
+@router.get("/hotels/{hotel_id}/rooms", tags=["Customer - Hotels"])
+def list_hotel_rooms(
+    hotel_id: str,
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> list[dict]:
+    try:
+        return customer_service.repo.list_hotel_rooms(hotel_id)
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hotel not found.") from exc
 
 
-@router.get("/hotels/rooms/{room_id}", tags=["Customer - Hotels"], response_model=PlannedEndpointResponse)
-def get_hotel_room_details(room_id: str) -> PlannedEndpointResponse:
-    _ = room_id
-    return _planned("/customer/hotels/rooms/{room_id}", "Room detail with amenities, price breakdown, policies.", ["Room details"])
+@router.get("/hotels/rooms/{room_id}", tags=["Customer - Hotels"])
+def get_hotel_room_details(
+    room_id: str,
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    try:
+        row = customer_service.repo.get_hotel_room_details(room_id)
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found.") from exc
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found.")
+    return row
+
+
+@router.get("/hotels/{hotel_id}/gallery", tags=["Customer - Hotels"])
+def get_hotel_gallery(
+    hotel_id: str,
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    try:
+        items = customer_service.repo.list_hotel_assets(hotel_id, "gallery")
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hotel not found.") from exc
+    return {"items": items}
+
+
+@router.get("/hotels/{hotel_id}/reviews", tags=["Customer - Hotels"])
+def get_hotel_reviews(
+    hotel_id: str,
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    try:
+        return customer_service.repo.get_hotel_reviews_payload(hotel_id)
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hotel not found.") from exc
 
 
 @router.get("/search", tags=["Customer - Search"], response_model=PlannedEndpointResponse)

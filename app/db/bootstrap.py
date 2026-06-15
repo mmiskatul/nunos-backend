@@ -63,6 +63,7 @@ def ensure_mongodb_indexes(db: Database) -> None:
     db["vendor_bookings"].create_index([("vendor_id", ASCENDING), ("customer_phone", ASCENDING)])
     db["vendor_assets"].create_index([("vendor_id", ASCENDING), ("asset_type", ASCENDING), ("created_at", DESCENDING)])
     db["vendor_rooms"].create_index([("vendor_id", ASCENDING), ("created_at", DESCENDING)])
+    db["vendor_services"].create_index([("vendor_id", ASCENDING), ("created_at", DESCENDING)])
     db["vendor_promotions"].create_index([("vendor_id", ASCENDING), ("created_at", DESCENDING)])
     db["vendor_promotions"].create_index([("vendor_id", ASCENDING), ("active", ASCENDING)])
     db["platform_campaigns"].create_index([("active", ASCENDING), ("created_at", DESCENDING)])

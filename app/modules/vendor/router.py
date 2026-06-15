@@ -24,6 +24,7 @@ from app.modules.vendor.schemas_portal import (
     ReviewReplyRequest,
     RoomAvailabilityRequest,
     RoomUpsertRequest,
+    ServiceUpsertRequest,
     VendorLegalDocRequest,
     VendorPasswordChangeRequest,
     VendorSettingsCommissionRequest,
@@ -417,6 +418,81 @@ def delete_vendor_room(
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found.")
     return MessageResponse(message="Room deleted.")
+
+
+@router.get("/rooms-services/services", tags=["Vendor - Rooms/Services"])
+def list_vendor_services(
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    vendor_id = _vendor_id(current_vendor)
+    portal_service.initialize(vendor_id)
+    return {"items": portal_service.repo.list_services(vendor_id)}
+
+
+@router.post("/rooms-services/services", tags=["Vendor - Rooms/Services"])
+def create_vendor_service(
+    payload: ServiceUpsertRequest,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    return portal_service.repo.create_service(_vendor_id(current_vendor), payload.model_dump())
+
+
+@router.get("/rooms-services/services/{service_id}", tags=["Vendor - Rooms/Services"])
+def get_vendor_service(
+    service_id: str,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    return portal_service.get_service_or_404(_vendor_id(current_vendor), service_id)
+
+
+@router.patch("/rooms-services/services/{service_id}", tags=["Vendor - Rooms/Services"])
+def update_vendor_service(
+    service_id: str,
+    payload: ServiceUpsertRequest,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    try:
+        row = portal_service.repo.update_service(_vendor_id(current_vendor), service_id, payload.model_dump())
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found.") from exc
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found.")
+    return row
+
+
+@router.patch("/rooms-services/services/{service_id}/status", tags=["Vendor - Rooms/Services"])
+def update_vendor_service_status(
+    service_id: str,
+    active: bool,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    try:
+        row = portal_service.repo.update_service_status(_vendor_id(current_vendor), service_id, active)
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found.") from exc
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found.")
+    return row
+
+
+@router.delete("/rooms-services/services/{service_id}", tags=["Vendor - Rooms/Services"], response_model=MessageResponse)
+def delete_vendor_service(
+    service_id: str,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> MessageResponse:
+    try:
+        deleted = portal_service.repo.delete_service(_vendor_id(current_vendor), service_id)
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found.") from exc
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found.")
+    return MessageResponse(message="Service deleted.")
 
 
 # ---------------------------------------------------------------------------

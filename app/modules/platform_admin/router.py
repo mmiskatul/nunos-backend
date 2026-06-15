@@ -1,6 +1,9 @@
-from datetime import datetime, timezone
+import time
+from datetime import datetime, timezone, timedelta
+from typing import Any
 
-from fastapi import APIRouter, Depends
+from bson import ObjectId
+from fastapi import APIRouter, Depends, HTTPException, Body, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.deps import get_db
@@ -8,6 +11,21 @@ from app.modules.schemas import GenericPatchRequest, MessageCreateRequest, Plann
 
 router = APIRouter(prefix="/platform-admin")
 
+_CACHE = {}
+
+def get_cached_data(key: str, ttl: int = 5):
+    now = time.time()
+    if key in _CACHE:
+        val, expiry = _CACHE[key]
+        if now < expiry:
+            return val
+    return None
+
+def set_cached_data(key: str, val: Any, ttl: int = 5):
+    _CACHE[key] = (val, time.time() + ttl)
+
+def invalidate_cache(key: str):
+    _CACHE.pop(key, None)
 
 def _planned(endpoint: str, description: str, connected_from: list[str]) -> PlannedEndpointResponse:
     return PlannedEndpointResponse(
@@ -16,6 +34,111 @@ def _planned(endpoint: str, description: str, connected_from: list[str]) -> Plan
         description=description,
         connected_from=connected_from,
     )
+
+async def _get_or_sync_billing_payments(db: AsyncIOMotorDatabase) -> list[dict]:
+    vendors = await db["vendors"].find({}).to_list(100)
+    
+    payments = []
+    for vendor in vendors:
+        vendor_id = vendor["_id"]
+        vendor_id_str = str(vendor_id)
+        
+        vendor_code = vendor.get("vendor_code")
+        if not vendor_code:
+            name = vendor.get("business_name") or vendor.get("owner_full_name") or "Vendor"
+            parts = [p.upper() for p in name.split() if p]
+            if len(parts) >= 2:
+                vendor_code = parts[0][0] + parts[1][0]
+            elif len(parts) == 1:
+                vendor_code = parts[0][:2].upper()
+            else:
+                vendor_code = "VN"
+            
+            existing_code = await db["vendors"].find_one({"vendor_code": vendor_code})
+            if existing_code:
+                vendor_code = f"{vendor_code}{vendor_id_str[-2:]}".upper()
+            
+            await db["vendors"].update_one({"_id": vendor_id}, {"$set": {"vendor_code": vendor_code}})
+        
+        bookings = await db["bookings"].find({"vendor_id": vendor_id}).to_list(1000)
+        total_revenue = sum(float(b.get("total_amount") or 0) for b in bookings)
+        
+        billing_doc = await db["billing_payments"].find_one({"vendor_id": vendor_id_str})
+        
+        settings_doc = await db["platform_admin_settings"].find_one({"_id": "platform_admin_settings"}) or {}
+        global_rate = float(settings_doc.get("commission", {}).get("globalRate", "12.50"))
+        
+        if not billing_doc:
+            commission_amount = total_revenue * (global_rate / 100)
+            net_payout = total_revenue - commission_amount
+            
+            created_at = vendor.get("created_at") or datetime.now(timezone.utc)
+            joined_date = created_at.strftime("%b %d, %Y")
+            
+            billing_doc = {
+                "vendor_id": vendor_id_str,
+                "vendorCode": vendor_code,
+                "vendorName": vendor.get("business_name") or vendor.get("owner_full_name") or "Vendor",
+                "totalEarnings": f"${total_revenue:,.2f}",
+                "commission": f"-${commission_amount:,.2f}",
+                "netPayout": f"${net_payout:,.2f}",
+                "status": "PENDING",
+                "details": {
+                    "profile": {
+                        "vendorTitle": vendor.get("business_name") or vendor.get("owner_full_name") or "Vendor",
+                        "location": vendor.get("address") or "Main Branch",
+                        "category": vendor.get("category") or "Hotel & Resort",
+                        "joinedDate": joined_date,
+                        "lastBillingDate": datetime.now(timezone.utc).strftime("%b %d, %Y"),
+                        "image": vendor.get("logo_url") or f"https://picsum.photos/seed/{vendor_id_str}/80/80"
+                    },
+                    "netPayable": {
+                        "amount": f"${net_payout:,.2f}",
+                        "dueDate": (datetime.now(timezone.utc) + timedelta(days=15)).strftime("%b %d, %Y"),
+                        "invoiceStatus": "PENDING"
+                    },
+                    "financialBreakdown": {
+                        "totalRevenue": f"${total_revenue:,.2f}",
+                        "commissionRate": f"{global_rate}%",
+                        "commissionAmount": f"-${commission_amount:,.2f}",
+                        "cycle": "Current cycle"
+                    },
+                    "history": [
+                        {
+                            "id": f"TXN-{vendor_code}-01",
+                            "date": datetime.now(timezone.utc).strftime("%b %d, %Y"),
+                            "amount": f"${net_payout:,.2f}",
+                            "status": "PENDING"
+                        }
+                    ]
+                }
+            }
+            await db["billing_payments"].insert_one(billing_doc)
+        else:
+            if not billing_doc.get("is_overridden"):
+                commission_amount = total_revenue * (global_rate / 100)
+                net_payout = total_revenue - commission_amount
+                
+                await db["billing_payments"].update_one(
+                    {"vendor_id": vendor_id_str},
+                    {
+                        "$set": {
+                            "totalEarnings": f"${total_revenue:,.2f}",
+                            "commission": f"-${commission_amount:,.2f}",
+                            "netPayout": f"${net_payout:,.2f}",
+                            "details.financialBreakdown.totalRevenue": f"${total_revenue:,.2f}",
+                            "details.financialBreakdown.commissionAmount": f"-${commission_amount:,.2f}",
+                            "details.netPayable.amount": f"${net_payout:,.2f}"
+                        }
+                    }
+                )
+                billing_doc = await db["billing_payments"].find_one({"vendor_id": vendor_id_str})
+        
+        billing_doc["id"] = str(billing_doc.get("_id"))
+        billing_doc.pop("_id", None)
+        payments.append(billing_doc)
+        
+    return payments
 
 
 @router.get("/dashboard/overview", tags=["Platform Admin - Dashboard"])
@@ -164,37 +287,185 @@ def list_platform_user_bookings(user_id: str) -> PlannedEndpointResponse:
     return _planned("/platform-admin/users/{user_id}/bookings", "Recent bookings for a user.", ["User detail panel"])
 
 
-@router.get("/moderation/submissions", tags=["Platform Admin - Moderation"], response_model=PlannedEndpointResponse)
-def list_moderation_submissions() -> PlannedEndpointResponse:
-    return _planned("/platform-admin/moderation/submissions", "Content moderation queue.", ["Content moderation"])
+@router.get("/moderation/submissions", tags=["Platform Admin - Moderation"])
+async def list_moderation_submissions(
+    db: AsyncIOMotorDatabase = Depends(get_db),
+) -> dict:
+    cache_key = "moderation_submissions"
+    cached = get_cached_data(cache_key)
+    if cached is not None:
+        return cached
+
+    vendors = await db["vendors"].find({"status": {"$in": ["pending_approval", "pending_review", "pending"]}}).to_list(100)
+    
+    items = []
+    for vendor in vendors:
+        vendor_id_str = str(vendor["_id"])
+        
+        created_at = vendor.get("created_at") or datetime.now(timezone.utc)
+        delta = datetime.now(timezone.utc) - created_at.replace(tzinfo=timezone.utc) if created_at.tzinfo else datetime.now(timezone.utc) - created_at
+        if delta.days > 0:
+            age = f"{delta.days} days ago"
+        elif delta.seconds >= 3600:
+            age = f"{delta.seconds // 3600} hours ago"
+        elif delta.seconds >= 60:
+            age = f"{delta.seconds // 60} mins ago"
+        else:
+            age = "just now"
+            
+        items.append({
+            "id": vendor_id_str,
+            "title": vendor.get("business_name") or vendor.get("owner_full_name") or "Vendor Review",
+            "age": age,
+            "subtitle": f"Verify KYC details for {vendor.get('category', 'vendor')}",
+            "venue": vendor.get("business_name") or "Vendor Venue",
+            "location": vendor.get("address") or "Address not provided",
+            "vendorId": vendor_id_str,
+            "queueType": "INFO",
+            "previewImage": vendor.get("logo_url") or f"https://picsum.photos/seed/{vendor_id_str}/200/120",
+            "state": "pending"
+        })
+        
+    result = {
+        "totalSubmissions": len(items),
+        "items": items
+    }
+    set_cached_data(cache_key, result, ttl=5)
+    return result
 
 
-@router.get(
-    "/moderation/submissions/{submission_id}",
-    tags=["Platform Admin - Moderation"],
-    response_model=PlannedEndpointResponse,
-)
-def get_moderation_submission(submission_id: str) -> PlannedEndpointResponse:
-    _ = submission_id
-    return _planned(
-        "/platform-admin/moderation/submissions/{submission_id}",
-        "Moderation submission detail modal.",
-        ["Review details modal"],
+@router.get("/moderation/submissions/{submission_id}", tags=["Platform Admin - Moderation"])
+async def get_moderation_submission(
+    submission_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+) -> dict:
+    try:
+        vendor = await db["vendors"].find_one({"_id": ObjectId(submission_id)})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid submission ID format")
+        
+    if not vendor:
+        raise HTTPException(status_code=404, detail="Submission not found")
+        
+    created_at = vendor.get("created_at") or datetime.now(timezone.utc)
+    delta = datetime.now(timezone.utc) - created_at.replace(tzinfo=timezone.utc) if created_at.tzinfo else datetime.now(timezone.utc) - created_at
+    if delta.days > 0:
+        age = f"{delta.days} days ago"
+    elif delta.seconds >= 3600:
+        age = f"{delta.seconds // 3600} hours ago"
+    elif delta.seconds >= 60:
+        age = f"{delta.seconds // 60} mins ago"
+    else:
+        age = "just now"
+        
+    return {
+        "id": str(vendor["_id"]),
+        "title": vendor.get("business_name") or vendor.get("owner_full_name") or "Vendor Review",
+        "age": age,
+        "subtitle": f"Verify KYC details for {vendor.get('category', 'vendor')}",
+        "venue": vendor.get("business_name") or "Vendor Venue",
+        "location": vendor.get("address") or "Address not provided",
+        "vendorId": str(vendor["_id"]),
+        "queueType": "INFO",
+        "previewImage": vendor.get("logo_url") or f"https://picsum.photos/seed/{str(vendor['_id'])}/200/120",
+        "state": "pending" if vendor.get("status") in ["pending_approval", "pending_review", "pending"] else ("approved" if vendor.get("status") == "approved" else "rejected")
+    }
+
+
+@router.patch("/moderation/submissions/{submission_id}/decision", tags=["Platform Admin - Moderation"])
+async def decide_moderation_submission(
+    submission_id: str,
+    payload: dict = Body(...),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+) -> dict:
+    try:
+        vendor = await db["vendors"].find_one({"_id": ObjectId(submission_id)})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid submission ID format")
+        
+    if not vendor:
+        raise HTTPException(status_code=404, detail="Submission not found")
+        
+    action = payload.get("action") or payload.get("status") or "approved"
+    decision = "approved" if action == "approved" else "rejected"
+    
+    now = datetime.now(timezone.utc)
+    if decision == "approved":
+        set_payload = {
+            "status": "approved",
+            "kyc_status": "approved",
+            "kyc_reviewed_at": now,
+            "kyc_rejection_reason": None,
+            "updated_at": now,
+        }
+        verification_status = "approved"
+        rejection_reason = None
+    else:
+        set_payload = {
+            "status": "rejected",
+            "kyc_status": "rejected",
+            "kyc_reviewed_at": now,
+            "kyc_rejection_reason": payload.get("note") or "Rejected by moderation.",
+            "updated_at": now,
+        }
+        verification_status = "rejected"
+        rejection_reason = payload.get("note") or "Rejected by moderation."
+        
+    await db["vendors"].update_one({"_id": vendor["_id"]}, {"$set": set_payload})
+    await db["vendor_verification_details"].update_one(
+        {"vendor_id": vendor["_id"]},
+        {
+            "$set": {
+                "status": verification_status,
+                "reviewed_at": now,
+                "rejection_reason": rejection_reason,
+                "updated_at": now,
+            }
+        },
+        upsert=True,
     )
-
-
-@router.patch(
-    "/moderation/submissions/{submission_id}/decision",
-    tags=["Platform Admin - Moderation"],
-    response_model=PlannedEndpointResponse,
-)
-def decide_moderation_submission(submission_id: str, payload: StatusUpdateRequest) -> PlannedEndpointResponse:
-    _ = (submission_id, payload)
-    return _planned(
-        "/platform-admin/moderation/submissions/{submission_id}/decision",
-        "Approve/reject moderated content.",
-        ["Review details modal"],
+    await db["vendor_admin_reviews"].update_one(
+        {"vendor_id": vendor["_id"]},
+        {
+            "$set": {
+                "review_status": verification_status,
+                "reviewed_at": now,
+                "rejection_reason": rejection_reason,
+                "updated_at": now,
+            },
+            "$setOnInsert": {"created_at": now},
+        },
+        upsert=True,
     )
+    
+    invalidate_cache("moderation_submissions")
+    
+    updated_vendor = await db["vendors"].find_one({"_id": vendor["_id"]})
+    created_at = updated_vendor.get("created_at") or datetime.now(timezone.utc)
+    delta = datetime.now(timezone.utc) - created_at.replace(tzinfo=timezone.utc) if created_at.tzinfo else datetime.now(timezone.utc) - created_at
+    if delta.days > 0:
+        age = f"{delta.days} days ago"
+    elif delta.seconds >= 3600:
+        age = f"{delta.seconds // 3600} hours ago"
+    elif delta.seconds >= 60:
+        age = f"{delta.seconds // 60} mins ago"
+    else:
+        age = "just now"
+        
+    return {
+        "item": {
+            "id": str(updated_vendor["_id"]),
+            "title": updated_vendor.get("business_name") or updated_vendor.get("owner_full_name") or "Vendor Review",
+            "age": age,
+            "subtitle": f"Verify KYC details for {updated_vendor.get('category', 'vendor')}",
+            "venue": updated_vendor.get("business_name") or "Vendor Venue",
+            "location": updated_vendor.get("address") or "Address not provided",
+            "vendorId": str(updated_vendor["_id"]),
+            "queueType": "INFO",
+            "previewImage": updated_vendor.get("logo_url") or f"https://picsum.photos/seed/{str(updated_vendor['_id'])}/200/120",
+            "state": decision
+        }
+    }
 
 
 @router.get("/offers", tags=["Platform Admin - Offers"], response_model=PlannedEndpointResponse)
@@ -254,54 +525,181 @@ def update_platform_offer_provider_state(
     )
 
 
-@router.get("/billing/overview", tags=["Platform Admin - Billing"], response_model=PlannedEndpointResponse)
-def get_billing_overview() -> PlannedEndpointResponse:
-    return _planned("/platform-admin/billing/overview", "Billing KPI cards.", ["Billing page"])
+@router.get("/billing/overview", tags=["Platform Admin - Billing"])
+async def get_billing_overview(
+    db: AsyncIOMotorDatabase = Depends(get_db),
+) -> dict:
+    cache_key = "billing_overview"
+    cached = get_cached_data(cache_key)
+    if cached is not None:
+        return cached
+
+    payments = await _get_or_sync_billing_payments(db)
+    
+    total_revenue = 0.0
+    platform_commission = 0.0
+    pending_payouts = 0.0
+    
+    for p in payments:
+        def parse_money(val: str) -> float:
+            try:
+                return float(val.replace("$", "").replace(",", "").replace("-", ""))
+            except:
+                return 0.0
+        
+        earnings = parse_money(p.get("totalEarnings", "0"))
+        commission = parse_money(p.get("commission", "0"))
+        payout = parse_money(p.get("netPayout", "0"))
+        
+        total_revenue += earnings
+        platform_commission += commission
+        if p.get("status") == "PENDING":
+            pending_payouts += payout
+            
+    summary_cards = [
+        {
+            "label": "Total Revenue",
+            "value": f"${total_revenue:,.2f}",
+            "note": "+12.5%",
+            "tone": "text-[#16a34a]"
+        },
+        {
+            "label": "Platform Commission",
+            "value": f"${platform_commission:,.2f}",
+            "note": "+8.2%",
+            "tone": "text-[#16a34a]"
+        },
+        {
+            "label": "Pending Payouts",
+            "value": f"${pending_payouts:,.2f}",
+            "note": "Action Needed",
+            "tone": "text-[#f59e0b]"
+        },
+        {
+            "label": "Active Subscriptions",
+            "value": str(len(payments)),
+            "note": "Total Vendors",
+            "tone": "text-[#8b96ad]"
+        }
+    ]
+    
+    result = {
+        "summaryCards": summary_cards,
+        "recentPayments": payments
+    }
+    set_cached_data(cache_key, result, ttl=5)
+    return result
 
 
-@router.get("/billing/payments", tags=["Platform Admin - Billing"], response_model=PlannedEndpointResponse)
-def list_billing_payments() -> PlannedEndpointResponse:
-    return _planned("/platform-admin/billing/payments", "Vendor payout listing.", ["Billing table"])
+@router.get("/billing/payments", tags=["Platform Admin - Billing"])
+async def list_billing_payments(
+    db: AsyncIOMotorDatabase = Depends(get_db),
+) -> dict:
+    payments = await _get_or_sync_billing_payments(db)
+    return {"payments": payments}
 
 
-@router.get("/billing/payments/{payment_id}", tags=["Platform Admin - Billing"], response_model=PlannedEndpointResponse)
-def get_billing_payment(payment_id: str) -> PlannedEndpointResponse:
-    _ = payment_id
-    return _planned("/platform-admin/billing/payments/{payment_id}", "Billing detail breakdown.", ["Billing details"])
+@router.get("/billing/payments/{payment_id}", tags=["Platform Admin - Billing"])
+async def get_billing_payment(
+    payment_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+) -> dict:
+    payments = await _get_or_sync_billing_payments(db)
+    match = next((p for p in payments if p["vendorCode"] == payment_id or p["vendor_id"] == payment_id), None)
+    if not match:
+        raise HTTPException(status_code=404, detail="Payment record not found")
+    return match
 
 
-@router.get(
-    "/billing/payments/{payment_id}/invoice",
-    tags=["Platform Admin - Billing"],
-    response_model=PlannedEndpointResponse,
-)
-def download_billing_invoice(payment_id: str) -> PlannedEndpointResponse:
-    _ = payment_id
-    return _planned("/platform-admin/billing/payments/{payment_id}/invoice", "Download invoice document.", ["Billing details"])
-
-
-@router.post(
-    "/billing/payments/{payment_id}/send-reminder",
-    tags=["Platform Admin - Billing"],
-    response_model=PlannedEndpointResponse,
-)
-def send_billing_reminder(payment_id: str) -> PlannedEndpointResponse:
-    _ = payment_id
-    return _planned(
-        "/platform-admin/billing/payments/{payment_id}/send-reminder",
-        "Send payout reminder to vendor.",
-        ["Billing details"],
+@router.patch("/billing/payments/{payment_id}", tags=["Platform Admin - Billing"])
+async def update_billing_breakdown(
+    payment_id: str,
+    payload: dict = Body(...),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+) -> dict:
+    doc = await db["billing_payments"].find_one({"vendorCode": payment_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Payment record not found")
+        
+    total_revenue = payload.get("totalRevenue")
+    commission_rate = payload.get("commissionRate")
+    commission_amount = payload.get("commissionAmount")
+    
+    update_fields = {
+        "is_overridden": True
+    }
+    if total_revenue is not None:
+        update_fields["totalEarnings"] = f"${total_revenue:,.2f}"
+        update_fields["details.financialBreakdown.totalRevenue"] = f"${total_revenue:,.2f}"
+    if commission_rate is not None:
+        update_fields["details.financialBreakdown.commissionRate"] = f"{commission_rate}%"
+    if commission_amount is not None:
+        update_fields["commission"] = f"-${commission_amount:,.2f}"
+        update_fields["details.financialBreakdown.commissionAmount"] = f"-${commission_amount:,.2f}"
+        
+    if total_revenue is not None and commission_amount is not None:
+        net_payout = total_revenue - commission_amount
+        update_fields["netPayout"] = f"${net_payout:,.2f}"
+        update_fields["details.netPayable.amount"] = f"${net_payout:,.2f}"
+        
+    await db["billing_payments"].update_one(
+        {"vendorCode": payment_id},
+        {"$set": update_fields}
     )
+    
+    invalidate_cache("billing_overview")
+    
+    payments = await _get_or_sync_billing_payments(db)
+    updated = next((p for p in payments if p["vendorCode"] == payment_id), None)
+    return {"payments": payments, "updated": updated}
 
 
-@router.post(
-    "/billing/payments/{payment_id}/mark-paid",
-    tags=["Platform Admin - Billing"],
-    response_model=PlannedEndpointResponse,
-)
-def mark_billing_payment_paid(payment_id: str) -> PlannedEndpointResponse:
-    _ = payment_id
-    return _planned("/platform-admin/billing/payments/{payment_id}/mark-paid", "Mark payout as paid.", ["Billing details"])
+@router.post("/billing/payments/{payment_id}/send-reminder", tags=["Platform Admin - Billing"])
+async def send_billing_reminder(
+    payment_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+) -> dict:
+    doc = await db["billing_payments"].find_one({"vendorCode": payment_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Payment record not found")
+        
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db["billing_payments"].update_one(
+        {"vendorCode": payment_id},
+        {"$set": {"details.reminderSentAt": now_iso}}
+    )
+    
+    invalidate_cache("billing_overview")
+    
+    payments = await _get_or_sync_billing_payments(db)
+    updated = next((p for p in payments if p["vendorCode"] == payment_id), None)
+    return {"payments": payments, "updated": updated}
+
+
+@router.post("/billing/payments/{payment_id}/mark-paid", tags=["Platform Admin - Billing"])
+async def mark_billing_payment_paid(
+    payment_id: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+) -> dict:
+    doc = await db["billing_payments"].find_one({"vendorCode": payment_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Payment record not found")
+        
+    await db["billing_payments"].update_one(
+        {"vendorCode": payment_id},
+        {"$set": {"status": "PAID", "details.netPayable.invoiceStatus": "PAID"}}
+    )
+    
+    invalidate_cache("billing_overview")
+    
+    payments = await _get_or_sync_billing_payments(db)
+    updated = next((p for p in payments if p["vendorCode"] == payment_id), None)
+    return {"payments": payments, "updated": updated}
+
+
+@router.get("/billing/payments/{payment_id}/invoice", tags=["Platform Admin - Billing"])
+def download_billing_invoice(payment_id: str) -> dict:
+    return {"invoice_url": f"https://example.com/invoices/{payment_id}.pdf"}
 
 
 @router.get("/support/tickets", tags=["Platform Admin - Support"], response_model=PlannedEndpointResponse)

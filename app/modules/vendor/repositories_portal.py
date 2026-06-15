@@ -12,6 +12,7 @@ class VendorPortalRepository:
         self.bookings: Collection = db["vendor_bookings"]
         self.assets: Collection = db["vendor_assets"]
         self.rooms: Collection = db["vendor_rooms"]
+        self.services: Collection = db["vendor_services"]
         self.promotions: Collection = db["vendor_promotions"]
         self.platform_campaigns: Collection = db["platform_campaigns"]
         self.loyalty_settings: Collection = db["vendor_loyalty_settings"]
@@ -26,6 +27,7 @@ class VendorPortalRepository:
         self.bookings.create_index([("vendor_id", 1), ("customer_phone", 1)])
         self.assets.create_index([("vendor_id", 1), ("asset_type", 1), ("created_at", -1)])
         self.rooms.create_index([("vendor_id", 1), ("created_at", -1)])
+        self.services.create_index([("vendor_id", 1), ("created_at", -1)])
         self.promotions.create_index([("vendor_id", 1), ("created_at", -1)])
         self.promotions.create_index([("vendor_id", 1), ("active", 1)])
         self.platform_campaigns.create_index([("active", 1), ("created_at", -1)])
@@ -260,6 +262,49 @@ class VendorPortalRepository:
 
     def delete_room(self, vendor_id: str, room_id: str) -> bool:
         result = self.rooms.delete_one({"_id": ObjectId(room_id), "vendor_id": ObjectId(vendor_id)})
+        return result.deleted_count > 0
+
+    def list_services(self, vendor_id: str) -> list[dict[str, Any]]:
+        docs = self.services.find({"vendor_id": ObjectId(vendor_id)}).sort("created_at", DESCENDING)
+        return [self._serialize(doc) for doc in docs]
+
+    def create_service(self, vendor_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        now = datetime.now(UTC)
+        sanitized = self._sanitize_payload(payload)
+        inserted = self.services.insert_one(
+            {
+                "vendor_id": ObjectId(vendor_id),
+                **sanitized,
+                "available": sanitized.get("active_status", True),
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+        created = self.services.find_one({"_id": inserted.inserted_id})
+        return self._serialize(created)  # type: ignore[return-value]
+
+    def get_service(self, vendor_id: str, service_id: str) -> dict[str, Any] | None:
+        return self._serialize(
+            self.services.find_one({"_id": ObjectId(service_id), "vendor_id": ObjectId(vendor_id)})
+        )
+
+    def update_service(self, vendor_id: str, service_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+        sanitized = self._sanitize_payload(payload)
+        self.services.update_one(
+            {"_id": ObjectId(service_id), "vendor_id": ObjectId(vendor_id)},
+            {"$set": {**sanitized, "updated_at": datetime.now(UTC)}},
+        )
+        return self.get_service(vendor_id, service_id)
+
+    def update_service_status(self, vendor_id: str, service_id: str, active: bool) -> dict[str, Any] | None:
+        self.services.update_one(
+            {"_id": ObjectId(service_id), "vendor_id": ObjectId(vendor_id)},
+            {"$set": {"available": active, "updated_at": datetime.now(UTC)}},
+        )
+        return self.get_service(vendor_id, service_id)
+
+    def delete_service(self, vendor_id: str, service_id: str) -> bool:
+        result = self.services.delete_one({"_id": ObjectId(service_id), "vendor_id": ObjectId(vendor_id)})
         return result.deleted_count > 0
 
     def list_promotions(

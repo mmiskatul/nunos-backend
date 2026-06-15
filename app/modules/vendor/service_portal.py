@@ -35,6 +35,16 @@ class VendorPortalService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found.")
         return room
 
+    def get_service_or_404(self, vendor_id: str, service_id: str):
+        self.initialize(vendor_id)
+        try:
+            service = self.repo.get_service(vendor_id, service_id)
+        except InvalidId as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found.") from exc
+        if not service:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found.")
+        return service
+
     def get_promotion_or_404(self, vendor_id: str, promotion_id: str):
         self.initialize(vendor_id)
         try:
