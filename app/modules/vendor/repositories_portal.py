@@ -660,6 +660,17 @@ class VendorPortalRepository:
             self.support_tickets.find_one({"_id": ObjectId(ticket_id), "vendor_id": ObjectId(vendor_id)})
         )
 
+    def add_support_ticket_message(
+        self, vendor_id: str, ticket_id: str, message: str, metadata: dict | None = None
+    ) -> dict[str, Any] | None:
+        msg_entry = {"sender": "vendor", "message": message, "metadata": metadata or {}, "sent_at": datetime.now(UTC)}
+        result = self.support_tickets.find_one_and_update(
+            {"_id": ObjectId(ticket_id), "vendor_id": ObjectId(vendor_id)},
+            {"$push": {"messages": msg_entry}, "$set": {"updated_at": datetime.now(UTC)}},
+            return_document=True,
+        )
+        return self._serialize(result)
+
     def list_notifications(self, vendor_id: str, limit: int, skip: int) -> dict[str, Any]:
         query = {"vendor_id": ObjectId(vendor_id)}
         total = int(self.notifications.count_documents(query))

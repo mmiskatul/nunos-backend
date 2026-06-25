@@ -126,6 +126,11 @@ class VendorSupportTicketCreateRequest(BaseModel):
     description: str = Field(min_length=10, max_length=5000)
 
 
+class VendorSupportTicketMessageRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=5000)
+    metadata: dict = Field(default_factory=dict)
+
+
 class NotificationSettingsRequest(BaseModel):
     booking_alerts: bool = True
     review_alerts: bool = True

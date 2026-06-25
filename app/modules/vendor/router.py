@@ -31,6 +31,7 @@ from app.modules.vendor.schemas_portal import (
     VendorSettingsGeneralRequest,
     VendorSettingsProfileRequest,
     VendorSupportTicketCreateRequest,
+    VendorSupportTicketMessageRequest,
 )
 from app.modules.vendor.service_auth import VendorAuthService
 from app.modules.vendor.service_portal import VendorPortalService
@@ -914,6 +915,23 @@ def get_support_ticket(
     portal_service: VendorPortalService = Depends(get_vendor_portal_service),
 ) -> dict:
     return portal_service.get_support_ticket_or_404(_vendor_id(current_vendor), ticket_id)
+
+
+@router.post("/support/tickets/{ticket_id}/messages", tags=["Vendor - Support"])
+def add_support_ticket_message(
+    ticket_id: str,
+    payload: VendorSupportTicketMessageRequest,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    vendor_id = _vendor_id(current_vendor)
+    try:
+        row = portal_service.repo.add_support_ticket_message(vendor_id, ticket_id, payload.message, payload.metadata)
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found.") from exc
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found.")
+    return row
 
 
 # ---------------------------------------------------------------------------

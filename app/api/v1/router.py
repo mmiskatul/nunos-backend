@@ -12,6 +12,7 @@ from app.api.v1.routers.users import router as users_router
 # Module routers — vendor
 from app.modules.vendor.router import router as vendor_router
 from app.modules.vendor.routes_auth import router as vendor_auth_router
+from app.modules.vendor.routes_users import router as vendor_users_router
 
 # Module routers — customer
 from app.modules.customer.router import router as customer_router
@@ -47,6 +48,9 @@ api_router.include_router(vendor_auth_router)
 
 # ── Vendor portal (dashboard, bookings, menu, rooms, promotions…) ──────────
 api_router.include_router(vendor_router)
+
+# ── Vendor users (customers who have booked with this vendor) ──────────────
+api_router.include_router(vendor_users_router)
 
 # ── Platform admin auth ────────────────────────────────────────────────────
 api_router.include_router(platform_admin_auth_router)
