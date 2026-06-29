@@ -5,6 +5,7 @@ from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile, s
 from pymongo.database import Database
 
 from app.api.deps import get_cloudinary_uploader
+from app.core.account_lookup import find_existing_email_sync
 from app.core.security import hash_password, verify_password
 from app.modules.platform_admin.deps_auth import get_current_platform_admin
 from app.modules.platform_admin.deps import get_platform_admin_db
@@ -193,9 +194,17 @@ def update_admin_settings_profile(
     if not email:
       raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Admin email is required.")
 
-    existing = db["platform_admins"].find_one({"email": email})
-    if existing and str(existing.get("_id")) != str(current_admin.get("id")):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already exists.")
+    existing = find_existing_email_sync(
+        db,
+        email,
+        exclude_collection="platform_admins",
+        exclude_id=str(current_admin.get("id")),
+    )
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This email is already in use by another account.",
+        )
 
     db["platform_admins"].update_one(
         {"_id": ObjectId(str(current_admin["id"]))},

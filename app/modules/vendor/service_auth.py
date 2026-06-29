@@ -5,6 +5,7 @@ from bson.errors import InvalidId
 from fastapi import HTTPException, UploadFile, status
 from pymongo.errors import DuplicateKeyError
 
+from app.core.account_lookup import find_existing_email_sync
 from app.core.config import get_settings
 from app.core.contact import parse_email_or_phone
 from app.core.mongo_errors import duplicate_contact_conflict_detail
@@ -59,9 +60,12 @@ class VendorAuthService:
                 detail="Vendor registration requires email verification.",
             )
 
-        existing = self.vendor_repo.get_by_email(email)
+        existing = find_existing_email_sync(self.vendor_repo.collection.database, email)
         if existing:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already exists")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This email is already in use by another account.",
+            )
 
         code = self.signup_repo.create_validation_code(
             email=email,
@@ -117,8 +121,11 @@ class VendorAuthService:
         if not valid_token:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired signup token.")
 
-        if self.vendor_repo.get_by_email(email):
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already exists")
+        if find_existing_email_sync(self.vendor_repo.collection.database, email):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This email is already in use by another account.",
+            )
 
         phone = explicit_phone or phone_from_contact
         if phone and self.vendor_repo.get_by_phone(phone):
@@ -145,7 +152,7 @@ class VendorAuthService:
                 status_code=status.HTTP_409_CONFLICT,
                 detail=duplicate_contact_conflict_detail(
                     exc,
-                    email_detail="Email already exists",
+                    email_detail="This email is already in use by another account.",
                     phone_detail="Phone already exists",
                     default_detail="Email or phone already exists",
                 ),
@@ -200,6 +207,11 @@ class VendorAuthService:
 
         account_status = (vendor.get("status") or "").lower()
         if account_status != "approved":
+            if account_status == "blocked":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Your vendor account was blocked. Contact support.",
+                )
             if account_status == "rejected":
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,

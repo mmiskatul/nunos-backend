@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     mongodb_db_name: str = "nuno"
 
     jwt_secret_key: str = Field("change-me-please", min_length=16)
+    jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 10
     refresh_token_expire_minutes: int = 60 * 24 * 30
     reset_token_expire_minutes: int = 15

@@ -106,6 +106,83 @@ async def test_personal_details_get_and_update(client, test_db):
 
 
 @pytest.mark.asyncio
+async def test_vendor_signup_rejects_existing_user_email(client, test_db):
+    register_res = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "full_name": "Existing User",
+            "email": "shared@example.com",
+            "phone": "+15550004444",
+            "password": "StrongPass123!",
+        },
+    )
+    assert register_res.status_code == 200
+
+    signup_code = await test_db.otp_codes.find_one({"email": "shared@example.com", "purpose": "signup_verification"})
+    verify_res = await client.post(
+        "/api/v1/auth/verify-email",
+        json={"email": "shared@example.com", "otp": signup_code["code"]},
+    )
+    assert verify_res.status_code == 200
+
+    vendor_code_res = await client.post(
+        "/api/v1/vendor/auth/register/request-code",
+        json={"email_or_phone": "shared@example.com"},
+    )
+    assert vendor_code_res.status_code == 409
+    assert vendor_code_res.json()["detail"] == "This email is already in use by another account."
+
+
+@pytest.mark.asyncio
+async def test_personal_details_rejects_vendor_email(client, test_db):
+    await test_db.vendors.insert_one(
+        {
+            "business_name": "Shared Vendor",
+            "owner_full_name": "Vendor Owner",
+            "email": "vendor-shared@example.com",
+            "phone": "+15550005555",
+            "password_hash": hash_password("StrongPass123!"),
+            "role": "vendor",
+            "status": "approved",
+            "created_at": datetime.now(UTC),
+            "updated_at": datetime.now(UTC),
+        }
+    )
+
+    register_res = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "full_name": "Profile User",
+            "email": "profile-shared@example.com",
+            "phone": "+15550006666",
+            "password": "StrongPass123!",
+        },
+    )
+    assert register_res.status_code == 200
+
+    signup_code = await test_db.otp_codes.find_one({"email": "profile-shared@example.com", "purpose": "signup_verification"})
+    verify_res = await client.post(
+        "/api/v1/auth/verify-email",
+        json={"email": "profile-shared@example.com", "otp": signup_code["code"]},
+    )
+    token = verify_res.json()["data"]["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    patch_res = await client.patch(
+        "/api/v1/users/me/personal-details",
+        headers=headers,
+        json={
+            "full_name": "Updated Profile User",
+            "email": "vendor-shared@example.com",
+            "phone": "+15550006666",
+            "date_of_birth": "1992-03-15",
+        },
+    )
+    assert patch_res.status_code == 409
+    assert patch_res.json()["detail"] == "This email is already in use by another account."
+
+
+@pytest.mark.asyncio
 async def test_table_booking_flow(client, test_db):
     now = datetime.now(UTC)
     listing_id = (

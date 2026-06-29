@@ -4,6 +4,7 @@ from bson.errors import InvalidId
 from fastapi import HTTPException, status
 from pymongo.errors import DuplicateKeyError
 
+from app.core.account_lookup import find_existing_email_sync
 from app.core.config import get_settings
 from app.core.contact import parse_email_or_phone
 from app.core.mongo_errors import duplicate_contact_conflict_detail
@@ -51,8 +52,11 @@ class PlatformAdminAuthService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Admin registration requires email verification.",
             )
-        if self.admin_repo.get_by_email(email):
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already exists")
+        if find_existing_email_sync(self.admin_repo.collection.database, email):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This email is already in use by another account.",
+            )
 
         code = self.signup_repo.create_validation_code(
             email=email,
@@ -101,8 +105,11 @@ class PlatformAdminAuthService:
         if not valid_token:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired signup token.")
 
-        if self.admin_repo.get_by_email(email):
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already exists")
+        if find_existing_email_sync(self.admin_repo.collection.database, email):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This email is already in use by another account.",
+            )
 
         try:
             admin = self.admin_repo.create_admin(
@@ -120,7 +127,7 @@ class PlatformAdminAuthService:
                 status_code=status.HTTP_409_CONFLICT,
                 detail=duplicate_contact_conflict_detail(
                     exc,
-                    email_detail="Email already exists",
+                    email_detail="This email is already in use by another account.",
                     phone_detail="Phone already exists",
                     default_detail="Email or phone already exists",
                 ),

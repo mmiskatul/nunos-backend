@@ -14,6 +14,7 @@ from app.api.deps import (
     get_loyalty_service,
     get_user_repo,
 )
+from app.core.account_lookup import find_existing_email_async
 from app.core.responses import envelope
 from app.core.serializers import to_jsonable
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -114,9 +115,17 @@ async def update_personal_details(
     normalized_phone = payload.phone.strip() if payload.phone else None
 
     if normalized_email and normalized_email != current_user.get("email"):
-        existing_email_user = await user_repo.find_by_email(normalized_email)
-        if existing_email_user and str(existing_email_user["_id"]) != user_id:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already exists")
+        existing_email_account = await find_existing_email_async(
+            user_repo.collection.database,
+            normalized_email,
+            exclude_collection="users",
+            exclude_id=user_id,
+        )
+        if existing_email_account:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This email is already in use by another account.",
+            )
 
     if normalized_phone and normalized_phone != current_user.get("phone"):
         existing_phone_user = await user_repo.find_by_phone(normalized_phone)

@@ -1,7 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.modules.platform_admin.deps import get_vendor_repository
-from app.modules.platform_admin.schemas import AdminVendorListResponse, VendorVerificationDecisionRequest
+from app.modules.platform_admin.schemas import (
+    AdminVendorListResponse,
+    VendorStatusUpdateRequest,
+    VendorVerificationDecisionRequest,
+)
 from app.modules.vendor.repositories_vendor import VendorRepository
 
 router = APIRouter(prefix="/platform-admin/vendors", tags=["Platform Admin - Vendors (Live)"])
@@ -59,8 +63,25 @@ def decide_vendor_verification(
     payload: VendorVerificationDecisionRequest,
     vendor_repo: VendorRepository = Depends(get_vendor_repository),
 ) -> dict:
+    decision = payload.decision.lower()
     updated = vendor_repo.set_verification_decision(
-        vendor_id=vendor_id, decision=payload.decision, reason=payload.rejection_reason
+        vendor_id=vendor_id, decision=decision, reason=payload.rejection_reason
+    )
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vendor not found.")
+    return updated
+
+
+@router.patch("/{vendor_id}/status", response_model=dict)
+def update_vendor_status(
+    vendor_id: str,
+    payload: VendorStatusUpdateRequest,
+    vendor_repo: VendorRepository = Depends(get_vendor_repository),
+) -> dict:
+    updated = vendor_repo.update_status(
+        vendor_id=vendor_id,
+        status=payload.status.lower(),
+        reason=payload.rejection_reason,
     )
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vendor not found.")

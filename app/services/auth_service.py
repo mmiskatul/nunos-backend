@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from fastapi import HTTPException, status
 from pymongo.errors import DuplicateKeyError
 
+from app.core.account_lookup import find_existing_email_async
 from app.core.config import Settings
 from app.core.mongo_errors import duplicate_contact_conflict_detail
 from app.core.security import (
@@ -53,9 +54,12 @@ class AuthService:
         if not payload.email:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email is required for registration")
 
-        existing_user = await self.user_repo.find_by_email(payload.email)
-        if existing_user:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already exists")
+        existing_account = await find_existing_email_async(self.user_repo.collection.database, payload.email)
+        if existing_account:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This email is already in use by another account.",
+            )
 
         if payload.phone:
             existing_phone = await self.user_repo.find_by_phone(payload.phone)
@@ -97,6 +101,13 @@ class AuthService:
         if not signup_doc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Registration request expired or missing")
 
+        existing_account = await find_existing_email_async(self.user_repo.collection.database, payload.email)
+        if existing_account:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This email is already in use by another account.",
+            )
+
         is_valid = await self.otp_repo.verify_code(
             email=payload.email,
             purpose="signup_verification",
@@ -125,7 +136,7 @@ class AuthService:
                 status_code=status.HTTP_409_CONFLICT,
                 detail=duplicate_contact_conflict_detail(
                     exc,
-                    email_detail="Email already exists",
+                    email_detail="This email is already in use by another account.",
                     phone_detail="Phone already exists",
                     default_detail="Email or phone already exists",
                 ),
@@ -161,6 +172,13 @@ class AuthService:
             if updates:
                 user = await self.user_repo.update_profile(str(user["_id"]), updates)
         else:
+            existing_account = await find_existing_email_async(self.user_repo.collection.database, social_user.email)
+            if existing_account:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="This email is already in use by another account.",
+                )
+
             try:
                 user = await self.user_repo.create_user(
                     {
@@ -181,7 +199,7 @@ class AuthService:
                     status_code=status.HTTP_409_CONFLICT,
                     detail=duplicate_contact_conflict_detail(
                         exc,
-                        email_detail="Email already exists",
+                        email_detail="This email is already in use by another account.",
                         phone_detail="Phone already exists",
                         default_detail="Email or phone already exists",
                     ),

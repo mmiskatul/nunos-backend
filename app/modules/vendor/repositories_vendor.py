@@ -145,6 +145,16 @@ class VendorRepository:
             }
             verification_status = "approved"
             rejection_reason = None
+        elif decision_normalized == "blocked":
+            set_payload = {
+                "status": "blocked",
+                "kyc_status": "blocked",
+                "kyc_reviewed_at": now,
+                "kyc_rejection_reason": reason or "Blocked by admin.",
+                "updated_at": now,
+            }
+            verification_status = "blocked"
+            rejection_reason = reason or "Blocked by admin."
         else:
             set_payload = {
                 "status": "rejected",
@@ -182,6 +192,9 @@ class VendorRepository:
             upsert=True,
         )
         return self.get_by_id(vendor_id)
+
+    def update_status(self, vendor_id: str, status: str, reason: str | None = None) -> dict[str, Any] | None:
+        return self.set_verification_decision(vendor_id=vendor_id, decision=status, reason=reason)
 
     def create_vendor_sections(
         self,
