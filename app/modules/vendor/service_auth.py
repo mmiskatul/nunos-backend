@@ -308,7 +308,7 @@ class VendorAuthService:
 
     def get_current_vendor_from_token(self, token: str) -> dict[str, Any]:
         try:
-            payload = decode_token(token, expected_type="access")
+            payload = decode_token(token, expected_type="access", expected_audience="vendor")
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid access token.") from exc
         vendor_id = payload.get("sub")
@@ -334,7 +334,7 @@ class VendorAuthService:
         )
 
     def _build_auth_response(self, vendor: dict[str, Any]) -> VendorAuthResponse:
-        token = create_access_token(vendor["id"])
+        token = create_access_token(vendor["id"], audience="vendor", role="vendor")
         return VendorAuthResponse(access_token=token, vendor=VendorPublic.model_validate(vendor))
 
     def _get_by_contact(self, email_or_phone: str) -> dict[str, Any] | None:

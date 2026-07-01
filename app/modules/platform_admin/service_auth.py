@@ -195,7 +195,7 @@ class PlatformAdminAuthService:
 
     def get_current_admin_from_token(self, token: str) -> dict[str, Any]:
         try:
-            payload = decode_token(token, expected_type="access")
+            payload = decode_token(token, expected_type="access", expected_audience="platform_admin")
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid access token.") from exc
         admin_id = payload.get("sub")
@@ -210,7 +210,7 @@ class PlatformAdminAuthService:
         return admin
 
     def _build_auth_response(self, admin: dict[str, Any]) -> AdminAuthResponse:
-        token = create_access_token(admin["id"])
+        token = create_access_token(admin["id"], audience="platform_admin", role="platform_admin")
         return AdminAuthResponse(access_token=token, admin=AdminPublic.model_validate(admin))
 
     def _get_by_contact(self, email_or_phone: str) -> dict[str, Any] | None:
