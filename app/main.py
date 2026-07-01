@@ -83,6 +83,13 @@ def create_app(*, settings: Settings | None = None, disable_startup_db: bool = F
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.get("/", tags=["Health"])
+    async def root() -> dict[str, str]:
+        return {
+            "status": "success",
+            "message": "API is successfully running.",
+        }
+
     return app
 
 
