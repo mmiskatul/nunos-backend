@@ -43,6 +43,122 @@ class VendorPortalRepository:
         blocked_keys = {"_id", "id", "vendor_id", "created_at", "updated_at"}
         return {key: value for key, value in payload.items() if key not in blocked_keys}
 
+    @staticmethod
+    def _to_float(value: Any, default: float = 0.0) -> float:
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            cleaned = "".join(char for char in value if char.isdigit() or char in ".-")
+            if cleaned:
+                try:
+                    return float(cleaned)
+                except ValueError:
+                    return default
+        return default
+
+    @classmethod
+    def _to_int(cls, value: Any, default: int = 0) -> int:
+        return int(round(cls._to_float(value, float(default))))
+
+    @staticmethod
+    def _promotion_type_label(offer_type: str) -> str:
+        normalized = offer_type.strip().lower()
+        if normalized == "fixed_amount":
+            return "FIXED"
+        if normalized == "happy_hour":
+            return "HAPPY HOUR"
+        if normalized == "custom_deal":
+            return "CUSTOM DEAL"
+        return normalized.replace("_", " ").upper() or "PERCENTAGE"
+
+    @classmethod
+    def _promotion_value_label(cls, row: dict[str, Any]) -> str:
+        offer_type = str(row.get("offer_type", "")).strip().lower()
+        discount_value = cls._to_float(row.get("discount_value"))
+        if offer_type == "percentage":
+            return f"{discount_value:g}% Off"
+        if offer_type == "fixed_amount":
+            return f"${discount_value:,.2f} Off"
+        if offer_type == "happy_hour":
+            return f"${discount_value:,.2f} Happy Hour"
+        if discount_value > 0:
+            return f"${discount_value:,.2f}"
+        return str(row.get("value") or "").strip()
+
+    @staticmethod
+    def _promotion_schedule_label(row: dict[str, Any]) -> str:
+        recurring_days = row.get("recurring_days")
+        if isinstance(recurring_days, list):
+            days = [str(day).strip() for day in recurring_days if str(day).strip()]
+            if days:
+                return " - ".join(days)
+        start_date = str(row.get("start_date") or "").strip()
+        end_date = str(row.get("end_date") or "").strip()
+        if start_date and end_date:
+            return f"{start_date} - {end_date}"
+        return start_date or end_date or "No schedule"
+
+    @classmethod
+    def _normalize_promotion_row(cls, row: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(row)
+        usage_count = cls._to_int(
+            row.get("usage_count", row.get("usageCount", row.get("redemptions", 0))),
+        )
+        usage_max = cls._to_int(
+            row.get("usage_max", row.get("usageMax", row.get("campaign_reach", 0))),
+        )
+        normalized["name"] = row.get("name") or row.get("promotion_name") or ""
+        normalized["description"] = row.get("description") or row.get("internal_description") or ""
+        normalized["type"] = row.get("type") or cls._promotion_type_label(str(row.get("offer_type", "percentage")))
+        normalized["value"] = row.get("value") or cls._promotion_value_label(row)
+        normalized["schedule"] = row.get("schedule") or cls._promotion_schedule_label(row)
+        normalized["usage_count"] = usage_count
+        normalized["usage_max"] = max(usage_max, usage_count)
+        normalized["is_active"] = bool(row.get("is_active", row.get("active", False)))
+        return normalized
+
+    @classmethod
+    def summarize_promotions(cls, promotions: list[dict[str, Any]]) -> dict[str, Any]:
+        active_promotions = 0
+        campaign_reach = 0
+        total_conversion = 0.0
+        conversion_bases = 0
+        total_promo_revenue = 0.0
+
+        for row in promotions:
+            if bool(row.get("active")):
+                active_promotions += 1
+
+            usage_count = cls._to_int(row.get("usage_count", row.get("usageCount", row.get("redemptions", 0))))
+            usage_max = cls._to_int(row.get("usage_max", row.get("usageMax", row.get("campaign_reach", 0))))
+            campaign_reach += max(usage_max, usage_count)
+
+            if usage_max > 0:
+                total_conversion += (usage_count / usage_max) * 100
+                conversion_bases += 1
+
+            explicit_revenue = row.get("total_promo_revenue", row.get("promo_revenue", row.get("revenue_generated")))
+            if explicit_revenue not in (None, ""):
+                total_promo_revenue += cls._to_float(explicit_revenue)
+                continue
+
+            discount_value = cls._to_float(row.get("discount_value"))
+            minimum_spend = cls._to_float(row.get("minimum_spend"))
+            offer_type = str(row.get("offer_type", "")).strip().lower()
+            if offer_type == "percentage" and minimum_spend > 0:
+                total_promo_revenue += usage_count * ((minimum_spend * discount_value) / 100)
+            elif offer_type == "fixed_amount":
+                total_promo_revenue += usage_count * discount_value
+
+        avg_conversion_percent = round(total_conversion / conversion_bases, 1) if conversion_bases else 0.0
+        return {
+            "total_promotions": len(promotions),
+            "active_promotions": active_promotions,
+            "campaign_reach": campaign_reach,
+            "avg_conversion_percent": avg_conversion_percent,
+            "total_promo_revenue": round(total_promo_revenue, 2),
+        }
+
     def ensure_seed_data(self, vendor_id: str) -> None:
         _ = vendor_id
         # Demo/static seeding is intentionally disabled.
@@ -316,7 +432,7 @@ class VendorPortalRepository:
         if active is not None:
             query["active"] = active
         docs = self.promotions.find(query).sort("created_at", DESCENDING)
-        return [self._serialize(doc) for doc in docs]
+        return [self._normalize_promotion_row(self._serialize(doc) or {}) for doc in docs]
 
     def create_promotion(self, vendor_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         now = datetime.now(UTC)
@@ -359,6 +475,8 @@ class VendorPortalRepository:
         }
         for campaign in campaigns:
             campaign["joined"] = campaign.get("id") in joined_ids
+            campaign["title"] = campaign.get("title") or campaign.get("campaign_name") or campaign.get("name") or ""
+            campaign["is_active"] = bool(campaign.get("joined"))
         return campaigns
 
     def set_platform_campaign_join(self, vendor_id: str, campaign_id: str, join: bool) -> dict[str, Any]:

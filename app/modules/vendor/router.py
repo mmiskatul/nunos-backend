@@ -520,14 +520,8 @@ def list_vendor_promotions(
     portal_service.initialize(vendor_id)
     business_promotions = portal_service.repo.list_promotions(vendor_id, search=search, active=active)
     platform_campaigns = portal_service.repo.list_platform_campaigns(vendor_id)
-    active_count = len([row for row in business_promotions if row.get("active") is True])
     return {
-        "summary": {
-            "total_promotions": len(business_promotions),
-            "active_promotions": active_count,
-            "campaign_reach": active_count * 1000,
-            "avg_conversion_percent": round(18.0 + (active_count * 0.2), 1),
-        },
+        "summary": portal_service.repo.summarize_promotions(business_promotions),
         "business_promotions": business_promotions,
         "platform_campaigns": platform_campaigns,
     }
