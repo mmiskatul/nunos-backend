@@ -397,3 +397,44 @@ async def test_vendor_register_and_login_flow(client, test_db):
     assert login_res.status_code == 200
     assert login_res.json()["access_token"]
     assert login_res.json()["vendor"]["email"] == "vendor@example.com"
+
+
+@pytest.mark.asyncio
+async def test_vendor_request_code_allows_repeat_before_registration(client):
+    first_res = await client.post(
+        "/api/v1/vendor/auth/register/request-code",
+        json={"email_or_phone": "repeat-vendor@example.com"},
+    )
+    assert first_res.status_code == 200
+    first_code = first_res.json()["validation_code"]
+    assert first_code
+
+    second_res = await client.post(
+        "/api/v1/vendor/auth/register/request-code",
+        json={"email_or_phone": "repeat-vendor@example.com"},
+    )
+    assert second_res.status_code == 200
+    second_code = second_res.json()["validation_code"]
+    assert second_code
+
+
+@pytest.mark.asyncio
+async def test_vendor_request_code_reports_pending_vendor_status(client, test_db):
+    await test_db.vendors.insert_one(
+        {
+            "business_name": "Pending Vendor",
+            "owner_full_name": "Pending Owner",
+            "email": "pending-vendor@example.com",
+            "password_hash": "hashed",
+            "role": "vendor",
+            "status": "pending_approval",
+            "kyc_status": "pending_review",
+        }
+    )
+
+    response = await client.post(
+        "/api/v1/vendor/auth/register/request-code",
+        json={"email_or_phone": "pending-vendor@example.com"},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"] == "A service provider account for this email already exists and is pending admin approval."

@@ -34,6 +34,21 @@ from app.providers.cloudinary_uploader import CloudinaryUploader
 from app.providers.email_sender import EmailSender
 
 
+def _existing_vendor_conflict_detail(vendor: dict[str, Any]) -> str:
+    status_value = str(vendor.get("status") or "").lower()
+
+    if status_value == "pending_approval":
+        return "A service provider account for this email already exists and is pending admin approval."
+    if status_value == "approved":
+        return "This email is already registered as a service provider."
+    if status_value == "rejected":
+        return "This service provider account was rejected. Contact support before registering again."
+    if status_value == "blocked":
+        return "This service provider account is blocked. Contact support."
+
+    return "This email is already in use by another account."
+
+
 class VendorAuthService:
     """Service layer for vendor onboarding and authentication."""
 
@@ -62,9 +77,13 @@ class VendorAuthService:
 
         existing = find_existing_email_sync(self.vendor_repo.collection.database, email)
         if existing:
+            if existing.get("collection") == "vendors" and isinstance(existing.get("document"), dict):
+                detail = _existing_vendor_conflict_detail(existing["document"])
+            else:
+                detail = "This email is already in use by another account."
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="This email is already in use by another account.",
+                detail=detail,
             )
 
         code = self.signup_repo.create_validation_code(
