@@ -1,4 +1,5 @@
 import hashlib
+import math
 from datetime import UTC, datetime
 from typing import Any
 
@@ -62,6 +63,48 @@ class CustomerRepository:
         lng_offset = (int(digest[4:8], 16) % 2000) / 100000
         return {"lat": 25.2854 + lat_offset, "lng": 51.5310 + lng_offset}
 
+    @staticmethod
+    def _to_float(value: Any) -> float | None:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _get_customer_coords(self, customer_id: str) -> tuple[float | None, float | None]:
+        user = self.users.find_one({"_id": self._oid(customer_id)}, {"latitude": 1, "longitude": 1}) or {}
+        return self._to_float(user.get("latitude")), self._to_float(user.get("longitude"))
+
+    def _get_vendor_coords(self, bundle: dict[str, Any]) -> tuple[float | None, float | None]:
+        profile_settings = bundle.get("profile_settings", {})
+        general_settings = bundle.get("general", {})
+        latitude = self._to_float(profile_settings.get("latitude"))
+        longitude = self._to_float(profile_settings.get("longitude"))
+        if latitude is None:
+            latitude = self._to_float(general_settings.get("latitude"))
+        if longitude is None:
+            longitude = self._to_float(general_settings.get("longitude"))
+        return latitude, longitude
+
+    @staticmethod
+    def _distance_between_km(
+        origin_lat: float | None,
+        origin_lng: float | None,
+        target_lat: float | None,
+        target_lng: float | None,
+    ) -> float | None:
+        if None in (origin_lat, origin_lng, target_lat, target_lng):
+            return None
+        radius_km = 6371.0
+        lat1 = math.radians(origin_lat)
+        lng1 = math.radians(origin_lng)
+        lat2 = math.radians(target_lat)
+        lng2 = math.radians(target_lng)
+        dlat = lat2 - lat1
+        dlng = lng2 - lng1
+        a = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlng / 2) ** 2
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+        return round(radius_km * c, 1)
+
     def _get_vendor_bundle(self, vendor_id: ObjectId) -> dict[str, Any]:
         vendor = self.vendors.find_one({"_id": vendor_id}) or {}
         profile = self.vendor_profiles.find_one({"vendor_id": vendor_id}) or {}
@@ -69,6 +112,7 @@ class CustomerRepository:
         verification = self.vendor_verification_details.find_one({"vendor_id": vendor_id}) or {}
         settings_doc = self.vendor_portal_settings.find_one({"vendor_id": vendor_id}) or {}
         general_settings = settings_doc.get("general", {}) if isinstance(settings_doc.get("general"), dict) else {}
+        profile_settings = settings_doc.get("profile", {}) if isinstance(settings_doc.get("profile"), dict) else {}
         first_gallery = self.vendor_assets.find_one(
             {"vendor_id": vendor_id, "asset_type": "gallery"},
             sort=[("created_at", DESCENDING)],
@@ -90,6 +134,7 @@ class CustomerRepository:
         return {
             "vendor": vendor,
             "profile": profile,
+            "profile_settings": profile_settings,
             "business": business,
             "verification": verification,
             "general": general_settings,
@@ -119,6 +164,7 @@ class CustomerRepository:
             ]
         vendor_docs = list(self.vendors.find(query).sort("created_at", DESCENDING))
         cards: list[dict[str, Any]] = []
+        customer_lat, customer_lng = self._get_customer_coords(customer_id)
         for vendor in vendor_docs:
             vendor_id = vendor["_id"]
             bundle = self._get_vendor_bundle(vendor_id)
@@ -128,17 +174,28 @@ class CustomerRepository:
             if with_offers is True and not bundle["active_offer"]:
                 continue
 
-            seed = f"{customer_id}:{vendor_id}"
+            vendor_lat, vendor_lng = self._get_vendor_coords(bundle)
+            location = (
+                bundle["profile_settings"].get("location_label")
+                or bundle["general"].get("business_address")
+                or bundle["business"].get("address")
+                or bundle["business"].get("city")
+                or "Qatar"
+            )
             cards.append(
                 {
                     "id": str(vendor_id),
                     "name": bundle["vendor"].get("business_name") or bundle["profile"].get("business_name") or "Unnamed Restaurant",
                     "category": bundle["category"],
                     "rating": bundle["rating"],
+                    "avg_rating": bundle["rating"],
                     "reviews_count": bundle["reviews_count"],
-                    "distance_km": self._distance_km(seed),
+                    "distance_km": self._distance_between_km(customer_lat, customer_lng, vendor_lat, vendor_lng),
+                    "location": location,
                     "address": bundle["general"].get("business_address") or bundle["business"].get("address"),
                     "city": bundle["business"].get("city"),
+                    "latitude": vendor_lat,
+                    "longitude": vendor_lng,
                     "is_open_now": bool(slots),
                     "cover_image_url": bundle["cover_image"] or "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=1200",
                     "offer_text": (bundle["active_offer"] or {}).get("promotion_name"),
@@ -343,7 +400,6 @@ class CustomerRepository:
         }
 
     def get_restaurant_details(self, customer_id: str, restaurant_id: str) -> dict[str, Any] | None:
-        _ = customer_id
         vendor = self.vendors.find_one({"_id": self._oid(restaurant_id), "status": "approved"})
         if not vendor:
             return None
@@ -353,15 +409,27 @@ class CustomerRepository:
         gallery_count = self.vendor_assets.count_documents({"vendor_id": vendor_id, "asset_type": "gallery"})
         offers_count = self.vendor_promotions.count_documents({"vendor_id": vendor_id, "active": True})
         opening_slots = bundle["general"].get("booking_availability_slots", [])
+        customer_lat, customer_lng = self._get_customer_coords(customer_id)
+        vendor_lat, vendor_lng = self._get_vendor_coords(bundle)
+        location = (
+            bundle["profile_settings"].get("location_label")
+            or bundle["general"].get("business_address")
+            or bundle["business"].get("address")
+            or bundle["business"].get("city")
+            or "Qatar"
+        )
         return {
             "id": str(vendor_id),
             "name": bundle["vendor"].get("business_name") or bundle["profile"].get("business_name") or "Unnamed Restaurant",
             "category": bundle["category"],
             "rating": bundle["rating"],
             "reviews_count": bundle["reviews_count"],
-            "distance_km": self._distance_km(str(vendor_id)),
+            "distance_km": self._distance_between_km(customer_lat, customer_lng, vendor_lat, vendor_lng),
+            "location": location,
             "address": bundle["general"].get("business_address") or bundle["business"].get("address"),
             "city": bundle["business"].get("city"),
+            "latitude": vendor_lat,
+            "longitude": vendor_lng,
             "about": bundle["business"].get("business_description")
             or bundle["profile"].get("about_business")
             or "Welcome to our venue.",
@@ -609,13 +677,16 @@ class CustomerRepository:
         restaurants = self.list_restaurants(customer_id=customer_id, limit=limit, skip=0).get("items", [])
         pins = []
         for row in restaurants:
-            coords = self._coords(f"{customer_id}:{row['id']}")
+            lat = self._to_float(row.get("latitude"))
+            lng = self._to_float(row.get("longitude"))
+            if lat is None or lng is None:
+                continue
             pins.append(
                 {
                     "id": row["id"],
                     "name": row["name"],
-                    "lat": coords["lat"],
-                    "lng": coords["lng"],
+                    "lat": lat,
+                    "lng": lng,
                     "rating": row["rating"],
                     "distance_km": row["distance_km"],
                     "offer_text": row.get("offer_text"),

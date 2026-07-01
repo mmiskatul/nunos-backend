@@ -70,6 +70,14 @@ def _safe_call(func, *args, detail: str = "Operation failed", **kwargs):
 # ---------------------------------------------------------------------------
 
 
+@router.get("/legal/{doc_type}", tags=["Vendor - Public"])
+def get_public_vendor_legal_doc(
+    doc_type: str,
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    return portal_service.repo.get_legal_doc("public", doc_type)
+
+
 @router.get("/dashboard/overview", tags=["Vendor - Dashboard"])
 def get_vendor_dashboard_overview(
     current_vendor: dict = Depends(get_current_vendor),

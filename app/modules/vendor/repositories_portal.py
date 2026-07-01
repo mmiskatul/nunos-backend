@@ -592,9 +592,26 @@ class VendorPortalRepository:
 
     def update_settings_profile(self, vendor_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         sanitized = self._sanitize_payload(payload)
+        current = self.settings.find_one({"vendor_id": ObjectId(vendor_id)}) or {}
+        current_profile = current.get("profile", {}) if isinstance(current.get("profile"), dict) else {}
+        current_general = current.get("general", {}) if isinstance(current.get("general"), dict) else {}
+
+        next_profile = {**current_profile, **sanitized}
+        update_doc: dict[str, Any] = {
+            "profile": next_profile,
+            "updated_at": datetime.now(UTC),
+        }
+
+        office_address = sanitized.get("office_address")
+        if office_address:
+            update_doc["general"] = {
+                **current_general,
+                "business_address": office_address,
+            }
+
         self.settings.update_one(
             {"vendor_id": ObjectId(vendor_id)},
-            {"$set": {"profile": sanitized, "updated_at": datetime.now(UTC)}},
+            {"$set": update_doc},
             upsert=True,
         )
         return self.get_settings_profile(vendor_id)

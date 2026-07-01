@@ -107,6 +107,10 @@ class VendorSettingsProfileRequest(BaseModel):
     phone_number: str
     about_business: str = ""
     office_address: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    location_label: str | None = None
+    place_id: str | None = None
     website: str | None = None
     map_embed_url: str | None = None
     avatar_url: str | None = None
