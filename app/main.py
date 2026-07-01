@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from bson.errors import InvalidId
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from app.api.router import api_router
 from app.core.config import Settings, get_settings
@@ -82,6 +82,14 @@ def create_app(*, settings: Settings | None = None, disable_startup_db: bool = F
     @app.get("/health", tags=["Health"])
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon_ico() -> Response:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @app.get("/favicon.png", include_in_schema=False)
+    async def favicon_png() -> Response:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.get("/", tags=["Health"])
     async def root() -> dict[str, str]:
