@@ -769,6 +769,16 @@ def update_vendor_settings_commission(
     return portal_service.repo.update_settings_commission(_vendor_id(current_vendor), payload.model_dump())
 
 
+@router.get("/settings/commission", tags=["Vendor - Settings"])
+def get_vendor_settings_commission(
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    vendor_id = _vendor_id(current_vendor)
+    portal_service.initialize(vendor_id)
+    return portal_service.repo.get_settings_commission(vendor_id)
+
+
 @router.get("/settings/legal/{doc_type}", tags=["Vendor - Settings"])
 def get_vendor_legal_doc(
     doc_type: str,
@@ -960,6 +970,16 @@ def update_notification_settings(
     portal_service: VendorPortalService = Depends(get_vendor_portal_service),
 ) -> dict:
     return portal_service.repo.update_notification_settings(_vendor_id(current_vendor), payload.model_dump())
+
+
+@router.get("/notifications/settings", tags=["Vendor - Notifications"])
+def get_notification_settings(
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    vendor_id = _vendor_id(current_vendor)
+    portal_service.initialize(vendor_id)
+    return portal_service.repo.get_notification_settings(vendor_id)
 
 
 @router.delete("/notifications/clear", tags=["Vendor - Notifications"], response_model=MessageResponse)

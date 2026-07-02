@@ -136,8 +136,10 @@ class VendorSupportTicketMessageRequest(BaseModel):
 
 
 class NotificationSettingsRequest(BaseModel):
-    booking_alerts: bool = True
-    review_alerts: bool = True
+    new_booking: bool = True
+    booking_cancellation: bool = True
+    new_review: bool = True
+    platform_updates: bool = False
 
 
 class NotificationActionRequest(BaseModel):

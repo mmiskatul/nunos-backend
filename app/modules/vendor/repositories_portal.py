@@ -164,6 +164,18 @@ class VendorPortalRepository:
         # Demo/static seeding is intentionally disabled.
         return None
 
+    def _get_vendor_records(self, vendor_id: str) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+        vendor_obj_id = ObjectId(vendor_id)
+        vendor = self.settings.database["vendors"].find_one({"_id": vendor_obj_id}) or {}
+        profile = self.settings.database["vendor_profiles"].find_one({"vendor_id": vendor_obj_id}) or {}
+        business = self.settings.database["vendor_business_details"].find_one({"vendor_id": vendor_obj_id}) or {}
+        verification = self.settings.database["vendor_verification_details"].find_one({"vendor_id": vendor_obj_id}) or {}
+        for record in (vendor, profile, business, verification):
+            record.pop("_id", None)
+            record.pop("vendor_id", None)
+            record.pop("password_hash", None)
+        return vendor, profile, business, verification
+
     def _serialize(self, doc: dict[str, Any] | None) -> dict[str, Any] | None:
         if not doc:
             return None
@@ -626,13 +638,49 @@ class VendorPortalRepository:
         return doc
 
     def get_settings_general(self, vendor_id: str) -> dict[str, Any]:
-        return self.get_settings(vendor_id).get("general", {})
+        settings_general = self.get_settings(vendor_id).get("general", {})
+        vendor, profile, business, _ = self._get_vendor_records(vendor_id)
+        return {
+            "business_name": settings_general.get("business_name")
+            or vendor.get("business_name")
+            or profile.get("business_name")
+            or "",
+            "legal_entity_name": settings_general.get("legal_entity_name") or business.get("legal_entity_name") or "",
+            "business_address": settings_general.get("business_address") or business.get("address") or "",
+            "logo_url": settings_general.get("logo_url") or "",
+            "cover_image_url": settings_general.get("cover_image_url") or "",
+            "booking_availability_slots": settings_general.get("booking_availability_slots") or [],
+            "buffer_time_minutes": settings_general.get("buffer_time_minutes") or 15,
+            "front_desk_phone": settings_general.get("front_desk_phone") or vendor.get("phone") or profile.get("phone") or "",
+            "reservations_email": settings_general.get("reservations_email") or vendor.get("email") or profile.get("email") or "",
+            "emergency_contact": settings_general.get("emergency_contact") or vendor.get("phone") or "",
+        }
 
     def update_settings_general(self, vendor_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         sanitized = self._sanitize_payload(payload)
         self.settings.update_one(
             {"vendor_id": ObjectId(vendor_id)},
             {"$set": {"general": sanitized, "updated_at": datetime.now(UTC)}},
+            upsert=True,
+        )
+        vendor_updates = {
+            "business_name": sanitized.get("business_name"),
+            "updated_at": datetime.now(UTC),
+        }
+        self.settings.database["vendors"].update_one(
+            {"_id": ObjectId(vendor_id)},
+            {"$set": {key: value for key, value in vendor_updates.items() if value not in (None, "")}},
+        )
+        business_updates = {
+            "address": sanitized.get("business_address"),
+            "updated_at": datetime.now(UTC),
+        }
+        self.settings.database["vendor_business_details"].update_one(
+            {"vendor_id": ObjectId(vendor_id)},
+            {
+                "$set": {key: value for key, value in business_updates.items() if value not in (None, "")},
+                "$setOnInsert": {"created_at": datetime.now(UTC)},
+            },
             upsert=True,
         )
         return self.get_settings_general(vendor_id)
@@ -644,7 +692,16 @@ class VendorPortalRepository:
             {"$set": {"commission": sanitized, "updated_at": datetime.now(UTC)}},
             upsert=True,
         )
-        return self.get_settings(vendor_id).get("commission", {})
+        return self.get_settings_commission(vendor_id)
+
+    def get_settings_commission(self, vendor_id: str) -> dict[str, Any]:
+        settings_doc = self.get_settings(vendor_id)
+        commission = settings_doc.get("commission", {}) if isinstance(settings_doc.get("commission"), dict) else {}
+        return {
+            "globalRate": str(commission.get("globalRate") or commission.get("global_rate") or ""),
+            "categoryRate": str(commission.get("categoryRate") or commission.get("category_rate") or ""),
+            "categoryLabel": str(commission.get("categoryLabel") or commission.get("category_label") or ""),
+        }
 
     def _default_legal_docs(self) -> dict[str, Any]:
         return {
@@ -706,7 +763,46 @@ class VendorPortalRepository:
         return self.get_legal_doc(vendor_id, doc_type)
 
     def get_settings_profile(self, vendor_id: str) -> dict[str, Any]:
-        return self.get_settings(vendor_id).get("profile", {})
+        settings_doc = self.get_settings(vendor_id)
+        profile_settings = settings_doc.get("profile", {})
+        general_settings = settings_doc.get("general", {})
+        vendor, profile, business, verification = self._get_vendor_records(vendor_id)
+
+        business_name = (
+            profile_settings.get("business_name")
+            or general_settings.get("business_name")
+            or vendor.get("business_name")
+            or profile.get("business_name")
+            or ""
+        )
+        email = profile_settings.get("email_address") or vendor.get("email") or profile.get("email") or ""
+        phone = profile_settings.get("phone_number") or vendor.get("phone") or profile.get("phone") or ""
+        address = (
+            profile_settings.get("office_address")
+            or general_settings.get("business_address")
+            or business.get("address")
+            or ""
+        )
+        description = profile_settings.get("about_business") or business.get("business_description") or ""
+        website = profile_settings.get("website") or business.get("website") or ""
+
+        return {
+            **profile_settings,
+            "business_name": business_name,
+            "category": profile_settings.get("category") or verification.get("category") or "Restaurant",
+            "email_address": email,
+            "phone_number": phone,
+            "about_business": description,
+            "office_address": address,
+            "website": website,
+            "avatar_url": profile_settings.get("avatar_url") or "",
+            "owner_full_name": profile_settings.get("owner_full_name") or vendor.get("owner_full_name") or "",
+            "email": email,
+            "phone": phone,
+            "address": address,
+            "description": description,
+            "name": business_name,
+        }
 
     def update_settings_profile(self, vendor_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         sanitized = self._sanitize_payload(payload)
@@ -730,6 +826,43 @@ class VendorPortalRepository:
         self.settings.update_one(
             {"vendor_id": ObjectId(vendor_id)},
             {"$set": update_doc},
+            upsert=True,
+        )
+        vendor_updates = {
+            "business_name": sanitized.get("business_name"),
+            "updated_at": datetime.now(UTC),
+        }
+        self.settings.database["vendors"].update_one(
+            {"_id": ObjectId(vendor_id)},
+            {"$set": {key: value for key, value in vendor_updates.items() if value not in (None, "")}},
+        )
+        business_updates = {
+            "address": sanitized.get("office_address"),
+            "website": sanitized.get("website"),
+            "business_description": sanitized.get("about_business"),
+            "updated_at": datetime.now(UTC),
+        }
+        self.settings.database["vendor_business_details"].update_one(
+            {"vendor_id": ObjectId(vendor_id)},
+            {
+                "$set": {key: value for key, value in business_updates.items() if value not in (None, "")},
+                "$setOnInsert": {"created_at": datetime.now(UTC)},
+            },
+            upsert=True,
+        )
+        profile_updates = {
+            "business_name": sanitized.get("business_name"),
+            "owner_full_name": sanitized.get("owner_full_name"),
+            "email": sanitized.get("email_address"),
+            "phone": sanitized.get("phone_number"),
+            "updated_at": datetime.now(UTC),
+        }
+        self.settings.database["vendor_profiles"].update_one(
+            {"vendor_id": ObjectId(vendor_id)},
+            {
+                "$set": {key: value for key, value in profile_updates.items() if value not in (None, "")},
+                "$setOnInsert": {"created_at": datetime.now(UTC)},
+            },
             upsert=True,
         )
         return self.get_settings_profile(vendor_id)
@@ -810,26 +943,44 @@ class VendorPortalRepository:
         query = {"vendor_id": ObjectId(vendor_id)}
         total = int(self.notifications.count_documents(query))
         docs = self.notifications.find(query).sort("created_at", DESCENDING).skip(skip).limit(limit)
-        setting = self.notification_settings.find_one({"vendor_id": ObjectId(vendor_id)}) or {}
-        setting.pop("_id", None)
-        setting.pop("vendor_id", None)
-        return {"items": [self._serialize(doc) for doc in docs], "total": total, "settings": setting}
+        return {
+            "items": [self._serialize(doc) for doc in docs],
+            "total": total,
+            "settings": self.get_notification_settings(vendor_id),
+        }
 
     def clear_notifications(self, vendor_id: str) -> int:
         result = self.notifications.delete_many({"vendor_id": ObjectId(vendor_id)})
         return int(result.deleted_count)
 
-    def update_notification_settings(self, vendor_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-        sanitized = self._sanitize_payload(payload)
-        self.notification_settings.update_one(
-            {"vendor_id": ObjectId(vendor_id)},
-            {"$set": {**sanitized, "updated_at": datetime.now(UTC)}},
-            upsert=True,
-        )
+    def get_notification_settings(self, vendor_id: str) -> dict[str, Any]:
         setting = self.notification_settings.find_one({"vendor_id": ObjectId(vendor_id)}) or {}
         setting.pop("_id", None)
         setting.pop("vendor_id", None)
-        return setting
+        return {
+            "new_booking": bool(setting.get("new_booking", setting.get("booking_alerts", True))),
+            "booking_cancellation": bool(setting.get("booking_cancellation", True)),
+            "new_review": bool(setting.get("new_review", setting.get("review_alerts", True))),
+            "platform_updates": bool(setting.get("platform_updates", False)),
+        }
+
+    def update_notification_settings(self, vendor_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        sanitized = self._sanitize_payload(payload)
+        normalized = {
+            "new_booking": bool(sanitized.get("new_booking", sanitized.get("booking_alerts", True))),
+            "booking_cancellation": bool(sanitized.get("booking_cancellation", True)),
+            "new_review": bool(sanitized.get("new_review", sanitized.get("review_alerts", True))),
+            "platform_updates": bool(sanitized.get("platform_updates", False)),
+        }
+        self.notification_settings.update_one(
+            {"vendor_id": ObjectId(vendor_id)},
+            {
+                "$set": {**normalized, "updated_at": datetime.now(UTC)},
+                "$unset": {"booking_alerts": "", "review_alerts": ""},
+            },
+            upsert=True,
+        )
+        return self.get_notification_settings(vendor_id)
 
     def apply_notification_action(self, vendor_id: str, notification_id: str, action: str) -> dict[str, Any] | None:
         row = self.notifications.find_one({"_id": ObjectId(notification_id), "vendor_id": ObjectId(vendor_id)})
