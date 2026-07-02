@@ -167,6 +167,7 @@ class VendorAuthService:
                     "terms_accepted_at": datetime.now().isoformat(),
                     "kyc_status": "pending_review",
                     "kyc_submitted_at": datetime.now().isoformat(),
+                    "category": payload.category,
                 }
             )
         except DuplicateKeyError as exc:
@@ -187,12 +188,18 @@ class VendorAuthService:
                 "owner_full_name": payload.owner_full_name,
                 "email": email,
                 "phone": phone,
+                "category": payload.category,
             },
             business_payload={
                 "address": payload.address,
                 "city": payload.city,
                 "website": payload.website,
                 "business_description": payload.business_description,
+                "event_types": payload.event_types,
+                "venue_capacity": payload.venue_capacity,
+                "ticket_pricing_type": payload.ticket_pricing_type,
+                "event_location_preference": payload.event_location_preference,
+                "equipment_availability": payload.equipment_availability,
             },
             verification_payload={
                 "trade_license_number": payload.trade_license_number,

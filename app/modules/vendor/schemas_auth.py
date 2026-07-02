@@ -40,6 +40,12 @@ class VendorRegisterRequest(BaseModel):
     password: str = Field(min_length=8, max_length=128)
     confirm_password: str = Field(min_length=8, max_length=128)
     signup_token: str = Field(min_length=16)
+    category: str = Field(default="Restaurant", min_length=2, max_length=60)
+    event_types: list[str] | None = None
+    venue_capacity: int | None = None
+    ticket_pricing_type: str | None = None
+    event_location_preference: str | None = None
+    equipment_availability: list[str] | None = None
 
     @field_validator("email_or_phone")
     @classmethod
