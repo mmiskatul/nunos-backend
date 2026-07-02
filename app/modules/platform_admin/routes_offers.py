@@ -35,6 +35,11 @@ def _vendor_name(vendor: dict) -> str:
 
 
 def _vendor_category(vendor: dict) -> str:
+    categories = vendor.get("categories")
+    if isinstance(categories, list):
+        normalized = [str(item).strip() for item in categories if str(item).strip()]
+        if normalized:
+            return ", ".join(normalized)
     return str(vendor.get("category") or vendor.get("business_type") or "Uncategorized")
 
 

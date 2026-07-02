@@ -153,6 +153,9 @@ class VendorAuthService:
         if phone and find_existing_phone_sync(self.vendor_repo.collection.database, phone):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Phone already exists")
 
+        categories = payload.categories or [payload.category]
+        primary_category = categories[0]
+
         try:
             vendor = self.vendor_repo.create_vendor(
                 {
@@ -167,7 +170,8 @@ class VendorAuthService:
                     "terms_accepted_at": datetime.now().isoformat(),
                     "kyc_status": "pending_review",
                     "kyc_submitted_at": datetime.now().isoformat(),
-                    "category": payload.category,
+                    "category": primary_category,
+                    "categories": categories,
                 }
             )
         except DuplicateKeyError as exc:
@@ -188,13 +192,15 @@ class VendorAuthService:
                 "owner_full_name": payload.owner_full_name,
                 "email": email,
                 "phone": phone,
-                "category": payload.category,
+                "category": primary_category,
+                "categories": categories,
             },
             business_payload={
                 "address": payload.address,
                 "city": payload.city,
                 "website": payload.website,
                 "business_description": payload.business_description,
+                "categories": categories,
                 "event_types": payload.event_types,
                 "venue_capacity": payload.venue_capacity,
                 "ticket_pricing_type": payload.ticket_pricing_type,
@@ -202,6 +208,8 @@ class VendorAuthService:
                 "equipment_availability": payload.equipment_availability,
             },
             verification_payload={
+                "category": primary_category,
+                "categories": categories,
                 "trade_license_number": payload.trade_license_number,
                 "trade_license_document_url": payload.trade_license_document_url,
                 "owner_manager_id_document_url": payload.owner_manager_id_document_url,

@@ -790,6 +790,14 @@ class VendorPortalRepository:
             **profile_settings,
             "business_name": business_name,
             "category": profile_settings.get("category") or verification.get("category") or "Restaurant",
+            "categories": (
+                profile_settings.get("categories")
+                or verification.get("categories")
+                or vendor.get("categories")
+                or ([profile_settings.get("category")] if profile_settings.get("category") else None)
+                or ([verification.get("category")] if verification.get("category") else None)
+                or ([vendor.get("category")] if vendor.get("category") else ["Restaurant"])
+            ),
             "email_address": email,
             "phone_number": phone,
             "about_business": description,

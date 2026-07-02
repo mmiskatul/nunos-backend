@@ -41,6 +41,7 @@ class VendorRegisterRequest(BaseModel):
     confirm_password: str = Field(min_length=8, max_length=128)
     signup_token: str = Field(min_length=16)
     category: str = Field(default="Restaurant", min_length=2, max_length=60)
+    categories: list[str] | None = None
     event_types: list[str] | None = None
     venue_capacity: int | None = None
     ticket_pricing_type: str | None = None
@@ -61,12 +62,30 @@ class VendorRegisterRequest(BaseModel):
         parse_email_or_phone(value)
         return value
 
+    @field_validator("categories")
+    @classmethod
+    def validate_categories(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        normalized: list[str] = []
+        for item in value:
+            label = str(item or "").strip()
+            if not label:
+                continue
+            if label not in normalized:
+                normalized.append(label)
+        return normalized or None
+
     @model_validator(mode="after")
     def validate_passwords(self) -> "VendorRegisterRequest":
         if self.password != self.confirm_password:
             raise ValueError("Password and confirm_password must match.")
         if not self.terms_accepted:
             raise ValueError("terms_accepted must be true.")
+        if self.categories:
+            self.category = self.categories[0]
+        else:
+            self.categories = [self.category]
         return self
 
 

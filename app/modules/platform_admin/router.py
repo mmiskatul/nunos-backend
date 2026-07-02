@@ -13,6 +13,15 @@ router = APIRouter(prefix="/platform-admin")
 
 _CACHE = {}
 
+
+def _vendor_category_label(vendor: dict) -> str:
+    categories = vendor.get("categories")
+    if isinstance(categories, list):
+        normalized = [str(item).strip() for item in categories if str(item).strip()]
+        if normalized:
+            return ", ".join(normalized)
+    return str(vendor.get("category") or "—")
+
 def get_cached_data(key: str, ttl: int = 5):
     now = time.time()
     if key in _CACHE:
@@ -87,7 +96,7 @@ async def _get_or_sync_billing_payments(db: AsyncIOMotorDatabase) -> list[dict]:
                     "profile": {
                         "vendorTitle": vendor.get("business_name") or vendor.get("owner_full_name") or "Vendor",
                         "location": vendor.get("address") or "Main Branch",
-                        "category": vendor.get("category") or "Hotel & Resort",
+                        "category": _vendor_category_label(vendor) or "Hotel & Resort",
                         "joinedDate": joined_date,
                         "lastBillingDate": datetime.now(timezone.utc).strftime("%b %d, %Y"),
                         "image": vendor.get("logo_url") or f"https://picsum.photos/seed/{vendor_id_str}/80/80"
@@ -223,7 +232,7 @@ async def get_platform_dashboard_overview(
         vendors.append({
             "code": code,
             "name": name,
-            "category": v.get("category", "—"),
+            "category": _vendor_category_label(v),
             "rating": rating,
             "revenue": revenue,
             "status": status,
@@ -317,7 +326,7 @@ async def list_moderation_submissions(
             "id": vendor_id_str,
             "title": vendor.get("business_name") or vendor.get("owner_full_name") or "Vendor Review",
             "age": age,
-            "subtitle": f"Verify KYC details for {vendor.get('category', 'vendor')}",
+            "subtitle": f"Verify KYC details for {_vendor_category_label(vendor) or 'vendor'}",
             "venue": vendor.get("business_name") or "Vendor Venue",
             "location": vendor.get("address") or "Address not provided",
             "vendorId": vendor_id_str,
@@ -362,7 +371,7 @@ async def get_moderation_submission(
         "id": str(vendor["_id"]),
         "title": vendor.get("business_name") or vendor.get("owner_full_name") or "Vendor Review",
         "age": age,
-        "subtitle": f"Verify KYC details for {vendor.get('category', 'vendor')}",
+        "subtitle": f"Verify KYC details for {_vendor_category_label(vendor) or 'vendor'}",
         "venue": vendor.get("business_name") or "Vendor Venue",
         "location": vendor.get("address") or "Address not provided",
         "vendorId": str(vendor["_id"]),
@@ -457,7 +466,7 @@ async def decide_moderation_submission(
             "id": str(updated_vendor["_id"]),
             "title": updated_vendor.get("business_name") or updated_vendor.get("owner_full_name") or "Vendor Review",
             "age": age,
-            "subtitle": f"Verify KYC details for {updated_vendor.get('category', 'vendor')}",
+            "subtitle": f"Verify KYC details for {_vendor_category_label(updated_vendor) or 'vendor'}",
             "venue": updated_vendor.get("business_name") or "Vendor Venue",
             "location": updated_vendor.get("address") or "Address not provided",
             "vendorId": str(updated_vendor["_id"]),

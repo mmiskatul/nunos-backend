@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class BookingStatusUpdateRequest(BaseModel):
@@ -103,6 +103,7 @@ class VendorSettingsGeneralRequest(BaseModel):
 class VendorSettingsProfileRequest(BaseModel):
     business_name: str
     category: str
+    categories: list[str] | None = None
     email_address: str
     phone_number: str
     about_business: str = ""
@@ -114,6 +115,18 @@ class VendorSettingsProfileRequest(BaseModel):
     website: str | None = None
     map_embed_url: str | None = None
     avatar_url: str | None = None
+
+    @field_validator("categories")
+    @classmethod
+    def validate_categories(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        normalized: list[str] = []
+        for item in value:
+            label = str(item or "").strip()
+            if label and label not in normalized:
+                normalized.append(label)
+        return normalized or None
 
 
 class VendorSettingsCommissionRequest(BaseModel):
