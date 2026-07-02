@@ -13,6 +13,7 @@ class VendorPortalRepository:
         self.assets: Collection = db["vendor_assets"]
         self.rooms: Collection = db["vendor_rooms"]
         self.services: Collection = db["vendor_services"]
+        self.events: Collection = db["vendor_events"]
         self.promotions: Collection = db["vendor_promotions"]
         self.platform_campaigns: Collection = db["platform_campaigns"]
         self.loyalty_settings: Collection = db["vendor_loyalty_settings"]
@@ -28,6 +29,9 @@ class VendorPortalRepository:
         self.assets.create_index([("vendor_id", 1), ("asset_type", 1), ("created_at", -1)])
         self.rooms.create_index([("vendor_id", 1), ("created_at", -1)])
         self.services.create_index([("vendor_id", 1), ("created_at", -1)])
+        self.events.create_index([("vendor_id", 1), ("event_date", 1), ("start_time", 1)])
+        self.events.create_index([("vendor_id", 1), ("status", 1), ("created_at", -1)])
+        self.events.create_index([("vendor_id", 1), ("category", 1), ("created_at", -1)])
         self.promotions.create_index([("vendor_id", 1), ("created_at", -1)])
         self.promotions.create_index([("vendor_id", 1), ("active", 1)])
         self.platform_campaigns.create_index([("active", 1), ("created_at", -1)])
@@ -70,6 +74,27 @@ class VendorPortalRepository:
         if normalized == "custom_deal":
             return "CUSTOM DEAL"
         return normalized.replace("_", " ").upper() or "PERCENTAGE"
+
+    def _allowed_vendor_categories(self, vendor_id: str) -> list[str]:
+        vendor, profile, business, verification = self._get_vendor_records(vendor_id)
+        for source in (profile, verification, vendor, business):
+            categories = source.get("categories")
+            if isinstance(categories, list):
+                normalized = [str(item).strip() for item in categories if str(item).strip()]
+                if normalized:
+                    return list(dict.fromkeys(normalized))
+        for source in (profile, verification, vendor, business):
+            category = str(source.get("category") or "").strip()
+            if category:
+                return [category]
+        return ["Restaurant"]
+
+    def _validate_vendor_category_access(self, vendor_id: str, category: str) -> None:
+        allowed_categories = self._allowed_vendor_categories(vendor_id)
+        if category not in allowed_categories:
+            raise ValueError(
+                f"Category '{category}' is not enabled for this vendor. Allowed categories: {', '.join(allowed_categories)}."
+            )
 
     @classmethod
     def _promotion_value_label(cls, row: dict[str, Any]) -> str:
@@ -410,6 +435,77 @@ class VendorPortalRepository:
         )
         created = self.services.find_one({"_id": inserted.inserted_id})
         return self._serialize(created)  # type: ignore[return-value]
+
+    def list_events(
+        self,
+        vendor_id: str,
+        search: str | None = None,
+        status: str | None = None,
+        category: str | None = None,
+    ) -> list[dict[str, Any]]:
+        query: dict[str, Any] = {"vendor_id": ObjectId(vendor_id)}
+        if search:
+            query["$or"] = [
+                {"title": {"$regex": search, "$options": "i"}},
+                {"venue": {"$regex": search, "$options": "i"}},
+                {"event_type": {"$regex": search, "$options": "i"}},
+            ]
+        if status and status.lower() not in {"all", ""}:
+            query["status"] = status.strip().lower()
+        if category and category.lower() not in {"all", ""}:
+            query["category"] = category.strip()
+        docs = self.events.find(query).sort([("event_date", 1), ("start_time", 1), ("created_at", DESCENDING)])
+        return [self._serialize(doc) for doc in docs]
+
+    def create_event(self, vendor_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        now = datetime.now(UTC)
+        sanitized = self._sanitize_payload(payload)
+        category = str(sanitized.get("category") or "").strip()
+        self._validate_vendor_category_access(vendor_id, category)
+        inserted = self.events.insert_one(
+            {
+                "vendor_id": ObjectId(vendor_id),
+                **sanitized,
+                "status": str(sanitized.get("status") or "draft").lower(),
+                "active": bool(sanitized.get("active_status", True)),
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+        created = self.events.find_one({"_id": inserted.inserted_id})
+        return self._serialize(created)  # type: ignore[return-value]
+
+    def get_event(self, vendor_id: str, event_id: str) -> dict[str, Any] | None:
+        return self._serialize(
+            self.events.find_one({"_id": ObjectId(event_id), "vendor_id": ObjectId(vendor_id)})
+        )
+
+    def update_event(self, vendor_id: str, event_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+        sanitized = self._sanitize_payload(payload)
+        category = str(sanitized.get("category") or "").strip()
+        if category:
+            self._validate_vendor_category_access(vendor_id, category)
+        if "status" in sanitized:
+            sanitized["status"] = str(sanitized["status"]).lower()
+        if "active_status" in sanitized:
+            sanitized["active"] = bool(sanitized["active_status"])
+        self.events.update_one(
+            {"_id": ObjectId(event_id), "vendor_id": ObjectId(vendor_id)},
+            {"$set": {**sanitized, "updated_at": datetime.now(UTC)}},
+        )
+        return self.get_event(vendor_id, event_id)
+
+    def update_event_status(self, vendor_id: str, event_id: str, status: str) -> dict[str, Any] | None:
+        normalized = status.strip().lower()
+        self.events.update_one(
+            {"_id": ObjectId(event_id), "vendor_id": ObjectId(vendor_id)},
+            {"$set": {"status": normalized, "updated_at": datetime.now(UTC)}},
+        )
+        return self.get_event(vendor_id, event_id)
+
+    def delete_event(self, vendor_id: str, event_id: str) -> bool:
+        result = self.events.delete_one({"_id": ObjectId(event_id), "vendor_id": ObjectId(vendor_id)})
+        return result.deleted_count > 0
 
     def get_service(self, vendor_id: str, service_id: str) -> dict[str, Any] | None:
         return self._serialize(

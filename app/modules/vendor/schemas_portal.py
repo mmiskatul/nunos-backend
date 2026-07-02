@@ -52,6 +52,28 @@ class ServiceUpsertRequest(BaseModel):
     active_status: bool = True
 
 
+class VendorEventUpsertRequest(BaseModel):
+    title: str = Field(min_length=3, max_length=180)
+    category: str = Field(min_length=2, max_length=60)
+    event_type: str = Field(min_length=2, max_length=80)
+    event_date: str
+    start_time: str
+    end_time: str
+    timezone: str = Field(default="Asia/Dhaka", min_length=2, max_length=80)
+    venue: str = Field(min_length=2, max_length=200)
+    capacity: int = Field(ge=1, le=100000)
+    ticket_price: float = Field(ge=0)
+    registration_deadline: str | None = None
+    description: str = Field(default="", max_length=5000)
+    banner_image_url: str | None = None
+    active_status: bool = True
+    status: str = Field(default="draft", pattern="^(draft|published|archived|cancelled)$")
+
+
+class VendorEventStatusRequest(BaseModel):
+    status: str = Field(pattern="^(draft|published|archived|cancelled)$")
+
+
 class PromotionUpsertRequest(BaseModel):
     promotion_name: str
     internal_description: str = ""

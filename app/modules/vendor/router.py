@@ -25,6 +25,8 @@ from app.modules.vendor.schemas_portal import (
     RoomAvailabilityRequest,
     RoomUpsertRequest,
     ServiceUpsertRequest,
+    VendorEventStatusRequest,
+    VendorEventUpsertRequest,
     VendorLegalDocRequest,
     VendorPasswordChangeRequest,
     VendorSettingsCommissionRequest,
@@ -57,6 +59,11 @@ def _safe_call(func, *args, detail: str = "Operation failed", **kwargs):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Invalid ID format: {exc}",
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
         ) from exc
     except Exception as exc:
         raise HTTPException(
@@ -502,6 +509,105 @@ def delete_vendor_service(
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found.")
     return MessageResponse(message="Service deleted.")
+
+
+# ---------------------------------------------------------------------------
+# Events
+# ---------------------------------------------------------------------------
+
+
+@router.get("/events", tags=["Vendor - Events"])
+def list_vendor_events(
+    search: str | None = Query(default=None),
+    status_filter: str | None = Query(default=None, alias="status"),
+    category: str | None = Query(default=None),
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    vendor_id = _vendor_id(current_vendor)
+    portal_service.initialize(vendor_id)
+    return {
+        "items": _safe_call(
+            portal_service.repo.list_events,
+            vendor_id,
+            search=search,
+            status=status_filter,
+            category=category,
+            detail="Failed to load events",
+        )
+    }
+
+
+@router.post("/events", tags=["Vendor - Events"])
+def create_vendor_event(
+    payload: VendorEventUpsertRequest,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    return _safe_call(
+        portal_service.repo.create_event,
+        _vendor_id(current_vendor),
+        payload.model_dump(),
+        detail="Failed to create event",
+    )
+
+
+@router.get("/events/{event_id}", tags=["Vendor - Events"])
+def get_vendor_event(
+    event_id: str,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    return portal_service.get_event_or_404(_vendor_id(current_vendor), event_id)
+
+
+@router.patch("/events/{event_id}", tags=["Vendor - Events"])
+def update_vendor_event(
+    event_id: str,
+    payload: VendorEventUpsertRequest,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    try:
+        row = portal_service.repo.update_event(_vendor_id(current_vendor), event_id, payload.model_dump())
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found.")
+    return row
+
+
+@router.patch("/events/{event_id}/status", tags=["Vendor - Events"])
+def update_vendor_event_status(
+    event_id: str,
+    payload: VendorEventStatusRequest,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    try:
+        row = portal_service.repo.update_event_status(_vendor_id(current_vendor), event_id, payload.status)
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found.") from exc
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found.")
+    return row
+
+
+@router.delete("/events/{event_id}", tags=["Vendor - Events"], response_model=MessageResponse)
+def delete_vendor_event(
+    event_id: str,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> MessageResponse:
+    try:
+        deleted = portal_service.repo.delete_event(_vendor_id(current_vendor), event_id)
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found.") from exc
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found.")
+    return MessageResponse(message="Event deleted.")
 
 
 # ---------------------------------------------------------------------------

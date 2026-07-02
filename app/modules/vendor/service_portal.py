@@ -45,6 +45,16 @@ class VendorPortalService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found.")
         return service
 
+    def get_event_or_404(self, vendor_id: str, event_id: str):
+        self.initialize(vendor_id)
+        try:
+            event = self.repo.get_event(vendor_id, event_id)
+        except InvalidId as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found.") from exc
+        if not event:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found.")
+        return event
+
     def get_promotion_or_404(self, vendor_id: str, promotion_id: str):
         self.initialize(vendor_id)
         try:

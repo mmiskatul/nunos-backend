@@ -684,3 +684,151 @@ async def test_vendor_request_code_reports_pending_vendor_status(client, test_db
     )
     assert response.status_code == 409
     assert response.json()["detail"] == "A service provider account for this email already exists and is pending admin approval."
+
+
+@pytest.mark.asyncio
+async def test_vendor_event_crud_respects_vendor_categories(client, test_db):
+    request_code_res = await client.post(
+        "/api/v1/vendor/auth/register/request-code",
+        json={"email_or_phone": "events-vendor@example.com"},
+    )
+    assert request_code_res.status_code == 200
+
+    verify_code_res = await client.post(
+        "/api/v1/vendor/auth/register/verify-code",
+        json={
+            "email_or_phone": "events-vendor@example.com",
+            "validation_code": request_code_res.json()["validation_code"],
+        },
+    )
+    assert verify_code_res.status_code == 200
+    signup_token = verify_code_res.json()["signup_token"]
+
+    register_res = await client.post(
+        "/api/v1/vendor/auth/register",
+        json={
+            "business_name": "Eventful Vendor",
+            "owner_full_name": "Event Owner",
+            "email_or_phone": "events-vendor@example.com",
+            "phone": "+15550110021",
+            "address": "123 Event Street",
+            "city": "Dhaka",
+            "website": "https://events.example.com",
+            "business_description": "Vendor account for event management testing.",
+            "trade_license_number": "TL-67890",
+            "trade_license_document_url": "https://files.example.com/license.pdf",
+            "owner_manager_id_document_url": "https://files.example.com/id.pdf",
+            "terms_accepted": True,
+            "password": "VendorPass123!",
+            "confirm_password": "VendorPass123!",
+            "signup_token": signup_token,
+            "category": "Restaurant",
+            "categories": ["Restaurant", "Event Venue"],
+        },
+    )
+    assert register_res.status_code == 201
+
+    vendor = await test_db.vendors.find_one({"email": "events-vendor@example.com"})
+    assert vendor
+    await test_db.vendors.update_one({"_id": vendor["_id"]}, {"$set": {"status": "approved"}})
+
+    login_res = await client.post(
+        "/api/v1/vendor/auth/login",
+        json={"email_or_phone": "events-vendor@example.com", "password": "VendorPass123!"},
+    )
+    assert login_res.status_code == 200
+    headers = {"Authorization": f"Bearer {login_res.json()['access_token']}"}
+
+    create_res = await client.post(
+        "/api/v1/vendor/events",
+        headers=headers,
+        json={
+            "title": "Sunset Networking Dinner",
+            "category": "Event Venue",
+            "event_type": "Corporate Gala",
+            "event_date": "2026-07-20",
+            "start_time": "18:00",
+            "end_time": "21:00",
+            "timezone": "Asia/Dhaka",
+            "venue": "Skyline Hall",
+            "capacity": 180,
+            "ticket_price": 49,
+            "registration_deadline": "2026-07-19T23:59:00+06:00",
+            "description": "An evening networking event for founders and operators.",
+            "banner_image_url": "https://files.example.com/events/banner.jpg",
+            "active_status": True,
+            "status": "draft",
+        },
+    )
+    assert create_res.status_code == 200
+    created = create_res.json()
+    assert created["category"] == "Event Venue"
+    assert created["status"] == "draft"
+
+    list_res = await client.get("/api/v1/vendor/events", headers=headers)
+    assert list_res.status_code == 200
+    assert len(list_res.json()["items"]) == 1
+
+    update_res = await client.patch(
+        f"/api/v1/vendor/events/{created['id']}",
+        headers=headers,
+        json={
+            "title": "Sunset Networking Dinner Updated",
+            "category": "Restaurant",
+            "event_type": "Private Dinner",
+            "event_date": "2026-07-21",
+            "start_time": "19:00",
+            "end_time": "22:00",
+            "timezone": "Asia/Dhaka",
+            "venue": "Chef's Table Hall",
+            "capacity": 120,
+            "ticket_price": 59,
+            "registration_deadline": "2026-07-20T23:59:00+06:00",
+            "description": "Updated dinner event.",
+            "banner_image_url": "https://files.example.com/events/banner-2.jpg",
+            "active_status": True,
+            "status": "published",
+        },
+    )
+    assert update_res.status_code == 200
+    assert update_res.json()["title"] == "Sunset Networking Dinner Updated"
+    assert update_res.json()["category"] == "Restaurant"
+
+    bad_category_res = await client.post(
+        "/api/v1/vendor/events",
+        headers=headers,
+        json={
+            "title": "Spa Only Event",
+            "category": "Spa",
+            "event_type": "Wellness Pop-up",
+            "event_date": "2026-08-01",
+            "start_time": "10:00",
+            "end_time": "12:00",
+            "timezone": "Asia/Dhaka",
+            "venue": "Wellness Wing",
+            "capacity": 25,
+            "ticket_price": 15,
+            "registration_deadline": "2026-07-31T23:59:00+06:00",
+            "description": "Should be blocked because Spa is not enabled.",
+            "banner_image_url": None,
+            "active_status": True,
+            "status": "draft",
+        },
+    )
+    assert bad_category_res.status_code == 422
+    assert "not enabled for this vendor" in bad_category_res.json()["detail"]
+
+    status_res = await client.patch(
+        f"/api/v1/vendor/events/{created['id']}/status",
+        headers=headers,
+        json={"status": "archived"},
+    )
+    assert status_res.status_code == 200
+    assert status_res.json()["status"] == "archived"
+
+    delete_res = await client.delete(f"/api/v1/vendor/events/{created['id']}", headers=headers)
+    assert delete_res.status_code == 200
+
+    final_list_res = await client.get("/api/v1/vendor/events", headers=headers)
+    assert final_list_res.status_code == 200
+    assert final_list_res.json()["items"] == []
