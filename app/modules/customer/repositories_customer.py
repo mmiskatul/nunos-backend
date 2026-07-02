@@ -24,12 +24,16 @@ class CustomerRepository:
         self.vendor_reviews: Collection = db["vendor_reviews"]
         self.vendor_loyalty_settings: Collection = db["vendor_loyalty_settings"]
         self.vendor_bookings: Collection = db["vendor_bookings"]
+        self.vendor_notifications: Collection = db["vendor_notifications"]
+        self.vendor_notification_settings: Collection = db["vendor_notification_settings"]
         self.bookings: Collection = db["bookings"]
         self.customer_recent_searches: Collection = db["customer_recent_searches"]
         self.customer_saved_items: Collection = db["customer_saved_items"]
 
         self.vendor_bookings.create_index([("vendor_id", ASCENDING), ("scheduled_date", ASCENDING), ("scheduled_time", ASCENDING)])
         self.vendor_bookings.create_index([("customer_id", ASCENDING), ("created_at", DESCENDING)])
+        self.vendor_notifications.create_index([("vendor_id", ASCENDING), ("created_at", DESCENDING)])
+        self.vendor_notification_settings.create_index([("vendor_id", ASCENDING)], unique=True)
         self.customer_recent_searches.create_index([("customer_id", ASCENDING), ("created_at", DESCENDING)])
         self.customer_saved_items.create_index([("customer_id", ASCENDING), ("entity_type", ASCENDING), ("entity_id", ASCENDING)], unique=True)
 
@@ -73,6 +77,47 @@ class CustomerRepository:
     def _get_customer_coords(self, customer_id: str) -> tuple[float | None, float | None]:
         user = self.users.find_one({"_id": self._oid(customer_id)}, {"latitude": 1, "longitude": 1}) or {}
         return self._to_float(user.get("latitude")), self._to_float(user.get("longitude"))
+
+    def _vendor_notification_settings(self, vendor_id: ObjectId) -> dict[str, bool]:
+        setting = self.vendor_notification_settings.find_one({"vendor_id": vendor_id}) or {}
+        return {
+            "new_booking": bool(setting.get("new_booking", setting.get("booking_alerts", True))),
+            "booking_cancellation": bool(setting.get("booking_cancellation", True)),
+            "new_review": bool(setting.get("new_review", setting.get("review_alerts", True))),
+            "platform_updates": bool(setting.get("platform_updates", False)),
+        }
+
+    def _create_vendor_notification(
+        self,
+        vendor_id: ObjectId,
+        notification_type: str,
+        title: str,
+        message: str,
+        *,
+        action_type: str = "mark_read",
+        action_label: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        settings_key: str | None = None,
+    ) -> None:
+        if settings_key:
+            settings = self._vendor_notification_settings(vendor_id)
+            if not bool(settings.get(settings_key, False)):
+                return
+        now = datetime.now(UTC)
+        self.vendor_notifications.insert_one(
+            {
+                "vendor_id": vendor_id,
+                "type": notification_type,
+                "title": title.strip(),
+                "message": message.strip(),
+                "read": False,
+                "action_type": action_type,
+                "action_label": action_label or "Mark as Read",
+                "metadata": metadata or {},
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
 
     def _get_vendor_coords(self, bundle: dict[str, Any]) -> tuple[float | None, float | None]:
         profile_settings = bundle.get("profile_settings", {})
@@ -610,6 +655,25 @@ class CustomerRepository:
             }
         )
         created = self.vendor_bookings.find_one({"_id": booking_id})
+        self._create_vendor_notification(
+            vendor["_id"],
+            "new_booking",
+            "New Booking Received",
+            (
+                f"{customer.get('full_name') or 'A customer'} created a new table booking."
+                f" Scheduled for {date} {time}. Reference: {booking_code}."
+            ),
+            action_type="view_details",
+            action_label="View Booking",
+            metadata={
+                "booking_id": str(booking_id),
+                "booking_code": booking_code,
+                "customer_id": str(customer["_id"]),
+                "status": status,
+                "provider_type": provider_type,
+            },
+            settings_key="new_booking",
+        )
         return self._serialize(created) or {}
 
     def list_customer_bookings(self, customer_id: str, limit: int, skip: int) -> dict[str, Any]:

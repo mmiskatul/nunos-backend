@@ -953,6 +953,116 @@ class VendorPortalRepository:
         result = self.notifications.delete_many({"vendor_id": ObjectId(vendor_id)})
         return int(result.deleted_count)
 
+    def create_notification(
+        self,
+        vendor_id: str,
+        notification_type: str,
+        title: str,
+        message: str,
+        *,
+        action_type: str = "mark_read",
+        action_label: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        respect_settings_key: str | None = None,
+    ) -> dict[str, Any] | None:
+        if respect_settings_key:
+            settings = self.get_notification_settings(vendor_id)
+            if not bool(settings.get(respect_settings_key, False)):
+                return None
+
+        now = datetime.now(UTC)
+        payload = {
+            "vendor_id": ObjectId(vendor_id),
+            "type": notification_type,
+            "title": title.strip(),
+            "message": message.strip(),
+            "read": False,
+            "action_type": action_type,
+            "action_label": action_label or "Mark as Read",
+            "metadata": metadata or {},
+            "created_at": now,
+            "updated_at": now,
+        }
+        inserted = self.notifications.insert_one(payload)
+        created = self.notifications.find_one({"_id": inserted.inserted_id})
+        return self._serialize(created)
+
+    def create_booking_notification(self, vendor_id: str, booking: dict[str, Any]) -> dict[str, Any] | None:
+        customer_name = str(booking.get("customer_name") or "A customer").strip()
+        booking_code = str(booking.get("booking_code") or "").strip()
+        scheduled_date = str(booking.get("scheduled_date") or "").strip()
+        scheduled_time = str(booking.get("scheduled_time") or "").strip()
+        service = str(booking.get("service") or "booking").strip()
+        schedule_label = " ".join(part for part in [scheduled_date, scheduled_time] if part).strip()
+        message = f"{customer_name} created a new {service.lower()}."
+        if schedule_label:
+            message = f"{message} Scheduled for {schedule_label}."
+        if booking_code:
+            message = f"{message} Reference: {booking_code}."
+
+        return self.create_notification(
+            vendor_id,
+            "new_booking",
+            "New Booking Received",
+            message,
+            action_type="view_details",
+            action_label="View Booking",
+            metadata={
+                "booking_id": str(booking.get("id") or booking.get("_id") or ""),
+                "booking_code": booking_code,
+                "status": booking.get("status"),
+            },
+            respect_settings_key="new_booking",
+        )
+
+    def broadcast_platform_update(
+        self,
+        title: str,
+        message: str,
+        *,
+        action_label: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        vendor_ids: list[str] | None = None,
+    ) -> int:
+        vendor_filter: dict[str, Any] = {}
+        if vendor_ids:
+            vendor_filter = {"vendor_id": {"$in": [ObjectId(vendor_id) for vendor_id in vendor_ids]}}
+
+        opted_in_rows = list(
+            self.notification_settings.find(
+                {
+                    "platform_updates": True,
+                    **vendor_filter,
+                },
+                {"vendor_id": 1},
+            )
+        )
+        if not opted_in_rows:
+            return 0
+
+        vendor_id_values = [row.get("vendor_id") for row in opted_in_rows if row.get("vendor_id")]
+        if not vendor_id_values:
+            return 0
+
+        now = datetime.now(UTC)
+        docs = [
+            {
+                "vendor_id": vendor_oid,
+                "type": "platform_update",
+                "title": title.strip(),
+                "message": message.strip(),
+                "read": False,
+                "action_type": "view_details",
+                "action_label": action_label or "View Update",
+                "metadata": metadata or {},
+                "created_at": now,
+                "updated_at": now,
+            }
+            for vendor_oid in vendor_id_values
+        ]
+        result = self.notifications.insert_many(docs)
+        return len(result.inserted_ids)
+
     def get_notification_settings(self, vendor_id: str) -> dict[str, Any]:
         setting = self.notification_settings.find_one({"vendor_id": ObjectId(vendor_id)}) or {}
         setting.pop("_id", None)

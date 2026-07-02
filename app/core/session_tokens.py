@@ -35,6 +35,12 @@ def build_session_document(
     }
 
 
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
 def session_is_active(document: dict[str, Any] | None, *, audience: TokenAudience) -> bool:
     if not document:
         return False
@@ -45,4 +51,4 @@ def session_is_active(document: dict[str, Any] | None, *, audience: TokenAudienc
     expires_at = document.get("expires_at")
     if not isinstance(expires_at, datetime):
         return False
-    return expires_at > datetime.now(UTC)
+    return _as_utc(expires_at) > datetime.now(UTC)

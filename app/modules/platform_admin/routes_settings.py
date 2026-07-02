@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 
 from bson import ObjectId
 from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile, status
+from pydantic import BaseModel, Field
 from pymongo.database import Database
 
 from app.api.deps import get_cloudinary_uploader
@@ -9,6 +10,7 @@ from app.core.account_lookup import find_existing_email_sync
 from app.core.security import hash_password, verify_password
 from app.modules.platform_admin.deps_auth import get_current_platform_admin
 from app.modules.platform_admin.deps import get_platform_admin_db
+from app.modules.vendor.repositories_portal import VendorPortalRepository
 from app.providers.cloudinary_uploader import CloudinaryUploader
 
 router = APIRouter(prefix="/platform-admin/settings", tags=["Platform Admin - Settings (Live)"])
@@ -16,6 +18,13 @@ router = APIRouter(prefix="/platform-admin/settings", tags=["Platform Admin - Se
 SETTINGS_DOC_ID = "platform_admin_settings"
 LEGAL_DOCUMENT_KEYS = {"terms", "privacy"}
 LEGAL_AUDIENCE_KEYS = {"apps", "business"}
+
+
+class PlatformUpdateBroadcastRequest(BaseModel):
+    title: str = Field(min_length=3, max_length=160)
+    message: str = Field(min_length=5, max_length=4000)
+    action_label: str | None = Field(default=None, max_length=80)
+    vendor_ids: list[str] = Field(default_factory=list)
 
 
 def _first_admin(db: Database) -> dict:
@@ -348,3 +357,27 @@ def update_admin_legal_doc(
 ) -> dict:
     payload = {**payload, "document": doc_type}
     return update_admin_legal_content(payload=payload, db=db)
+
+
+@router.post("/platform-updates")
+def broadcast_platform_update(
+    payload: PlatformUpdateBroadcastRequest,
+    db: Database = Depends(get_platform_admin_db),
+    current_admin: dict = Depends(get_current_platform_admin),
+) -> dict:
+    repo = VendorPortalRepository(db)
+    inserted_count = repo.broadcast_platform_update(
+        payload.title,
+        payload.message,
+        action_label=payload.action_label,
+        metadata={
+            "source": "platform_admin",
+            "broadcast_by": str(current_admin.get("id") or ""),
+        },
+        vendor_ids=payload.vendor_ids or None,
+    )
+    return {
+        "message": "Platform update broadcast created.",
+        "inserted_count": inserted_count,
+        "target_scope": "selected_vendors" if payload.vendor_ids else "all_opted_in_vendors",
+    }

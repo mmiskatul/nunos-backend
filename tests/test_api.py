@@ -2,7 +2,21 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from app.core.session_tokens import session_is_active
 from app.core.security import hash_password
+
+
+def test_session_is_active_accepts_naive_mongo_datetime():
+    expires_at = datetime.now() + timedelta(minutes=5)
+
+    assert session_is_active(
+        {
+            "audience": "customer",
+            "revoked_at": None,
+            "expires_at": expires_at,
+        },
+        audience="customer",
+    )
 
 
 @pytest.mark.asyncio
