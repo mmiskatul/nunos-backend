@@ -23,6 +23,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 TokenType = Literal["access", "refresh", "reset"]
 TokenAudience = Literal["customer", "vendor", "platform_admin"]
+TokenRole = Literal["customer", "vendor", "platform_admin"]
 
 
 def hash_password(password: str) -> str:
@@ -93,16 +94,24 @@ def decode_token(
     expected_type: TokenType | None = None,
     *,
     expected_audience: TokenAudience | None = None,
+    expected_role: TokenRole | None = None,
 ) -> dict:
     settings = get_settings()
     try:
-        payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
+        decode_kwargs = {
+            "key": settings.jwt_secret_key,
+            "algorithms": [settings.jwt_algorithm],
+            "options": {"verify_aud": expected_audience is not None},
+        }
+        if expected_audience is not None:
+            decode_kwargs["audience"] = expected_audience
+        payload = jwt.decode(token, **decode_kwargs)
     except JWTError as exc:
         raise ValueError("Invalid token") from exc
 
     if expected_type and payload.get("type") != expected_type:
         raise ValueError("Invalid token type")
-    if expected_audience and payload.get("aud") != expected_audience:
-        raise ValueError("Invalid token audience")
+    if expected_role and payload.get("role") != expected_role:
+        raise ValueError("Invalid token role")
 
     return payload

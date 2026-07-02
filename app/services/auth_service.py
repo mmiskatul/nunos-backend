@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from fastapi import HTTPException, status
 from pymongo.errors import DuplicateKeyError
 
-from app.core.account_lookup import find_existing_email_async
+from app.core.account_lookup import find_existing_email_async, find_existing_phone_async
 from app.core.config import Settings
 from app.core.mongo_errors import duplicate_contact_conflict_detail
 from app.core.session_tokens import SESSION_COLLECTION, build_session_document, session_is_active
@@ -54,23 +54,26 @@ class AuthService:
         if not payload.email:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email is required for registration")
 
-        existing_account = await find_existing_email_async(self.user_repo.collection.database, payload.email)
+        normalized_email = payload.email.strip().lower()
+        normalized_phone = payload.phone.strip() if payload.phone else None
+
+        existing_account = await find_existing_email_async(self.user_repo.collection.database, normalized_email)
         if existing_account:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="This email is already in use by another account.",
             )
 
-        if payload.phone:
-            existing_phone = await self.user_repo.find_by_phone(payload.phone)
+        if normalized_phone:
+            existing_phone = await find_existing_phone_async(self.user_repo.collection.database, normalized_phone)
             if existing_phone:
                 raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Phone already exists")
 
         password_hash = hash_password(payload.password)
         await self.pending_signup_repo.upsert_signup(
-            email=payload.email,
+            email=normalized_email,
             full_name=payload.full_name,
-            phone=payload.phone,
+            phone=normalized_phone,
             password_hash=password_hash,
             location_enabled=payload.location_enabled,
             latitude=payload.latitude,
@@ -82,19 +85,19 @@ class AuthService:
         otp = self._generate_otp()
         expires_at = datetime.now(UTC) + timedelta(minutes=self.settings.otp_expire_minutes)
         await self.otp_repo.upsert_code(
-            email=payload.email,
+            email=normalized_email,
             purpose="signup_verification",
             code=otp,
             expires_at=expires_at,
         )
         await asyncio.to_thread(
             self.email_sender.send_signup_verification_code,
-            payload.email,
+            normalized_email,
             payload.full_name,
             otp,
             self.settings.otp_expire_minutes,
         )
-        return RegistrationResponse(message="Verification code sent to email.", email=payload.email)
+        return RegistrationResponse(message="Verification code sent to email.", email=normalized_email)
 
     async def verify_email(self, payload: VerifyEmailRequest) -> TokenPair:
         signup_doc = await self.pending_signup_repo.get_valid_signup(email=payload.email)
@@ -122,6 +125,9 @@ class AuthService:
             "email": payload.email,
             "phone": signup_doc.get("phone"),
             "password_hash": signup_doc["password_hash"],
+            "role": "customer",
+            "status": "active",
+            "auth_provider": "local",
             "points_balance": 0,
             "is_active": True,
             "location_enabled": signup_doc.get("location_enabled", False),
@@ -151,6 +157,10 @@ class AuthService:
         password_hash = user.get("password_hash") if user else None
         if not user or not password_hash or not verify_password(payload.password, password_hash):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+        if (user.get("role") or "customer") != "customer":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+        if (user.get("status") or "active").lower() != "active" or user.get("is_active") is False:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User account is not active")
 
         user_id = str(user["_id"])
         return await self._issue_token_pair(user_id)
@@ -186,6 +196,8 @@ class AuthService:
                         "email": social_user.email,
                         "phone": None,
                         "password_hash": "",
+                        "role": "customer",
+                        "status": "active",
                         "auth_provider": social_user.provider,
                         "social_provider_user_id": social_user.provider_user_id,
                         "profile_image_url": social_user.profile_image_url,
@@ -217,13 +229,17 @@ class AuthService:
         user = await self.user_repo.find_by_id(user_id)
         if not user:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+        if (user.get("role") or "customer") != "customer":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject")
+        if (user.get("status") or "active").lower() != "active" or user.get("is_active") is False:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User account is not active")
         await self.session_collection.update_one(
             {"_id": session["_id"]},
             {"$set": {"last_used_at": datetime.now(UTC)}},
         )
 
         return TokenPair(
-            access_token=create_access_token(user_id, audience="customer"),
+            access_token=create_access_token(user_id, audience="customer", role="customer"),
             refresh_token=payload.refresh_token,
             session_token=payload.refresh_token,
         )
@@ -291,11 +307,11 @@ class AuthService:
         return "".join(str(random.randint(0, 9)) for _ in range(self.settings.otp_length))
 
     async def _issue_token_pair(self, user_id: str) -> TokenPair:
-        session_doc = build_session_document(subject_id=user_id, audience="customer")
+        session_doc = build_session_document(subject_id=user_id, audience="customer", role="customer")
         await self.session_collection.insert_one(session_doc)
         session_token = str(session_doc["token"])
         return TokenPair(
-            access_token=create_access_token(user_id, audience="customer"),
+            access_token=create_access_token(user_id, audience="customer", role="customer"),
             refresh_token=session_token,
             session_token=session_token,
         )

@@ -46,6 +46,9 @@ def session_is_active(document: dict[str, Any] | None, *, audience: TokenAudienc
         return False
     if document.get("audience") != audience:
         return False
+    expected_role = "customer" if audience == "customer" else audience
+    if document.get("role") != expected_role:
+        return False
     if document.get("revoked_at") is not None:
         return False
     expires_at = document.get("expires_at")

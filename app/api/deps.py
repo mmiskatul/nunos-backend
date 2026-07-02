@@ -129,7 +129,7 @@ async def get_current_user_id(
     user_repo: UserRepository = Depends(get_user_repo),
 ) -> str:
     try:
-        payload = decode_token(token, expected_type="access", expected_audience="customer")
+        payload = decode_token(token, expected_type="access", expected_audience="customer", expected_role="customer")
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid access token") from exc
 
@@ -137,6 +137,10 @@ async def get_current_user_id(
     user = await user_repo.find_by_id(user_id)
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    if (user.get("role") or "customer") != "customer":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid user role")
+    if (user.get("status") or "active").lower() != "active" or user.get("is_active") is False:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User account is not active")
     return str(user["_id"])
 
 

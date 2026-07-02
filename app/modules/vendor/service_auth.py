@@ -5,7 +5,7 @@ from bson.errors import InvalidId
 from fastapi import HTTPException, UploadFile, status
 from pymongo.errors import DuplicateKeyError
 
-from app.core.account_lookup import find_existing_email_sync
+from app.core.account_lookup import find_existing_email_sync, find_existing_phone_sync
 from app.core.config import get_settings
 from app.core.contact import parse_email_or_phone
 from app.core.mongo_errors import duplicate_contact_conflict_detail
@@ -150,7 +150,7 @@ class VendorAuthService:
             )
 
         phone = explicit_phone or phone_from_contact
-        if phone and self.vendor_repo.get_by_phone(phone):
+        if phone and find_existing_phone_sync(self.vendor_repo.collection.database, phone):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Phone already exists")
 
         try:
@@ -226,6 +226,8 @@ class VendorAuthService:
 
         if not verify_password(payload.password, vendor["password_hash"]):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials.")
+        if (vendor.get("role") or "") != "vendor":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials.")
 
         account_status = (vendor.get("status") or "").lower()
         if account_status != "approved":
@@ -261,6 +263,8 @@ class VendorAuthService:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject.") from exc
         if not vendor:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Vendor not found.")
+        if (vendor.get("role") or "") != "vendor":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject.")
 
         account_status = (vendor.get("status") or "").lower()
         if account_status != "approved":
@@ -350,7 +354,12 @@ class VendorAuthService:
 
     def get_current_vendor_from_token(self, token: str) -> dict[str, Any]:
         try:
-            payload = decode_token(token, expected_type="access", expected_audience="vendor")
+            payload = decode_token(
+                token,
+                expected_type="access",
+                expected_audience="vendor",
+                expected_role="vendor",
+            )
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid access token.") from exc
         vendor_id = payload.get("sub")
@@ -363,6 +372,8 @@ class VendorAuthService:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject.") from exc
         if not vendor:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Vendor not found.")
+        if (vendor.get("role") or "") != "vendor":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject.")
         return vendor
 
     def get_registration_status(self, email_or_phone: str) -> VendorRegistrationStatusResponse:

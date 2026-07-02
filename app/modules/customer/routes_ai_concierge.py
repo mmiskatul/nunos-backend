@@ -522,7 +522,12 @@ async def ai_session_ws(
         return
 
     try:
-        payload = decode_token(token, expected_type="access")
+        payload = decode_token(
+            token,
+            expected_type="access",
+            expected_audience="customer",
+            expected_role="customer",
+        )
     except ValueError:
         await websocket.send_json({"error": "Invalid token."})
         await websocket.close(code=4401)
@@ -534,6 +539,10 @@ async def ai_session_ws(
     user = await user_repo.find_by_id(user_id)
     if not user:
         await websocket.send_json({"error": "User not found."})
+        await websocket.close(code=4401)
+        return
+    if (user.get("role") or "customer") != "customer":
+        await websocket.send_json({"error": "Invalid user role."})
         await websocket.close(code=4401)
         return
 

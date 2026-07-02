@@ -1,10 +1,11 @@
+from datetime import UTC, datetime
 from typing import Any
 
 from bson.errors import InvalidId
 from fastapi import HTTPException, status
 from pymongo.errors import DuplicateKeyError
 
-from app.core.account_lookup import find_existing_email_sync
+from app.core.account_lookup import find_existing_email_sync, find_existing_phone_sync
 from app.core.config import get_settings
 from app.core.contact import parse_email_or_phone
 from app.core.mongo_errors import duplicate_contact_conflict_detail
@@ -113,6 +114,8 @@ class PlatformAdminAuthService:
                 status_code=status.HTTP_409_CONFLICT,
                 detail="This email is already in use by another account.",
             )
+        if phone and find_existing_phone_sync(self.admin_repo.collection.database, phone):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Phone already exists")
 
         try:
             admin = self.admin_repo.create_admin(
@@ -146,6 +149,8 @@ class PlatformAdminAuthService:
 
         if not verify_password(payload.password, admin["password_hash"]):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials.")
+        if (admin.get("role") or "") != "platform_admin":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials.")
 
         if (admin.get("status") or "").lower() != "active":
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin account is not active.")
@@ -166,6 +171,8 @@ class PlatformAdminAuthService:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject.") from exc
         if not admin:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin not found.")
+        if (admin.get("role") or "") != "platform_admin":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject.")
         if (admin.get("status") or "").lower() != "active":
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin account is not active.")
 
@@ -234,7 +241,12 @@ class PlatformAdminAuthService:
 
     def get_current_admin_from_token(self, token: str) -> dict[str, Any]:
         try:
-            payload = decode_token(token, expected_type="access", expected_audience="platform_admin")
+            payload = decode_token(
+                token,
+                expected_type="access",
+                expected_audience="platform_admin",
+                expected_role="platform_admin",
+            )
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid access token.") from exc
         admin_id = payload.get("sub")
@@ -246,6 +258,8 @@ class PlatformAdminAuthService:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject.") from exc
         if not admin:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin not found.")
+        if (admin.get("role") or "") != "platform_admin":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject.")
         return admin
 
     def _build_auth_response(self, admin: dict[str, Any]) -> AdminAuthResponse:

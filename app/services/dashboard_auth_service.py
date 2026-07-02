@@ -35,11 +35,13 @@ class DashboardAuthService:
         if not verify_password(payload.password, admin["password_hash"]):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
+        if (admin.get("role") or "") != "platform_admin":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
         if (admin.get("status") or "").lower() != "active":
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin account is not active")
 
         return DashboardAuthResponse(
-            access_token=create_access_token(admin["id"]),
+            access_token=create_access_token(admin["id"], audience="platform_admin", role="platform_admin"),
             admin=DashboardAdminPublic.model_validate(admin),
         )
 

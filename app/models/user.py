@@ -107,6 +107,7 @@ class UserDB(MongoDocument):
     email: EmailStr | None = None
     phone: str | None = None
     password_hash: str
+    role: str = "customer"
     points_balance: int = 0
     is_active: bool = True
     location_enabled: bool = False
@@ -120,6 +121,7 @@ class UserPublic(BaseModel):
     full_name: str
     email: EmailStr | None = None
     phone: str | None = None
+    role: str = "customer"
     points_balance: int
     created_at: datetime
 

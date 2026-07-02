@@ -12,6 +12,7 @@ def test_session_is_active_accepts_naive_mongo_datetime():
     assert session_is_active(
         {
             "audience": "customer",
+            "role": "customer",
             "revoked_at": None,
             "expires_at": expires_at,
         },
@@ -57,6 +58,8 @@ async def test_register_verify_and_login(client, test_db):
 
     created_user = await test_db.users.find_one({"email": "test@example.com"})
     assert created_user
+    assert created_user["role"] == "customer"
+    assert created_user["status"] == "active"
     assert created_user["location_enabled"] is True
     assert created_user["latitude"] == pytest.approx(23.8103)
     assert created_user["longitude"] == pytest.approx(90.4125)
@@ -148,6 +151,62 @@ async def test_vendor_signup_rejects_existing_user_email(client, test_db):
 
 
 @pytest.mark.asyncio
+async def test_vendor_signup_rejects_existing_user_phone(client, test_db):
+    register_res = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "full_name": "Existing User",
+            "email": "phone-shared@example.com",
+            "phone": "+15550009999",
+            "password": "StrongPass123!",
+        },
+    )
+    assert register_res.status_code == 200
+
+    signup_code = await test_db.otp_codes.find_one({"email": "phone-shared@example.com", "purpose": "signup_verification"})
+    verify_res = await client.post(
+        "/api/v1/auth/verify-email",
+        json={"email": "phone-shared@example.com", "otp": signup_code["code"]},
+    )
+    assert verify_res.status_code == 200
+
+    vendor_code_res = await client.post(
+        "/api/v1/vendor/auth/register/request-code",
+        json={"email_or_phone": "new-vendor@example.com"},
+    )
+    assert vendor_code_res.status_code == 200
+    signup_token = (
+        await client.post(
+            "/api/v1/vendor/auth/register/verify-code",
+            json={"email_or_phone": "new-vendor@example.com", "validation_code": vendor_code_res.json()["validation_code"]},
+        )
+    ).json()["signup_token"]
+
+    register_vendor_res = await client.post(
+        "/api/v1/vendor/auth/register",
+        json={
+            "business_name": "Phone Conflict Vendor",
+            "owner_full_name": "Vendor Owner",
+            "email_or_phone": "new-vendor@example.com",
+            "phone": "+15550009999",
+            "address": "123 Market Street",
+            "city": "Dhaka",
+            "website": "https://vendor.example.com",
+            "business_description": "A demo service provider account for testing.",
+            "trade_license_number": "TL-12345",
+            "trade_license_document_url": "https://files.example.com/license.pdf",
+            "owner_manager_id_document_url": "https://files.example.com/id.pdf",
+            "terms_accepted": True,
+            "password": "VendorPass123!",
+            "confirm_password": "VendorPass123!",
+            "signup_token": signup_token,
+        },
+    )
+    assert register_vendor_res.status_code == 409
+    assert register_vendor_res.json()["detail"] == "Phone already exists"
+
+
+@pytest.mark.asyncio
 async def test_personal_details_rejects_vendor_email(client, test_db):
     await test_db.vendors.insert_one(
         {
@@ -194,6 +253,55 @@ async def test_personal_details_rejects_vendor_email(client, test_db):
     )
     assert patch_res.status_code == 409
     assert patch_res.json()["detail"] == "This email is already in use by another account."
+
+
+@pytest.mark.asyncio
+async def test_personal_details_rejects_vendor_phone(client, test_db):
+    await test_db.vendors.insert_one(
+        {
+            "business_name": "Shared Vendor",
+            "owner_full_name": "Vendor Owner",
+            "email": "vendor-phone@example.com",
+            "phone": "+15550007777",
+            "password_hash": hash_password("StrongPass123!"),
+            "role": "vendor",
+            "status": "approved",
+            "created_at": datetime.now(UTC),
+            "updated_at": datetime.now(UTC),
+        }
+    )
+
+    register_res = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "full_name": "Profile User",
+            "email": "profile-phone@example.com",
+            "phone": "+15550008888",
+            "password": "StrongPass123!",
+        },
+    )
+    assert register_res.status_code == 200
+
+    signup_code = await test_db.otp_codes.find_one({"email": "profile-phone@example.com", "purpose": "signup_verification"})
+    verify_res = await client.post(
+        "/api/v1/auth/verify-email",
+        json={"email": "profile-phone@example.com", "otp": signup_code["code"]},
+    )
+    token = verify_res.json()["data"]["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    patch_res = await client.patch(
+        "/api/v1/users/me/personal-details",
+        headers=headers,
+        json={
+            "full_name": "Updated Profile User",
+            "email": "profile-phone@example.com",
+            "phone": "+15550007777",
+            "date_of_birth": "1992-03-15",
+        },
+    )
+    assert patch_res.status_code == 409
+    assert patch_res.json()["detail"] == "Phone already exists"
 
 
 @pytest.mark.asyncio
@@ -411,6 +519,130 @@ async def test_vendor_register_and_login_flow(client, test_db):
     assert login_res.status_code == 200
     assert login_res.json()["access_token"]
     assert login_res.json()["vendor"]["email"] == "vendor@example.com"
+
+
+@pytest.mark.asyncio
+async def test_admin_credentials_cannot_login_on_customer_or_vendor_routes(client, test_db):
+    await test_db.platform_admins.insert_one(
+        {
+            "full_name": "Admin User",
+            "email": "wrong-surface-admin@example.com",
+            "password_hash": hash_password("StrongPass123!"),
+            "role": "platform_admin",
+            "status": "active",
+            "created_at": datetime.now(UTC),
+            "updated_at": datetime.now(UTC),
+        }
+    )
+
+    customer_res = await client.post(
+        "/api/v1/auth/login",
+        json={"email_or_phone": "wrong-surface-admin@example.com", "password": "StrongPass123!"},
+    )
+    assert customer_res.status_code == 401
+
+    vendor_res = await client.post(
+        "/api/v1/vendor/auth/login",
+        json={"email_or_phone": "wrong-surface-admin@example.com", "password": "StrongPass123!"},
+    )
+    assert vendor_res.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_vendor_credentials_cannot_login_on_customer_route(client, test_db):
+    await test_db.vendors.insert_one(
+        {
+            "business_name": "Approved Vendor",
+            "owner_full_name": "Vendor Owner",
+            "email": "wrong-surface-vendor@example.com",
+            "phone": "+15550001119",
+            "password_hash": hash_password("VendorPass123!"),
+            "role": "vendor",
+            "status": "approved",
+            "created_at": datetime.now(UTC),
+            "updated_at": datetime.now(UTC),
+        }
+    )
+
+    customer_res = await client.post(
+        "/api/v1/auth/login",
+        json={"email_or_phone": "wrong-surface-vendor@example.com", "password": "VendorPass123!"},
+    )
+    assert customer_res.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_customer_credentials_cannot_login_on_vendor_or_admin_routes(client, test_db):
+    await test_db.users.insert_one(
+        {
+            "full_name": "Customer User",
+            "email": "wrong-surface-customer@example.com",
+            "phone": "+15550001120",
+            "password_hash": hash_password("StrongPass123!"),
+            "role": "customer",
+            "status": "active",
+            "is_active": True,
+            "created_at": datetime.now(UTC),
+            "updated_at": datetime.now(UTC),
+        }
+    )
+
+    vendor_res = await client.post(
+        "/api/v1/vendor/auth/login",
+        json={"email_or_phone": "wrong-surface-customer@example.com", "password": "StrongPass123!"},
+    )
+    assert vendor_res.status_code == 401
+
+    admin_res = await client.post(
+        "/api/v1/platform-admin/auth/login",
+        json={"email_or_phone": "wrong-surface-customer@example.com", "password": "StrongPass123!"},
+    )
+    assert admin_res.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_vendor_credentials_cannot_login_on_admin_route(client, test_db):
+    await test_db.vendors.insert_one(
+        {
+            "business_name": "Approved Vendor",
+            "owner_full_name": "Vendor Owner",
+            "email": "wrong-surface-vendor-admin@example.com",
+            "phone": "+15550001121",
+            "password_hash": hash_password("VendorPass123!"),
+            "role": "vendor",
+            "status": "approved",
+            "created_at": datetime.now(UTC),
+            "updated_at": datetime.now(UTC),
+        }
+    )
+
+    admin_res = await client.post(
+        "/api/v1/platform-admin/auth/login",
+        json={"email_or_phone": "wrong-surface-vendor-admin@example.com", "password": "VendorPass123!"},
+    )
+    assert admin_res.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_admin_credentials_cannot_login_on_platform_app_routes_except_admin(client, test_db):
+    await test_db.platform_admins.insert_one(
+        {
+            "full_name": "Admin User",
+            "email": "wrong-surface-admin-dashboard@example.com",
+            "password_hash": hash_password("StrongPass123!"),
+            "role": "platform_admin",
+            "status": "active",
+            "created_at": datetime.now(UTC),
+            "updated_at": datetime.now(UTC),
+        }
+    )
+
+    admin_res = await client.post(
+        "/api/v1/platform-admin/auth/login",
+        json={"email_or_phone": "wrong-surface-admin-dashboard@example.com", "password": "StrongPass123!"},
+    )
+    assert admin_res.status_code == 200
+    assert admin_res.json()["admin"]["email"] == "wrong-surface-admin-dashboard@example.com"
 
 
 @pytest.mark.asyncio
