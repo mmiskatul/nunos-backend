@@ -8,11 +8,10 @@ from pymongo.errors import DuplicateKeyError
 from app.core.account_lookup import find_existing_email_async
 from app.core.config import Settings
 from app.core.mongo_errors import duplicate_contact_conflict_detail
+from app.core.session_tokens import SESSION_COLLECTION, build_session_document, session_is_active
 from app.core.security import (
     create_access_token,
-    create_refresh_token,
     create_reset_token,
-    decode_token,
     hash_password,
     verify_password,
 )
@@ -49,6 +48,7 @@ class AuthService:
         self.email_sender = email_sender
         self.settings = settings
         self.social_auth_factory = SocialAuthStrategyFactory(settings)
+        self.session_collection = self.user_repo.collection.database[SESSION_COLLECTION]
 
     async def register(self, payload: UserCreateRequest) -> RegistrationResponse:
         if not payload.email:
@@ -144,7 +144,7 @@ class AuthService:
 
         await self.pending_signup_repo.delete_signup(email=payload.email)
         user_id = str(user["_id"])
-        return TokenPair(access_token=create_access_token(user_id), refresh_token=create_refresh_token(user_id))
+        return await self._issue_token_pair(user_id)
 
     async def login(self, payload: LoginRequest) -> TokenPair:
         user = await self.user_repo.find_by_email_or_phone(payload.email_or_phone)
@@ -153,7 +153,7 @@ class AuthService:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
         user_id = str(user["_id"])
-        return TokenPair(access_token=create_access_token(user_id), refresh_token=create_refresh_token(user_id))
+        return await self._issue_token_pair(user_id)
 
     async def social_login(self, payload: SocialLoginRequest) -> TokenPair:
         try:
@@ -206,20 +206,34 @@ class AuthService:
                 ) from exc
 
         user_id = str(user["_id"])
-        return TokenPair(access_token=create_access_token(user_id), refresh_token=create_refresh_token(user_id))
+        return await self._issue_token_pair(user_id)
 
     async def refresh(self, payload: RefreshTokenRequest) -> TokenPair:
-        try:
-            token_data = decode_token(payload.refresh_token, expected_type="refresh")
-        except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token") from exc
+        session = await self.session_collection.find_one({"token": payload.refresh_token})
+        if not session_is_active(session, audience="customer"):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
 
-        user_id = token_data.get("sub")
+        user_id = str(session.get("subject_id") or "")
         user = await self.user_repo.find_by_id(user_id)
         if not user:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+        await self.session_collection.update_one(
+            {"_id": session["_id"]},
+            {"$set": {"last_used_at": datetime.now(UTC)}},
+        )
 
-        return TokenPair(access_token=create_access_token(user_id), refresh_token=create_refresh_token(user_id))
+        return TokenPair(
+            access_token=create_access_token(user_id, audience="customer"),
+            refresh_token=payload.refresh_token,
+            session_token=payload.refresh_token,
+        )
+
+    async def logout(self, payload: RefreshTokenRequest) -> dict[str, str]:
+        await self.session_collection.update_one(
+            {"token": payload.refresh_token, "audience": "customer", "revoked_at": None},
+            {"$set": {"revoked_at": datetime.now(UTC), "last_used_at": datetime.now(UTC)}},
+        )
+        return {"message": "Logged out successfully"}
 
     async def forgot_password(self, payload: ForgotPasswordRequest) -> dict:
         user = await self.user_repo.find_by_email(payload.email)
@@ -275,3 +289,13 @@ class AuthService:
 
     def _generate_otp(self) -> str:
         return "".join(str(random.randint(0, 9)) for _ in range(self.settings.otp_length))
+
+    async def _issue_token_pair(self, user_id: str) -> TokenPair:
+        session_doc = build_session_document(subject_id=user_id, audience="customer")
+        await self.session_collection.insert_one(session_doc)
+        session_token = str(session_doc["token"])
+        return TokenPair(
+            access_token=create_access_token(user_id, audience="customer"),
+            refresh_token=session_token,
+            session_token=session_token,
+        )

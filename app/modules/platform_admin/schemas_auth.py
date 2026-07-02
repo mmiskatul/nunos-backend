@@ -101,8 +101,14 @@ class AdminPublic(BaseModel):
 
 class AdminAuthResponse(BaseModel):
     access_token: str
+    refresh_token: str | None = None
+    session_token: str | None = None
     token_type: str = "bearer"
     admin: AdminPublic
+
+
+class AdminRefreshTokenRequest(BaseModel):
+    refresh_token: str = Field(min_length=16)
 
 
 class AdminMessageResponse(BaseModel):

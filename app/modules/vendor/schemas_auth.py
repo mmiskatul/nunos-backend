@@ -134,8 +134,14 @@ class VendorPublic(BaseModel):
 
 class VendorAuthResponse(BaseModel):
     access_token: str
+    refresh_token: str | None = None
+    session_token: str | None = None
     token_type: str = "bearer"
     vendor: VendorPublic
+
+
+class VendorRefreshTokenRequest(BaseModel):
+    refresh_token: str = Field(min_length=16)
 
 
 class VendorMessageResponse(BaseModel):

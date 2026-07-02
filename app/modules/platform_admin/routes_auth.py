@@ -8,6 +8,7 @@ from app.modules.platform_admin.schemas_auth import (
     AdminLoginRequest,
     AdminMessageResponse,
     AdminPublic,
+    AdminRefreshTokenRequest,
     AdminRegisterCodeRequest,
     AdminRegisterRequest,
     AdminResetPasswordRequest,
@@ -50,6 +51,22 @@ def login_admin(
     auth_service: PlatformAdminAuthService = Depends(get_platform_admin_auth_service),
 ) -> AdminAuthResponse:
     return auth_service.login(payload)
+
+
+@router.post("/refresh", response_model=AdminAuthResponse)
+def refresh_admin(
+    payload: AdminRefreshTokenRequest,
+    auth_service: PlatformAdminAuthService = Depends(get_platform_admin_auth_service),
+) -> AdminAuthResponse:
+    return auth_service.refresh(payload)
+
+
+@router.post("/logout", response_model=AdminMessageResponse)
+def logout_admin(
+    payload: AdminRefreshTokenRequest,
+    auth_service: PlatformAdminAuthService = Depends(get_platform_admin_auth_service),
+) -> AdminMessageResponse:
+    return auth_service.logout(payload)
 
 
 @router.post("/forgot-password/request", response_model=AdminCodeResponse)

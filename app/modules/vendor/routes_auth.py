@@ -10,6 +10,7 @@ from app.modules.vendor.schemas_auth import (
     VendorKycSubmitRequest,
     VendorLoginRequest,
     VendorMessageResponse,
+    VendorRefreshTokenRequest,
     VendorRegistrationStatusResponse,
     VendorRegisterRequest,
     VendorResetPasswordRequest,
@@ -68,6 +69,22 @@ def vendor_login(
     auth_service: VendorAuthService = Depends(get_vendor_auth_service),
 ) -> VendorAuthResponse:
     return auth_service.login(payload)
+
+
+@router.post("/refresh", response_model=VendorAuthResponse)
+def vendor_refresh(
+    payload: VendorRefreshTokenRequest,
+    auth_service: VendorAuthService = Depends(get_vendor_auth_service),
+) -> VendorAuthResponse:
+    return auth_service.refresh(payload)
+
+
+@router.post("/logout", response_model=VendorMessageResponse)
+def vendor_logout(
+    payload: VendorRefreshTokenRequest,
+    auth_service: VendorAuthService = Depends(get_vendor_auth_service),
+) -> VendorMessageResponse:
+    return auth_service.logout(payload)
 
 
 @router.post("/forgot-password/request", response_model=VendorCodeRequestResponse)

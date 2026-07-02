@@ -8,6 +8,7 @@ from app.core.account_lookup import find_existing_email_sync
 from app.core.config import get_settings
 from app.core.contact import parse_email_or_phone
 from app.core.mongo_errors import duplicate_contact_conflict_detail
+from app.core.session_tokens import SESSION_COLLECTION, build_session_document, session_is_active
 from app.core.security import create_access_token, decode_token, hash_password, verify_password
 from app.modules.platform_admin.repositories_admin import PlatformAdminRepository
 from app.modules.platform_admin.repositories_password_reset import AdminPasswordResetRepository
@@ -19,6 +20,7 @@ from app.modules.platform_admin.schemas_auth import (
     AdminLoginRequest,
     AdminMessageResponse,
     AdminPublic,
+    AdminRefreshTokenRequest,
     AdminRegisterCodeRequest,
     AdminRegisterRequest,
     AdminResetPasswordRequest,
@@ -44,6 +46,7 @@ class PlatformAdminAuthService:
         self.password_reset_repo = password_reset_repo
         self.email_sender = email_sender
         self.settings = get_settings()
+        self.session_collection = self.admin_repo.collection.database[SESSION_COLLECTION]
 
     def request_register_code(self, payload: AdminRegisterCodeRequest) -> AdminCodeResponse:
         email, _ = parse_email_or_phone(payload.email_or_phone)
@@ -149,6 +152,42 @@ class PlatformAdminAuthService:
 
         return self._build_auth_response(admin)
 
+    def refresh(self, payload: AdminRefreshTokenRequest) -> AdminAuthResponse:
+        session = self.session_collection.find_one({"token": payload.refresh_token})
+        if not session_is_active(session, audience="platform_admin"):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token.")
+
+        admin_id = str(session.get("subject_id") or "")
+        if not admin_id:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload.")
+        try:
+            admin = self.admin_repo.get_by_id(admin_id)
+        except InvalidId as exc:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject.") from exc
+        if not admin:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin not found.")
+        if (admin.get("status") or "").lower() != "active":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin account is not active.")
+
+        self.session_collection.update_one(
+            {"_id": session["_id"]},
+            {"$set": {"last_used_at": datetime.now(UTC)}},
+        )
+
+        return AdminAuthResponse(
+            access_token=create_access_token(admin["id"], audience="platform_admin", role="platform_admin"),
+            refresh_token=payload.refresh_token,
+            session_token=payload.refresh_token,
+            admin=AdminPublic.model_validate(admin),
+        )
+
+    def logout(self, payload: AdminRefreshTokenRequest) -> AdminMessageResponse:
+        self.session_collection.update_one(
+            {"token": payload.refresh_token, "audience": "platform_admin", "revoked_at": None},
+            {"$set": {"revoked_at": datetime.now(UTC), "last_used_at": datetime.now(UTC)}},
+        )
+        return AdminMessageResponse(message="Logged out successfully.")
+
     def request_forgot_password_code(self, payload: AdminForgotPasswordRequest) -> AdminCodeResponse:
         admin = self._get_by_contact(payload.email_or_phone)
         if not admin or not admin.get("email"):
@@ -210,8 +249,20 @@ class PlatformAdminAuthService:
         return admin
 
     def _build_auth_response(self, admin: dict[str, Any]) -> AdminAuthResponse:
-        token = create_access_token(admin["id"], audience="platform_admin", role="platform_admin")
-        return AdminAuthResponse(access_token=token, admin=AdminPublic.model_validate(admin))
+        access_token = create_access_token(admin["id"], audience="platform_admin", role="platform_admin")
+        session_doc = build_session_document(
+            subject_id=admin["id"],
+            audience="platform_admin",
+            role="platform_admin",
+        )
+        self.session_collection.insert_one(session_doc)
+        refresh_token = str(session_doc["token"])
+        return AdminAuthResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            session_token=refresh_token,
+            admin=AdminPublic.model_validate(admin),
+        )
 
     def _get_by_contact(self, email_or_phone: str) -> dict[str, Any] | None:
         email, phone = parse_email_or_phone(email_or_phone)

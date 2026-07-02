@@ -49,6 +49,12 @@ async def refresh(payload: RefreshTokenRequest, service: AuthService = Depends(g
     return envelope(token_pair.model_dump())
 
 
+@router.post("/logout")
+async def logout(payload: RefreshTokenRequest, service: AuthService = Depends(get_auth_service)):
+    result = await service.logout(payload)
+    return envelope(result)
+
+
 @router.post("/forgot-password")
 async def forgot_password(payload: ForgotPasswordRequest, service: AuthService = Depends(get_auth_service)):
     result = await service.forgot_password(payload)

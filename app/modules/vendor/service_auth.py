@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from bson.errors import InvalidId
@@ -9,6 +9,7 @@ from app.core.account_lookup import find_existing_email_sync
 from app.core.config import get_settings
 from app.core.contact import parse_email_or_phone
 from app.core.mongo_errors import duplicate_contact_conflict_detail
+from app.core.session_tokens import SESSION_COLLECTION, build_session_document, session_is_active
 from app.core.security import create_access_token, decode_token, hash_password, verify_password
 from app.modules.vendor.repositories_password_reset import VendorPasswordResetRepository
 from app.modules.vendor.repositories_signup import VendorSignupVerificationRepository
@@ -23,6 +24,7 @@ from app.modules.vendor.schemas_auth import (
     VendorLoginRequest,
     VendorMessageResponse,
     VendorPublic,
+    VendorRefreshTokenRequest,
     VendorRegistrationStatusResponse,
     VendorRegisterRequest,
     VendorResetPasswordRequest,
@@ -66,6 +68,7 @@ class VendorAuthService:
         self.email_sender = email_sender
         self.settings = get_settings()
         self.cloudinary_uploader = cloudinary_uploader
+        self.session_collection = self.vendor_repo.collection.database[SESSION_COLLECTION]
 
     def request_register_code(self, payload: VendorForgotPasswordRequest) -> VendorCodeRequestResponse:
         email, _ = parse_email_or_phone(payload.email_or_phone)
@@ -243,6 +246,45 @@ class VendorAuthService:
 
         return self._build_auth_response(vendor)
 
+    def refresh(self, payload: VendorRefreshTokenRequest) -> VendorAuthResponse:
+        session = self.session_collection.find_one({"token": payload.refresh_token})
+        if not session_is_active(session, audience="vendor"):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token.")
+
+        vendor_id = str(session.get("subject_id") or "")
+        if not vendor_id:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload.")
+
+        try:
+            vendor = self.vendor_repo.get_by_id(vendor_id)
+        except InvalidId as exc:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject.") from exc
+        if not vendor:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Vendor not found.")
+
+        account_status = (vendor.get("status") or "").lower()
+        if account_status != "approved":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Vendor account is not active.")
+
+        self.session_collection.update_one(
+            {"_id": session["_id"]},
+            {"$set": {"last_used_at": datetime.now(UTC)}},
+        )
+
+        return VendorAuthResponse(
+            access_token=create_access_token(vendor["id"], audience="vendor", role="vendor"),
+            refresh_token=payload.refresh_token,
+            session_token=payload.refresh_token,
+            vendor=VendorPublic.model_validate(vendor),
+        )
+
+    def logout(self, payload: VendorRefreshTokenRequest) -> VendorMessageResponse:
+        self.session_collection.update_one(
+            {"token": payload.refresh_token, "audience": "vendor", "revoked_at": None},
+            {"$set": {"revoked_at": datetime.now(UTC), "last_used_at": datetime.now(UTC)}},
+        )
+        return VendorMessageResponse(message="Logged out successfully.")
+
     def request_forgot_password_code(self, payload: VendorForgotPasswordRequest) -> VendorCodeRequestResponse:
         vendor = self._get_by_contact(payload.email_or_phone)
         if not vendor or not vendor.get("email"):
@@ -334,8 +376,16 @@ class VendorAuthService:
         )
 
     def _build_auth_response(self, vendor: dict[str, Any]) -> VendorAuthResponse:
-        token = create_access_token(vendor["id"], audience="vendor", role="vendor")
-        return VendorAuthResponse(access_token=token, vendor=VendorPublic.model_validate(vendor))
+        access_token = create_access_token(vendor["id"], audience="vendor", role="vendor")
+        session_doc = build_session_document(subject_id=vendor["id"], audience="vendor", role="vendor")
+        self.session_collection.insert_one(session_doc)
+        refresh_token = str(session_doc["token"])
+        return VendorAuthResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            session_token=refresh_token,
+            vendor=VendorPublic.model_validate(vendor),
+        )
 
     def _get_by_contact(self, email_or_phone: str) -> dict[str, Any] | None:
         email, phone = parse_email_or_phone(email_or_phone)
