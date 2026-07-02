@@ -11,6 +11,7 @@ from app.modules.vendor.schemas_auth import (
     VendorLoginRequest,
     VendorMessageResponse,
     VendorRefreshTokenRequest,
+    VendorRegistrationFormConfigResponse,
     VendorRegistrationStatusResponse,
     VendorRegisterRequest,
     VendorResetPasswordRequest,
@@ -45,6 +46,13 @@ def register_vendor(
     auth_service: VendorAuthService = Depends(get_vendor_auth_service),
 ) -> VendorAuthResponse:
     return auth_service.register(payload)
+
+
+@router.get("/registration-form-config", response_model=VendorRegistrationFormConfigResponse)
+def get_vendor_registration_form_config(
+    auth_service: VendorAuthService = Depends(get_vendor_auth_service),
+) -> VendorRegistrationFormConfigResponse:
+    return auth_service.get_registration_form_config()
 
 
 @router.post("/upload-document", response_model=VendorDocumentUploadResponse)

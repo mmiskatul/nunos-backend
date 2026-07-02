@@ -45,7 +45,7 @@ class VendorRegisterRequest(BaseModel):
     event_types: list[str] | None = None
     venue_capacity: int | None = None
     ticket_pricing_type: str | None = None
-    event_location_preference: str | None = None
+    business_location_label: str | None = None
     equipment_availability: list[str] | None = None
 
     @field_validator("email_or_phone")
@@ -131,6 +131,12 @@ class VendorResetPasswordRequest(BaseModel):
         if self.new_password != self.confirm_password:
             raise ValueError("new_password and confirm_password must match.")
         return self
+
+
+class VendorRegistrationFormConfigResponse(BaseModel):
+    categories: list[dict[str, str]]
+    event_type_options: list[str]
+    equipment_options: list[str]
 
 
 class VendorKycSubmitRequest(BaseModel):

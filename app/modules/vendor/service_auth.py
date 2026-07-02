@@ -26,6 +26,7 @@ from app.modules.vendor.schemas_auth import (
     VendorPublic,
     VendorRefreshTokenRequest,
     VendorRegistrationStatusResponse,
+    VendorRegistrationFormConfigResponse,
     VendorRegisterRequest,
     VendorResetPasswordRequest,
     VendorVerifyCodeResponse,
@@ -69,6 +70,58 @@ class VendorAuthService:
         self.settings = get_settings()
         self.cloudinary_uploader = cloudinary_uploader
         self.session_collection = self.vendor_repo.collection.database[SESSION_COLLECTION]
+        self.registration_config_collection = self.vendor_repo.collection.database["vendor_registration_configs"]
+
+    def get_registration_form_config(self) -> VendorRegistrationFormConfigResponse:
+        fallback = {
+            "categories": [
+                {
+                    "id": "Restaurant",
+                    "title": "Restaurant",
+                    "desc": "Manage reservations, tables, and menus for your dining business.",
+                },
+                {
+                    "id": "Hotel",
+                    "title": "Hotel",
+                    "desc": "Handle room bookings, guest stays, and hospitality operations.",
+                },
+                {
+                    "id": "Spa",
+                    "title": "Spa",
+                    "desc": "Run treatment schedules, therapist availability, and service packages.",
+                },
+                {
+                    "id": "Cafe",
+                    "title": "Cafe",
+                    "desc": "Manage coffee shop orders, quick service menus, and walk-in customer flow.",
+                },
+            ],
+            "event_type_options": [
+                "Corporate Gala",
+                "Wedding",
+                "Birthday Party",
+                "Concert",
+                "Conference",
+                "Exhibition",
+                "Private Dinner",
+                "Workshop",
+            ],
+            "equipment_options": [
+                "Sound System",
+                "Lighting",
+                "Projector",
+                "Stage",
+                "LED Screen",
+                "Generator Backup",
+            ],
+        }
+        document = self.registration_config_collection.find_one({"key": "default_vendor_registration"}) or {}
+        payload = {
+            "categories": document.get("categories") or fallback["categories"],
+            "event_type_options": document.get("event_type_options") or fallback["event_type_options"],
+            "equipment_options": document.get("equipment_options") or fallback["equipment_options"],
+        }
+        return VendorRegistrationFormConfigResponse(**payload)
 
     def request_register_code(self, payload: VendorForgotPasswordRequest) -> VendorCodeRequestResponse:
         email, _ = parse_email_or_phone(payload.email_or_phone)
@@ -204,7 +257,7 @@ class VendorAuthService:
                 "event_types": payload.event_types,
                 "venue_capacity": payload.venue_capacity,
                 "ticket_pricing_type": payload.ticket_pricing_type,
-                "event_location_preference": payload.event_location_preference,
+                "business_location_label": payload.business_location_label,
                 "equipment_availability": payload.equipment_availability,
             },
             verification_payload={

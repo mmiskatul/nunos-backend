@@ -832,3 +832,13 @@ async def test_vendor_event_crud_respects_vendor_categories(client, test_db):
     final_list_res = await client.get("/api/v1/vendor/events", headers=headers)
     assert final_list_res.status_code == 200
     assert final_list_res.json()["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_vendor_registration_form_config_endpoint(client):
+    response = await client.get("/api/v1/vendor/auth/registration-form-config")
+    assert response.status_code == 200
+    payload = response.json()
+    assert any(item["id"] == "Cafe" for item in payload["categories"])
+    assert "Corporate Gala" in payload["event_type_options"]
+    assert "equipment_options" in payload
