@@ -9,7 +9,11 @@ def ensure_mongodb_indexes(db: Database) -> None:
     db["users"].create_index([("created_at", DESCENDING)])
 
     db["vendors"].create_index("email", unique=True, sparse=True)
-    db["vendors"].create_index("phone", unique=True, sparse=True)
+    try:
+        db["vendors"].drop_index("phone_1")
+    except Exception:
+        pass
+    db["vendors"].create_index("phone", sparse=True)
     db["vendors"].create_index("status")
     db["vendors"].create_index([("created_at", DESCENDING)])
 

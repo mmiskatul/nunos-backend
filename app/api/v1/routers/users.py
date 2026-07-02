@@ -135,7 +135,10 @@ async def update_personal_details(
             exclude_id=user_id,
         )
         if existing_phone_account:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Phone already exists")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This phone number is already used by another account.",
+            )
 
     updated_user = await user_repo.update_profile(
         user_id,

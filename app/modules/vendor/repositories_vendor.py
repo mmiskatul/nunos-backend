@@ -15,7 +15,11 @@ class VendorRepository:
         self.admin_review_collection: Collection = db["vendor_admin_reviews"]
 
         self.collection.create_index("email", unique=True, sparse=True)
-        self.collection.create_index("phone", unique=True, sparse=True)
+        try:
+            self.collection.drop_index("phone_1")
+        except Exception:
+            pass
+        self.collection.create_index("phone", sparse=True)
         self.collection.create_index("status")
 
         self.profile_collection.create_index("vendor_id", unique=True)

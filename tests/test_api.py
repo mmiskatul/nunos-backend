@@ -151,7 +151,7 @@ async def test_vendor_signup_rejects_existing_user_email(client, test_db):
 
 
 @pytest.mark.asyncio
-async def test_vendor_signup_rejects_existing_user_phone(client, test_db):
+async def test_vendor_signup_allows_existing_user_phone(client, test_db):
     register_res = await client.post(
         "/api/v1/auth/register",
         json={
@@ -202,8 +202,84 @@ async def test_vendor_signup_rejects_existing_user_phone(client, test_db):
             "signup_token": signup_token,
         },
     )
-    assert register_vendor_res.status_code == 409
-    assert register_vendor_res.json()["detail"] == "Phone already exists"
+    assert register_vendor_res.status_code == 201
+    assert register_vendor_res.json()["vendor"]["email"] == "new-vendor@example.com"
+
+
+@pytest.mark.asyncio
+async def test_vendor_signup_allows_existing_vendor_phone(client, test_db):
+    await test_db.vendors.insert_one(
+        {
+            "business_name": "Existing Vendor",
+            "owner_full_name": "Vendor Owner",
+            "email": "existing-vendor@example.com",
+            "phone": "+15550007777",
+            "password_hash": hash_password("VendorPass123!"),
+            "role": "vendor",
+            "status": "approved",
+            "created_at": datetime.now(UTC),
+            "updated_at": datetime.now(UTC),
+        }
+    )
+
+    vendor_code_res = await client.post(
+        "/api/v1/vendor/auth/register/request-code",
+        json={"email_or_phone": "second-vendor@example.com"},
+    )
+    assert vendor_code_res.status_code == 200
+    signup_token = (
+        await client.post(
+            "/api/v1/vendor/auth/register/verify-code",
+            json={"email_or_phone": "second-vendor@example.com", "validation_code": vendor_code_res.json()["validation_code"]},
+        )
+    ).json()["signup_token"]
+
+    register_vendor_res = await client.post(
+        "/api/v1/vendor/auth/register",
+        json={
+            "business_name": "Second Vendor",
+            "owner_full_name": "Second Owner",
+            "email_or_phone": "second-vendor@example.com",
+            "phone": "+15550007777",
+            "address": "456 Market Street",
+            "city": "Dhaka",
+            "website": "https://second-vendor.example.com",
+            "business_description": "A second vendor using the same phone number.",
+            "trade_license_number": "TL-77777",
+            "trade_license_document_url": "https://files.example.com/license-2.pdf",
+            "owner_manager_id_document_url": "https://files.example.com/id-2.pdf",
+            "terms_accepted": True,
+            "password": "VendorPass123!",
+            "confirm_password": "VendorPass123!",
+            "signup_token": signup_token,
+        },
+    )
+    assert register_vendor_res.status_code == 201
+    assert register_vendor_res.json()["vendor"]["email"] == "second-vendor@example.com"
+
+
+@pytest.mark.asyncio
+async def test_vendor_login_by_phone_is_rejected(client, test_db):
+    await test_db.vendors.insert_one(
+        {
+            "business_name": "Approved Vendor",
+            "owner_full_name": "Vendor Owner",
+            "email": "phone-login-vendor@example.com",
+            "phone": "+15550008888",
+            "password_hash": hash_password("VendorPass123!"),
+            "role": "vendor",
+            "status": "approved",
+            "created_at": datetime.now(UTC),
+            "updated_at": datetime.now(UTC),
+        }
+    )
+
+    vendor_res = await client.post(
+        "/api/v1/vendor/auth/login",
+        json={"email_or_phone": "+15550008888", "password": "VendorPass123!"},
+    )
+    assert vendor_res.status_code == 400
+    assert vendor_res.json()["detail"] == "Vendor login requires email."
 
 
 @pytest.mark.asyncio
@@ -301,7 +377,7 @@ async def test_personal_details_rejects_vendor_phone(client, test_db):
         },
     )
     assert patch_res.status_code == 409
-    assert patch_res.json()["detail"] == "Phone already exists"
+    assert patch_res.json()["detail"] == "This phone number is already used by another account."
 
 
 @pytest.mark.asyncio

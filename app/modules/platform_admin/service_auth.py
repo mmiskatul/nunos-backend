@@ -115,7 +115,10 @@ class PlatformAdminAuthService:
                 detail="This email is already in use by another account.",
             )
         if phone and find_existing_phone_sync(self.admin_repo.collection.database, phone):
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Phone already exists")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This phone number is already used by another account.",
+            )
 
         try:
             admin = self.admin_repo.create_admin(
@@ -134,7 +137,7 @@ class PlatformAdminAuthService:
                 detail=duplicate_contact_conflict_detail(
                     exc,
                     email_detail="This email is already in use by another account.",
-                    phone_detail="Phone already exists",
+                    phone_detail="This phone number is already used by another account.",
                     default_detail="Email or phone already exists",
                 ),
             ) from exc

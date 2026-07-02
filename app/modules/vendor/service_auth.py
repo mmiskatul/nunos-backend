@@ -5,7 +5,7 @@ from bson.errors import InvalidId
 from fastapi import HTTPException, UploadFile, status
 from pymongo.errors import DuplicateKeyError
 
-from app.core.account_lookup import find_existing_email_sync, find_existing_phone_sync
+from app.core.account_lookup import find_existing_email_sync
 from app.core.config import get_settings
 from app.core.contact import parse_email_or_phone
 from app.core.mongo_errors import duplicate_contact_conflict_detail
@@ -203,8 +203,6 @@ class VendorAuthService:
             )
 
         phone = explicit_phone or phone_from_contact
-        if phone and find_existing_phone_sync(self.vendor_repo.collection.database, phone):
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Phone already exists")
 
         categories = payload.categories or [payload.category]
         primary_category = categories[0]
@@ -233,7 +231,7 @@ class VendorAuthService:
                 detail=duplicate_contact_conflict_detail(
                     exc,
                     email_detail="This email is already in use by another account.",
-                    phone_detail="Phone already exists",
+                    phone_detail="This phone number is already used by another account.",
                     default_detail="Email or phone already exists",
                 ),
             ) from exc
@@ -288,6 +286,12 @@ class VendorAuthService:
         )
 
     def login(self, payload: VendorLoginRequest) -> VendorAuthResponse:
+        email, _ = parse_email_or_phone(payload.email_or_phone)
+        if not email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Vendor login requires email.",
+            )
         vendor = self._get_by_contact(payload.email_or_phone)
         if not vendor or not vendor.get("password_hash"):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials.")
@@ -358,6 +362,9 @@ class VendorAuthService:
         return VendorMessageResponse(message="Logged out successfully.")
 
     def request_forgot_password_code(self, payload: VendorForgotPasswordRequest) -> VendorCodeRequestResponse:
+        email, _ = parse_email_or_phone(payload.email_or_phone)
+        if not email:
+            return VendorCodeRequestResponse(message="If the account exists, a validation code has been sent.")
         vendor = self._get_by_contact(payload.email_or_phone)
         if not vendor or not vendor.get("email"):
             return VendorCodeRequestResponse(message="If the account exists, a validation code has been sent.")
@@ -381,6 +388,9 @@ class VendorAuthService:
         return VendorCodeRequestResponse(message="If the account exists, a validation code has been sent.")
 
     def verify_forgot_password_code(self, payload: VendorVerifyResetCodeRequest) -> VendorVerifyCodeResponse:
+        email, _ = parse_email_or_phone(payload.email_or_phone)
+        if not email:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired validation code.")
         vendor = self._get_by_contact(payload.email_or_phone)
         if not vendor:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired validation code.")
@@ -445,6 +455,9 @@ class VendorAuthService:
         return vendor
 
     def get_registration_status(self, email_or_phone: str) -> VendorRegistrationStatusResponse:
+        email, _ = parse_email_or_phone(email_or_phone)
+        if not email:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vendor not found.")
         vendor = self._get_by_contact(email_or_phone)
         if not vendor:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vendor not found.")
@@ -467,10 +480,10 @@ class VendorAuthService:
         )
 
     def _get_by_contact(self, email_or_phone: str) -> dict[str, Any] | None:
-        email, phone = parse_email_or_phone(email_or_phone)
+        email, _ = parse_email_or_phone(email_or_phone)
         if email:
             return self.vendor_repo.get_by_email(email)
-        return self.vendor_repo.get_by_phone(phone or "")
+        return None
 
     @staticmethod
     def _to_iso(value: Any) -> str | None:

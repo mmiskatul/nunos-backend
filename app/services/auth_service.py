@@ -67,7 +67,10 @@ class AuthService:
         if normalized_phone:
             existing_phone = await find_existing_phone_async(self.user_repo.collection.database, normalized_phone)
             if existing_phone:
-                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Phone already exists")
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="This phone number is already used by another account.",
+                )
 
         password_hash = hash_password(payload.password)
         await self.pending_signup_repo.upsert_signup(
@@ -143,7 +146,7 @@ class AuthService:
                 detail=duplicate_contact_conflict_detail(
                     exc,
                     email_detail="This email is already in use by another account.",
-                    phone_detail="Phone already exists",
+                    phone_detail="This phone number is already used by another account.",
                     default_detail="Email or phone already exists",
                 ),
             ) from exc
@@ -212,7 +215,7 @@ class AuthService:
                     detail=duplicate_contact_conflict_detail(
                         exc,
                         email_detail="This email is already in use by another account.",
-                        phone_detail="Phone already exists",
+                        phone_detail="This phone number is already used by another account.",
                         default_detail="Email or phone already exists",
                     ),
                 ) from exc
