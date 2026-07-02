@@ -56,6 +56,7 @@ class SocialLoginRequest(BaseModel):
 class TokenPair(BaseModel):
     access_token: str
     refresh_token: str
+    session_token: str | None = None
     token_type: str = "bearer"
 
 

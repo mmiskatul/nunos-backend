@@ -129,7 +129,7 @@ async def get_current_user_id(
     user_repo: UserRepository = Depends(get_user_repo),
 ) -> str:
     try:
-        payload = decode_token(token, expected_type="access")
+        payload = decode_token(token, expected_type="access", expected_audience="customer")
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid access token") from exc
 

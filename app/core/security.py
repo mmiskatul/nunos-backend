@@ -67,9 +67,20 @@ def create_access_token(subject: str, *, audience: TokenAudience | None = None, 
     )
 
 
-def create_refresh_token(subject: str) -> str:
+def create_refresh_token(
+    subject: str,
+    *,
+    audience: TokenAudience | None = None,
+    role: str | None = None,
+) -> str:
     settings = get_settings()
-    return _create_token(subject, "refresh", timedelta(minutes=settings.refresh_token_expire_minutes))
+    return _create_token(
+        subject,
+        "refresh",
+        timedelta(minutes=settings.refresh_token_expire_minutes),
+        audience=audience,
+        role=role,
+    )
 
 
 def create_reset_token(subject: str) -> str:

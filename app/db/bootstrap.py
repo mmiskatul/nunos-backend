@@ -53,6 +53,9 @@ def ensure_mongodb_indexes(db: Database) -> None:
     db["platform_admin_password_reset_tokens"].create_index("expires_at", expireAfterSeconds=0)
     db["platform_admin_password_reset_codes"].create_index("admin_id", unique=True)
     db["platform_admin_password_reset_codes"].create_index("expires_at", expireAfterSeconds=0)
+    db["auth_sessions"].create_index("token", unique=True)
+    db["auth_sessions"].create_index("expires_at", expireAfterSeconds=0)
+    db["auth_sessions"].create_index([("subject_id", ASCENDING), ("audience", ASCENDING), ("created_at", DESCENDING)])
 
     db["notifications"].create_index([("user_id", ASCENDING), ("created_at", DESCENDING)])
     db["bookings"].create_index([("customer_id", ASCENDING), ("created_at", DESCENDING)])
