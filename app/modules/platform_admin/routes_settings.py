@@ -149,6 +149,10 @@ def update_admin_settings_general(
     db: Database = Depends(get_platform_admin_db),
 ) -> dict:
     current = _settings_response(db)
+    general_payload = payload.get("general") if isinstance(payload.get("general"), dict) else None
+    if general_payload and "supportEmail" in general_payload:
+        general_payload = {key: value for key, value in general_payload.items() if key != "supportEmail"}
+        payload = {**payload, "general": general_payload}
     updated = _deep_merge(current, payload)
     updated["updated_at"] = datetime.now(UTC)
     _persist_settings(db, updated)
