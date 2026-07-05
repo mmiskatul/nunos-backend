@@ -1,3 +1,5 @@
+from datetime import date, datetime, time
+
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
@@ -60,7 +62,7 @@ class VendorEventUpsertRequest(BaseModel):
     start_time: str
     end_time: str
     timezone: str = Field(default="Asia/Dhaka", min_length=2, max_length=80)
-    venue: str = Field(min_length=2, max_length=200)
+    venue: str = Field(min_length=2, max_length=500)
     capacity: int = Field(ge=1, le=100000)
     ticket_price: float = Field(ge=0)
     registration_deadline: str | None = None
@@ -69,9 +71,83 @@ class VendorEventUpsertRequest(BaseModel):
     active_status: bool = True
     status: str = Field(default="draft", pattern="^(draft|published|archived|cancelled)$")
 
+    @field_validator("title", "category", "event_type", "timezone", "venue", "description", mode="before")
+    @classmethod
+    def _strip_text_fields(cls, value):
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+    @field_validator("event_date")
+    @classmethod
+    def _validate_event_date(cls, value: str) -> str:
+        normalized = value.strip()
+        date.fromisoformat(normalized)
+        return normalized
+
+    @field_validator("start_time", "end_time")
+    @classmethod
+    def _validate_time_fields(cls, value: str) -> str:
+        normalized = value.strip()
+        time.fromisoformat(normalized)
+        return normalized
+
+    @field_validator("registration_deadline", mode="before")
+    @classmethod
+    def _normalize_registration_deadline(cls, value):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            normalized = value.strip()
+            if not normalized:
+                return None
+            datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+            return normalized
+        return value
+
+    @field_validator("banner_image_url", mode="before")
+    @classmethod
+    def _normalize_banner_image_url(cls, value):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            normalized = value.strip()
+            return normalized or None
+        return value
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _normalize_status(cls, value):
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized == "canceled":
+                return "cancelled"
+            return normalized
+        return value
+
+    @model_validator(mode="after")
+    def _validate_event_times(self):
+        start = time.fromisoformat(self.start_time)
+        end = time.fromisoformat(self.end_time)
+        if end <= start:
+            raise ValueError("End time must be later than start time.")
+        return self
+
 
 class VendorEventStatusRequest(BaseModel):
     status: str = Field(pattern="^(draft|published|archived|cancelled)$")
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _normalize_status(cls, value):
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized == "canceled":
+                return "cancelled"
+            return normalized
+        return value
 
 
 class PromotionUpsertRequest(BaseModel):

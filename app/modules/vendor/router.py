@@ -544,6 +544,7 @@ def create_vendor_event(
     current_vendor: dict = Depends(get_current_vendor),
     portal_service: VendorPortalService = Depends(get_vendor_portal_service),
 ) -> dict:
+    portal_service.initialize(_vendor_id(current_vendor))
     return _safe_call(
         portal_service.repo.create_event,
         _vendor_id(current_vendor),
@@ -568,6 +569,7 @@ def update_vendor_event(
     current_vendor: dict = Depends(get_current_vendor),
     portal_service: VendorPortalService = Depends(get_vendor_portal_service),
 ) -> dict:
+    portal_service.initialize(_vendor_id(current_vendor))
     try:
         row = portal_service.repo.update_event(_vendor_id(current_vendor), event_id, payload.model_dump())
     except InvalidId as exc:
@@ -586,6 +588,7 @@ def update_vendor_event_status(
     current_vendor: dict = Depends(get_current_vendor),
     portal_service: VendorPortalService = Depends(get_vendor_portal_service),
 ) -> dict:
+    portal_service.initialize(_vendor_id(current_vendor))
     try:
         row = portal_service.repo.update_event_status(_vendor_id(current_vendor), event_id, payload.status)
     except InvalidId as exc:
@@ -601,6 +604,7 @@ def delete_vendor_event(
     current_vendor: dict = Depends(get_current_vendor),
     portal_service: VendorPortalService = Depends(get_vendor_portal_service),
 ) -> MessageResponse:
+    portal_service.initialize(_vendor_id(current_vendor))
     try:
         deleted = portal_service.repo.delete_event(_vendor_id(current_vendor), event_id)
     except InvalidId as exc:

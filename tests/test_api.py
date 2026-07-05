@@ -840,6 +840,7 @@ async def test_vendor_event_crud_respects_vendor_categories(client, test_db):
     created = create_res.json()
     assert created["category"] == "Event Venue"
     assert created["status"] == "draft"
+    assert created["registration_deadline"] == "2026-07-19T23:59:00+06:00"
 
     list_res = await client.get("/api/v1/vendor/events", headers=headers)
     assert list_res.status_code == 200
@@ -893,6 +894,60 @@ async def test_vendor_event_crud_respects_vendor_categories(client, test_db):
     )
     assert bad_category_res.status_code == 422
     assert "not enabled for this vendor" in bad_category_res.json()["detail"]
+
+    normalized_optional_res = await client.post(
+        "/api/v1/vendor/events",
+        headers=headers,
+        json={
+            "title": "Compact Event",
+            "category": "Restaurant",
+            "event_type": "Tasting Session",
+            "event_date": "2026-08-04",
+            "start_time": "12:00",
+            "end_time": "14:00",
+            "timezone": " Asia/Dhaka ",
+            "venue": "  Rooftop Deck  ",
+            "capacity": 40,
+            "ticket_price": 0,
+            "registration_deadline": "",
+            "description": "  Drop-in lunch event.  ",
+            "banner_image_url": "   ",
+            "active_status": True,
+            "status": "canceled",
+        },
+    )
+    assert normalized_optional_res.status_code == 200
+    normalized_created = normalized_optional_res.json()
+    assert normalized_created["timezone"] == "Asia/Dhaka"
+    assert normalized_created["venue"] == "Rooftop Deck"
+    assert normalized_created["description"] == "Drop-in lunch event."
+    assert normalized_created["banner_image_url"] is None
+    assert normalized_created["registration_deadline"] is None
+    assert normalized_created["status"] == "cancelled"
+
+    invalid_time_res = await client.post(
+        "/api/v1/vendor/events",
+        headers=headers,
+        json={
+            "title": "Bad Time Event",
+            "category": "Restaurant",
+            "event_type": "Late Session",
+            "event_date": "2026-08-05",
+            "start_time": "20:00",
+            "end_time": "19:00",
+            "timezone": "Asia/Dhaka",
+            "venue": "Sky Deck",
+            "capacity": 20,
+            "ticket_price": 10,
+            "registration_deadline": None,
+            "description": "Invalid time range.",
+            "banner_image_url": None,
+            "active_status": True,
+            "status": "draft",
+        },
+    )
+    assert invalid_time_res.status_code == 422
+    assert "End time must be later than start time." in invalid_time_res.json()["detail"]
 
     status_res = await client.patch(
         f"/api/v1/vendor/events/{created['id']}/status",
