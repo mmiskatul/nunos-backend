@@ -230,6 +230,7 @@ async def get_platform_dashboard_overview(
         perf = float(v.get("average_rating") or 0)
         status = "TOP PERFORMER" if perf >= 4.5 else ("AT RISK" if perf < 3.0 else "ACTIVE")
         vendors.append({
+            "id": str(v.get("_id") or ""),
             "code": code,
             "name": name,
             "category": _vendor_category_label(v),
