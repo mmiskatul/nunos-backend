@@ -2,12 +2,12 @@ from pydantic import BaseModel, Field
 
 
 class VendorVerificationDecisionRequest(BaseModel):
-    decision: str = Field(pattern="^(approved|rejected|blocked)$")
+    decision: str = Field(pattern="^(approved|rejected|blocked|cancel)$")
     rejection_reason: str | None = None
 
 
 class VendorStatusUpdateRequest(BaseModel):
-    status: str = Field(pattern="^(approved|blocked|rejected)$")
+    status: str = Field(pattern="^(approved|blocked|rejected|cancel)$")
     rejection_reason: str | None = None
 
 

@@ -159,6 +159,16 @@ class VendorRepository:
             }
             verification_status = "blocked"
             rejection_reason = reason or "Blocked by admin."
+        elif decision_normalized in {"cancel", "cancelled", "canceled"}:
+            set_payload = {
+                "status": "pending_approval",
+                "kyc_status": "pending_review",
+                "kyc_reviewed_at": None,
+                "kyc_rejection_reason": None,
+                "updated_at": now,
+            }
+            verification_status = "pending_review"
+            rejection_reason = None
         else:
             set_payload = {
                 "status": "rejected",
@@ -175,7 +185,7 @@ class VendorRepository:
             {
                 "$set": {
                     "status": verification_status,
-                    "reviewed_at": now,
+                    "reviewed_at": None if decision_normalized in {"cancel", "cancelled", "canceled"} else now,
                     "rejection_reason": rejection_reason,
                     "updated_at": now,
                 }
@@ -187,7 +197,7 @@ class VendorRepository:
             {
                 "$set": {
                     "review_status": verification_status,
-                    "reviewed_at": now,
+                    "reviewed_at": None if decision_normalized in {"cancel", "cancelled", "canceled"} else now,
                     "rejection_reason": rejection_reason,
                     "updated_at": now,
                 },
