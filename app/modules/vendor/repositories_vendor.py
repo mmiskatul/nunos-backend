@@ -13,6 +13,8 @@ class VendorRepository:
         self.business_collection: Collection = db["vendor_business_details"]
         self.verification_collection: Collection = db["vendor_verification_details"]
         self.admin_review_collection: Collection = db["vendor_admin_reviews"]
+        self.bookings_collection: Collection = db["bookings"]
+        self.reviews_collection: Collection = db["vendor_reviews"]
 
         self.collection.create_index("email", unique=True, sparse=True)
         try:
@@ -62,8 +64,15 @@ class VendorRepository:
         query = self._build_vendor_query(search=search, status=status)
         cursor = self.collection.find(query).sort("created_at", -1).skip(skip).limit(limit)
         rows = [self._serialize(doc) for doc in cursor if doc]  # type: ignore[list-item]
+        vendor_ids = [row["id"] for row in rows if row and row.get("id")]
+        booking_counts = self._build_booking_counts(vendor_ids)
+        review_metrics = self._build_review_metrics(vendor_ids)
         for row in rows:
+            vendor_id = row["id"]
             row["sections"] = self.get_vendor_sections(row["id"])
+            row["total_bookings"] = booking_counts.get(vendor_id, 0)
+            row["average_rating"] = review_metrics.get(vendor_id, {}).get("average_rating", 0)
+            row["total_reviews"] = review_metrics.get(vendor_id, {}).get("total_reviews", 0)
         return rows
 
     def count_vendors(self, search: str | None = None, status: str | None = None) -> int:
@@ -280,6 +289,11 @@ class VendorRepository:
         vendor = self.get_by_id(vendor_id)
         if not vendor:
             return None
+        booking_counts = self._build_booking_counts([vendor_id])
+        review_metrics = self._build_review_metrics([vendor_id]).get(vendor_id, {})
+        vendor["total_bookings"] = booking_counts.get(vendor_id, 0)
+        vendor["average_rating"] = review_metrics.get("average_rating", 0)
+        vendor["total_reviews"] = review_metrics.get("total_reviews", 0)
         return {
             "vendor": vendor,
             "sections": self.get_vendor_sections(vendor_id),
@@ -300,3 +314,79 @@ class VendorRepository:
         if status:
             query["status"] = status
         return query
+
+    def _build_booking_counts(self, vendor_ids: list[str]) -> dict[str, int]:
+        object_ids = [ObjectId(vendor_id) for vendor_id in vendor_ids if ObjectId.is_valid(vendor_id)]
+        if not object_ids and not vendor_ids:
+            return {}
+
+        pipeline = [
+            {
+                "$match": {
+                    "vendor_id": {
+                        "$in": [*object_ids, *vendor_ids],
+                    }
+                }
+            },
+            {
+                "$addFields": {
+                    "vendor_id_key": {"$toString": "$vendor_id"}
+                }
+            },
+            {
+                "$group": {
+                    "_id": "$vendor_id_key",
+                    "count": {"$sum": 1},
+                }
+            },
+        ]
+        rows = list(self.bookings_collection.aggregate(pipeline))
+        return {
+            str(row.get("_id")): int(row.get("count", 0))
+            for row in rows
+            if row.get("_id") is not None
+        }
+
+    def _build_review_metrics(self, vendor_ids: list[str]) -> dict[str, dict[str, float | int]]:
+        object_ids = [ObjectId(vendor_id) for vendor_id in vendor_ids if ObjectId.is_valid(vendor_id)]
+        if not object_ids and not vendor_ids:
+            return {}
+
+        pipeline = [
+            {
+                "$match": {
+                    "vendor_id": {
+                        "$in": [*object_ids, *vendor_ids],
+                    }
+                }
+            },
+            {
+                "$addFields": {
+                    "vendor_id_key": {"$toString": "$vendor_id"},
+                    "rating_value": {
+                        "$convert": {
+                            "input": "$rating",
+                            "to": "double",
+                            "onError": 0,
+                            "onNull": 0,
+                        }
+                    },
+                }
+            },
+            {
+                "$group": {
+                    "_id": "$vendor_id_key",
+                    "average_rating": {"$avg": "$rating_value"},
+                    "total_reviews": {"$sum": 1},
+                }
+            },
+        ]
+        rows = list(self.reviews_collection.aggregate(pipeline))
+        return {
+            str(row.get("_id")): {
+                "average_rating": round(float(row.get("average_rating", 0) or 0), 1),
+                "total_reviews": int(row.get("total_reviews", 0) or 0),
+            }
+            for row in rows
+            if row.get("_id") is not None
+        }
