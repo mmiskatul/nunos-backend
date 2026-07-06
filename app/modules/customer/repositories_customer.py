@@ -21,6 +21,8 @@ class CustomerRepository:
         self.vendor_assets: Collection = db["vendor_assets"]
         self.vendor_promotions: Collection = db["vendor_promotions"]
         self.vendor_rooms: Collection = db["vendor_rooms"]
+        self.vendor_services: Collection = db["vendor_services"]
+        self.vendor_events: Collection = db["vendor_events"]
         self.vendor_reviews: Collection = db["vendor_reviews"]
         self.vendor_loyalty_settings: Collection = db["vendor_loyalty_settings"]
         self.vendor_bookings: Collection = db["vendor_bookings"]
@@ -429,7 +431,74 @@ class CustomerRepository:
 
     def get_home_feed(self, customer_id: str) -> dict[str, Any]:
         restaurants = self.list_restaurants(customer_id=customer_id, limit=50, skip=0).get("items", [])
-        trending = sorted(restaurants, key=lambda row: row.get("rating", 0), reverse=True)[:6]
+        trending: list[dict[str, Any]] = []
+        for card in restaurants:
+            vendor_id = self._oid(card["id"])
+            category = str(card.get("category") or "restaurant").strip().lower()
+
+            if category == "hotel":
+                has_listing = self.vendor_rooms.count_documents(
+                    {"vendor_id": vendor_id, "available": True},
+                    limit=1,
+                ) > 0
+                route = f"/home/hotels/{card['id']}"
+            elif category == "event":
+                published_event = self.vendor_events.find_one(
+                    {"vendor_id": vendor_id, "status": "published", "active": {"$ne": False}},
+                    sort=[("created_at", DESCENDING)],
+                )
+                has_listing = published_event is not None
+                route = f"/home/events/{published_event['_id']}" if published_event else ""
+            else:
+                has_active_service = self.vendor_services.count_documents(
+                    {"vendor_id": vendor_id, "available": True},
+                    limit=1,
+                ) > 0
+                has_menu = self.vendor_assets.count_documents(
+                    {"vendor_id": vendor_id, "asset_type": "menu"},
+                    limit=1,
+                ) > 0
+                portal_settings = self.vendor_portal_settings.find_one({"vendor_id": vendor_id}) or {}
+                general_settings = portal_settings.get("general")
+                has_booking_slots = bool(
+                    general_settings.get("booking_availability_slots", [])
+                    if isinstance(general_settings, dict)
+                    else []
+                )
+                has_listing = has_active_service or has_menu or has_booking_slots
+                route_prefix = "spa" if category == "spa" else "dining"
+                route = f"/home/{route_prefix}/{card['id']}"
+
+            if not has_listing:
+                continue
+
+            usage_count = self.vendor_bookings.count_documents(
+                {
+                    "vendor_id": vendor_id,
+                    "status": {"$nin": ["cancelled", "rejected"]},
+                }
+            )
+            if usage_count == 0:
+                continue
+
+            trending.append(
+                {
+                    **card,
+                    "entity_type": category,
+                    "detail_route": route,
+                    "usage_count": usage_count,
+                }
+            )
+
+        trending.sort(
+            key=lambda row: (
+                row["usage_count"],
+                row.get("reviews_count", 0),
+                row.get("rating", 0),
+            ),
+            reverse=True,
+        )
+        trending = trending[:6]
         featured = restaurants[:6]
         return {
             "greeting": "Good Morning",
