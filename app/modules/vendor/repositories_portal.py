@@ -96,6 +96,22 @@ class VendorPortalRepository:
                 f"Category '{category}' is not enabled for this vendor. Allowed categories: {', '.join(allowed_categories)}."
             )
 
+    @staticmethod
+    def _build_location_label(category: str) -> str:
+        normalized_category = str(category or "").strip().lower()
+        if not normalized_category:
+            return "Your location"
+        return f"Your {normalized_category} location"
+
+    @classmethod
+    def _normalize_location_label(cls, label: Any, category: str) -> str:
+        normalized_label = str(label or "").strip()
+        if not normalized_label:
+            return cls._build_location_label(category)
+        if normalized_label.lower() in {"test", "testing", "sample", "demo"}:
+            return cls._build_location_label(category)
+        return normalized_label
+
     @classmethod
     def _promotion_value_label(cls, row: dict[str, Any]) -> str:
         offer_type = str(row.get("offer_type", "")).strip().lower()
@@ -863,6 +879,12 @@ class VendorPortalRepository:
         profile_settings = settings_doc.get("profile", {})
         general_settings = settings_doc.get("general", {})
         vendor, profile, business, verification = self._get_vendor_records(vendor_id)
+        category = (
+            profile_settings.get("category")
+            or verification.get("category")
+            or vendor.get("category")
+            or "Restaurant"
+        )
 
         business_name = (
             profile_settings.get("business_name")
@@ -881,11 +903,23 @@ class VendorPortalRepository:
         )
         description = profile_settings.get("about_business") or business.get("business_description") or ""
         website = profile_settings.get("website") or business.get("website") or ""
+        location_value = (
+            profile_settings.get("office_address")
+            or general_settings.get("business_address")
+            or business.get("address")
+            or ""
+        )
+        location_label = self._normalize_location_label(
+            profile_settings.get("location_label")
+            or verification.get("location_label")
+            or business.get("location_label"),
+            category,
+        )
 
         return {
             **profile_settings,
             "business_name": business_name,
-            "category": profile_settings.get("category") or verification.get("category") or "Restaurant",
+            "category": category,
             "categories": (
                 profile_settings.get("categories")
                 or verification.get("categories")
@@ -897,13 +931,15 @@ class VendorPortalRepository:
             "email_address": email,
             "phone_number": phone,
             "about_business": description,
-            "office_address": address,
+            "office_address": location_value,
             "website": website,
             "avatar_url": profile_settings.get("avatar_url") or "",
             "owner_full_name": profile_settings.get("owner_full_name") or vendor.get("owner_full_name") or "",
             "email": email,
             "phone": phone,
-            "address": address,
+            "address": location_value,
+            "location_label": location_label,
+            "location_value": location_value,
             "description": description,
             "name": business_name,
         }
@@ -913,8 +949,20 @@ class VendorPortalRepository:
         current = self.settings.find_one({"vendor_id": ObjectId(vendor_id)}) or {}
         current_profile = current.get("profile", {}) if isinstance(current.get("profile"), dict) else {}
         current_general = current.get("general", {}) if isinstance(current.get("general"), dict) else {}
+        vendor, _, _, verification = self._get_vendor_records(vendor_id)
 
         next_profile = {**current_profile, **sanitized}
+        next_category = (
+            sanitized.get("category")
+            or current_profile.get("category")
+            or verification.get("category")
+            or vendor.get("category")
+            or "Restaurant"
+        )
+        next_profile["location_label"] = self._normalize_location_label(
+            next_profile.get("location_label"),
+            str(next_category),
+        )
         update_doc: dict[str, Any] = {
             "profile": next_profile,
             "updated_at": datetime.now(UTC),

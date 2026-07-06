@@ -966,6 +966,68 @@ async def test_vendor_event_crud_respects_vendor_categories(client, test_db):
 
 
 @pytest.mark.asyncio
+async def test_vendor_profile_settings_returns_category_based_location(client, test_db):
+    request_code_res = await client.post(
+        "/api/v1/vendor/auth/register/request-code",
+        json={"email_or_phone": "hotel-vendor@example.com"},
+    )
+    assert request_code_res.status_code == 200
+
+    verify_code_res = await client.post(
+        "/api/v1/vendor/auth/register/verify-code",
+        json={
+            "email_or_phone": "hotel-vendor@example.com",
+            "validation_code": request_code_res.json()["validation_code"],
+        },
+    )
+    assert verify_code_res.status_code == 200
+    signup_token = verify_code_res.json()["signup_token"]
+
+    register_res = await client.post(
+        "/api/v1/vendor/auth/register",
+        json={
+            "business_name": "Hotel Vendor",
+            "owner_full_name": "Hotel Owner",
+            "email_or_phone": "hotel-vendor@example.com",
+            "phone": "+15550110022",
+            "address": "456 Hotel Avenue",
+            "city": "Dhaka",
+            "website": "https://hotel.example.com",
+            "business_description": "Vendor account for hotel testing.",
+            "trade_license_number": "TL-67891",
+            "trade_license_document_url": "https://files.example.com/license-hotel.pdf",
+            "owner_manager_id_document_url": "https://files.example.com/id-hotel.pdf",
+            "terms_accepted": True,
+            "password": "VendorPass123!",
+            "confirm_password": "VendorPass123!",
+            "signup_token": signup_token,
+            "category": "Hotel",
+            "categories": ["Hotel"],
+        },
+    )
+    assert register_res.status_code == 201
+
+    vendor = await test_db.vendors.find_one({"email": "hotel-vendor@example.com"})
+    assert vendor
+    await test_db.vendors.update_one({"_id": vendor["_id"]}, {"$set": {"status": "approved"}})
+
+    login_res = await client.post(
+        "/api/v1/vendor/auth/login",
+        json={"email_or_phone": "hotel-vendor@example.com", "password": "VendorPass123!"},
+    )
+    assert login_res.status_code == 200
+    headers = {"Authorization": f"Bearer {login_res.json()['access_token']}"}
+
+    profile_res = await client.get("/api/v1/vendor/settings/profile", headers=headers)
+    assert profile_res.status_code == 200
+    profile = profile_res.json()
+    assert profile["category"] == "Hotel"
+    assert profile["location_label"] == "Your hotel location"
+    assert profile["location_value"] == "456 Hotel Avenue"
+    assert profile["address"] == "456 Hotel Avenue"
+
+
+@pytest.mark.asyncio
 async def test_vendor_registration_form_config_endpoint(client):
     response = await client.get("/api/v1/vendor/auth/registration-form-config")
     assert response.status_code == 200
