@@ -562,6 +562,18 @@ async def test_customer_events_and_map_events_return_published_vendor_events(cli
     assert events_payload["items"][0]["entity_type"] == "event"
     assert events_payload["items"][0]["latitude"] == pytest.approx(23.7937)
     assert events_payload["items"][0]["longitude"] == pytest.approx(90.4066)
+    assert events_payload["items"][0]["booking_mode"] == "simple"
+    assert events_payload["items"][0]["can_book_on_map"] is True
+    assert events_payload["items"][0]["current_booking_status"] is None
+    assert events_payload["items"][0]["is_sold_out"] is False
+
+    event_detail_res = await client.get(f"/api/v1/customer/events/{event_id}", headers=headers)
+    assert event_detail_res.status_code == 200
+    event_detail_payload = event_detail_res.json()
+    assert event_detail_payload["booking_mode"] == "simple"
+    assert event_detail_payload["can_book_on_map"] is True
+    assert event_detail_payload["current_booking_status"] is None
+    assert event_detail_payload["is_sold_out"] is False
 
     map_events_res = await client.get("/api/v1/customer/map/events", headers=headers)
     assert map_events_res.status_code == 200
@@ -571,6 +583,10 @@ async def test_customer_events_and_map_events_return_published_vendor_events(cli
     assert map_items[0]["entity_type"] == "event"
     assert map_items[0]["lat"] == pytest.approx(23.7937)
     assert map_items[0]["lng"] == pytest.approx(90.4066)
+    assert map_items[0]["booking_mode"] == "simple"
+    assert map_items[0]["can_book_on_map"] is True
+    assert map_items[0]["current_booking_status"] is None
+    assert map_items[0]["is_sold_out"] is False
 
 
 @pytest.mark.asyncio
@@ -917,6 +933,7 @@ async def test_vendor_event_crud_respects_vendor_categories(client, test_db):
             "title": "Sunset Networking Dinner",
             "category": "Event Venue",
             "event_type": "Corporate Gala",
+            "booking_mode": "detailed",
             "event_date": "2026-07-20",
             "start_time": "18:00",
             "end_time": "21:00",
@@ -935,6 +952,7 @@ async def test_vendor_event_crud_respects_vendor_categories(client, test_db):
     created = create_res.json()
     assert created["category"] == "Event Venue"
     assert created["status"] == "draft"
+    assert created["booking_mode"] == "detailed"
     assert created["registration_deadline"] == "2026-07-19T23:59:00+06:00"
 
     list_res = await client.get("/api/v1/vendor/events", headers=headers)
@@ -948,6 +966,7 @@ async def test_vendor_event_crud_respects_vendor_categories(client, test_db):
             "title": "Sunset Networking Dinner Updated",
             "category": "Restaurant",
             "event_type": "Private Dinner",
+            "booking_mode": "simple",
             "event_date": "2026-07-21",
             "start_time": "19:00",
             "end_time": "22:00",
@@ -965,6 +984,7 @@ async def test_vendor_event_crud_respects_vendor_categories(client, test_db):
     assert update_res.status_code == 200
     assert update_res.json()["title"] == "Sunset Networking Dinner Updated"
     assert update_res.json()["category"] == "Restaurant"
+    assert update_res.json()["booking_mode"] == "simple"
 
     bad_category_res = await client.post(
         "/api/v1/vendor/events",
@@ -973,6 +993,7 @@ async def test_vendor_event_crud_respects_vendor_categories(client, test_db):
             "title": "Spa Only Event",
             "category": "Spa",
             "event_type": "Wellness Pop-up",
+            "booking_mode": "detailed",
             "event_date": "2026-08-01",
             "start_time": "10:00",
             "end_time": "12:00",
@@ -997,6 +1018,7 @@ async def test_vendor_event_crud_respects_vendor_categories(client, test_db):
             "title": "Compact Event",
             "category": "Restaurant",
             "event_type": "Tasting Session",
+            "booking_mode": "simple",
             "event_date": "2026-08-04",
             "start_time": "12:00",
             "end_time": "14:00",
@@ -1019,6 +1041,7 @@ async def test_vendor_event_crud_respects_vendor_categories(client, test_db):
     assert normalized_created["banner_image_url"] is None
     assert normalized_created["registration_deadline"] is None
     assert normalized_created["status"] == "cancelled"
+    assert normalized_created["booking_mode"] == "simple"
 
     invalid_time_res = await client.post(
         "/api/v1/vendor/events",
@@ -1027,6 +1050,7 @@ async def test_vendor_event_crud_respects_vendor_categories(client, test_db):
             "title": "Bad Time Event",
             "category": "Restaurant",
             "event_type": "Late Session",
+            "booking_mode": "simple",
             "event_date": "2026-08-05",
             "start_time": "20:00",
             "end_time": "19:00",

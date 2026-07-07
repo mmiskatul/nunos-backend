@@ -152,6 +152,51 @@ class CustomerRepository:
         c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
         return round(radius_km * c, 1)
 
+    def _event_booking_mode(self, event: dict[str, Any]) -> str:
+        explicit_mode = str(event.get("booking_mode") or "").strip().lower()
+        if explicit_mode in {"simple", "detailed"}:
+            return explicit_mode
+        if event.get("requires_seat_selection"):
+            return "detailed"
+        if event.get("requires_attendee_details"):
+            return "detailed"
+        if event.get("requires_timeslot_selection"):
+            return "detailed"
+        if event.get("requires_terms_confirmation"):
+            return "detailed"
+        if isinstance(event.get("ticket_types"), list) and len(event["ticket_types"]) > 1:
+            return "detailed"
+        if isinstance(event.get("addons"), list) and event["addons"]:
+            return "detailed"
+        if isinstance(event.get("packages"), list) and event["packages"]:
+            return "detailed"
+        return "simple"
+
+    def _event_booking_summary(self, customer_id: str, event_id: ObjectId, capacity: int) -> dict[str, Any]:
+        active_statuses = ["pending", "confirmed", "check_in"]
+        sold = 0
+        latest_booking: dict[str, Any] | None = None
+
+        cursor = self.vendor_bookings.find(
+            {"event_id": event_id, "status": {"$in": active_statuses}},
+            {"customer_id": 1, "status": 1, "booking_code": 1, "quantity": 1, "created_at": 1},
+        ).sort("created_at", DESCENDING)
+        for booking in cursor:
+            sold += int(booking.get("quantity") or 0)
+            if latest_booking is None and str(booking.get("customer_id")) == customer_id:
+                latest_booking = booking
+
+        is_sold_out = capacity > 0 and sold >= capacity
+        current_status = str(latest_booking.get("status") or "").lower() if latest_booking else ""
+        current_code = str(latest_booking.get("booking_code") or "").strip() if latest_booking else ""
+
+        return {
+            "current_booking_status": current_status or None,
+            "current_booking_code": current_code or None,
+            "is_sold_out": is_sold_out,
+            "remaining_capacity": max(capacity - sold, 0) if capacity > 0 else None,
+        }
+
     def _get_vendor_bundle(self, vendor_id: ObjectId) -> dict[str, Any]:
         vendor = self.vendors.find_one({"_id": vendor_id}) or {}
         profile = self.vendor_profiles.find_one({"vendor_id": vendor_id}) or {}
@@ -619,6 +664,9 @@ class CustomerRepository:
             active_offer = bundle.get("active_offer") or {}
             venue = str(event.get("venue") or "").strip()
             event_type = str(event.get("event_type") or "Event").strip()
+            capacity = int(event.get("capacity") or 0)
+            booking_mode = self._event_booking_mode(event)
+            booking_summary = self._event_booking_summary(customer_id, event["_id"], capacity)
 
             cards.append(
                 {
@@ -652,6 +700,9 @@ class CustomerRepository:
                     "description": event.get("description") or "",
                     "ticket_price": event.get("ticket_price"),
                     "capacity": event.get("capacity"),
+                    "booking_mode": booking_mode,
+                    "can_book_on_map": booking_mode == "simple" and not booking_summary["is_sold_out"],
+                    **booking_summary,
                     "detail_route": f"/home/events/{event['_id']}",
                 }
             )
@@ -680,6 +731,9 @@ class CustomerRepository:
         active_offer = bundle.get("active_offer") or {}
         event_type = str(event.get("event_type") or "Event").strip()
         venue = str(event.get("venue") or "").strip()
+        capacity = int(event.get("capacity") or 0)
+        booking_mode = self._event_booking_mode(event)
+        booking_summary = self._event_booking_summary(customer_id, event["_id"], capacity)
 
         return {
             "id": str(event["_id"]),
@@ -712,6 +766,9 @@ class CustomerRepository:
             "description": event.get("description") or "",
             "ticket_price": event.get("ticket_price"),
             "capacity": event.get("capacity"),
+            "booking_mode": booking_mode,
+            "can_book_on_map": booking_mode == "simple" and not booking_summary["is_sold_out"],
+            **booking_summary,
             "detail_route": f"/home/events/{event['_id']}",
         }
 
@@ -1129,6 +1186,15 @@ class CustomerRepository:
                     "event_type": row.get("event_type"),
                     "venue": row.get("venue"),
                     "cover_image_url": row.get("cover_image_url"),
+                    "banner_image_url": row.get("banner_image_url"),
+                    "ticket_price": row.get("ticket_price"),
+                    "capacity": row.get("capacity"),
+                    "booking_mode": row.get("booking_mode"),
+                    "can_book_on_map": row.get("can_book_on_map"),
+                    "current_booking_status": row.get("current_booking_status"),
+                    "current_booking_code": row.get("current_booking_code"),
+                    "is_sold_out": row.get("is_sold_out"),
+                    "remaining_capacity": row.get("remaining_capacity"),
                     "entity_type": "event",
                     "detail_route": row.get("detail_route"),
                 }

@@ -58,6 +58,7 @@ class VendorEventUpsertRequest(BaseModel):
     title: str = Field(min_length=3, max_length=180)
     category: str = Field(min_length=2, max_length=60)
     event_type: str = Field(min_length=2, max_length=80)
+    booking_mode: str = Field(default="simple", pattern="^(simple|detailed)$")
     event_date: str
     start_time: str
     end_time: str
@@ -126,6 +127,13 @@ class VendorEventUpsertRequest(BaseModel):
                 return "cancelled"
             return normalized
         return value
+
+    @field_validator("booking_mode", mode="before")
+    @classmethod
+    def _normalize_booking_mode(cls, value):
+        if isinstance(value, str):
+            return value.strip().lower() or "simple"
+        return "simple" if value is None else value
 
     @model_validator(mode="after")
     def _validate_event_times(self):
