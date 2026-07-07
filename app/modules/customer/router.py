@@ -9,6 +9,7 @@ from app.modules.customer.schemas_live import (
     CustomerBookingCreateRequest,
     CustomerBookingQuoteRequest,
     CustomerBookingRescheduleRequest,
+    CustomerEventTicketBookingRequest,
 )
 from app.modules.customer.service_customer import CustomerService
 from app.modules.schemas import (
@@ -254,21 +255,69 @@ def get_spa_offers(spa_id: str) -> PlannedEndpointResponse:
     return _planned("/customer/spas/{spa_id}/offers", "Spa offers and deals.", ["Spa offers tab"])
 
 
-@router.get("/events", tags=["Customer - Events"], response_model=PlannedEndpointResponse)
-def list_events() -> PlannedEndpointResponse:
-    return _planned("/customer/events", "Event list by category and date filters.", ["Events list screen"])
+@router.get("/events", tags=["Customer - Events"])
+def list_events(
+    limit: int = Query(default=20, ge=1, le=100),
+    skip: int = Query(default=0, ge=0),
+    search: str | None = Query(default=None),
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    return customer_service.repo.list_events(
+        customer_id=current_user["id"],
+        limit=limit,
+        skip=skip,
+        search=search,
+    )
 
 
-@router.get("/events/{event_id}", tags=["Customer - Events"], response_model=PlannedEndpointResponse)
-def get_event_details(event_id: str) -> PlannedEndpointResponse:
-    _ = event_id
-    return _planned("/customer/events/{event_id}", "Event details including artist info and directions.", ["Event details"])
+@router.get("/events/{event_id}", tags=["Customer - Events"])
+def get_event_details(
+    event_id: str,
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    return customer_service.get_event_or_404(current_user["id"], event_id)
 
 
-@router.get("/events/{event_id}/directions", tags=["Customer - Events"], response_model=PlannedEndpointResponse)
-def get_event_directions(event_id: str) -> PlannedEndpointResponse:
-    _ = event_id
-    return _planned("/customer/events/{event_id}/directions", "Map directions deep link payload.", ["Event details"])
+@router.get("/events/{event_id}/directions", tags=["Customer - Events"])
+def get_event_directions(
+    event_id: str,
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    event = customer_service.get_event_or_404(current_user["id"], event_id)
+    return {
+        "id": event["id"],
+        "title": event["title"],
+        "latitude": event.get("latitude"),
+        "longitude": event.get("longitude"),
+        "location": event.get("location"),
+        "venue": event.get("venue"),
+    }
+
+
+@router.post("/events/{event_id}/bookings", tags=["Customer - Events"])
+def create_event_ticket_booking(
+    event_id: str,
+    payload: CustomerEventTicketBookingRequest,
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    try:
+        return customer_service.repo.create_event_ticket_booking(
+            customer_id=current_user["id"],
+            event_id=event_id,
+            quantity=payload.quantity,
+            notes=payload.notes,
+            auto_confirm=payload.auto_confirm,
+        )
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found.") from exc
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = status.HTTP_404_NOT_FOUND if detail == "Event not found." else status.HTTP_400_BAD_REQUEST
+        raise HTTPException(status_code=status_code, detail=detail) from exc
 
 
 @router.get("/hotels", tags=["Customer - Hotels"])
@@ -384,6 +433,15 @@ def get_map_highlight_card(
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No highlighted venue found.")
     return item
+
+
+@router.get("/map/events", tags=["Customer - Search"])
+def get_map_events(
+    limit: int = Query(default=50, ge=1, le=200),
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    return {"items": customer_service.repo.map_events(current_user["id"], limit=limit)}
 
 
 @router.get("/filters", tags=["Customer - Search"], response_model=PlannedEndpointResponse)

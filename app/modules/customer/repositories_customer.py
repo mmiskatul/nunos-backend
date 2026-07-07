@@ -578,6 +578,268 @@ class CustomerRepository:
         ).sort("created_at", DESCENDING)
         return [self._serialize(doc) for doc in docs]
 
+    def list_events(
+        self,
+        customer_id: str,
+        limit: int,
+        skip: int,
+        search: str | None = None,
+    ) -> dict[str, Any]:
+        query: dict[str, Any] = {"status": "published", "active": {"$ne": False}}
+        if search:
+            query["$or"] = [
+                {"title": {"$regex": search, "$options": "i"}},
+                {"venue": {"$regex": search, "$options": "i"}},
+                {"event_type": {"$regex": search, "$options": "i"}},
+                {"category": {"$regex": search, "$options": "i"}},
+            ]
+
+        docs = list(
+            self.vendor_events.find(query).sort(
+                [("event_date", ASCENDING), ("start_time", ASCENDING), ("created_at", DESCENDING)]
+            )
+        )
+        cards: list[dict[str, Any]] = []
+        customer_lat, customer_lng = self._get_customer_coords(customer_id)
+
+        for event in docs:
+            vendor_id = event.get("vendor_id")
+            if not isinstance(vendor_id, ObjectId):
+                continue
+
+            vendor = self.vendors.find_one({"_id": vendor_id, "status": "approved"})
+            if not vendor:
+                continue
+
+            bundle = self._get_vendor_bundle(vendor_id)
+            vendor_lat, vendor_lng = self._get_vendor_coords(bundle)
+            if vendor_lat is None or vendor_lng is None:
+                continue
+
+            active_offer = bundle.get("active_offer") or {}
+            venue = str(event.get("venue") or "").strip()
+            event_type = str(event.get("event_type") or "Event").strip()
+
+            cards.append(
+                {
+                    "id": str(event["_id"]),
+                    "vendor_id": str(vendor_id),
+                    "title": str(event.get("title") or "Untitled Event").strip(),
+                    "name": str(event.get("title") or "Untitled Event").strip(),
+                    "category": str(event.get("category") or "Event").strip(),
+                    "entity_type": "event",
+                    "event_type": event_type,
+                    "event_date": event.get("event_date"),
+                    "start_time": event.get("start_time"),
+                    "end_time": event.get("end_time"),
+                    "timezone": event.get("timezone"),
+                    "venue": venue,
+                    "location": venue
+                    or bundle["general"].get("business_address")
+                    or bundle["business"].get("address")
+                    or bundle["business"].get("city")
+                    or "Qatar",
+                    "address": bundle["general"].get("business_address") or bundle["business"].get("address"),
+                    "city": bundle["business"].get("city"),
+                    "latitude": vendor_lat,
+                    "longitude": vendor_lng,
+                    "distance_km": self._distance_between_km(customer_lat, customer_lng, vendor_lat, vendor_lng),
+                    "cover_image_url": event.get("banner_image_url")
+                    or bundle["cover_image"]
+                    or "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=1200",
+                    "banner_image_url": event.get("banner_image_url") or bundle["cover_image"],
+                    "offer_text": active_offer.get("promotion_name") or event_type,
+                    "description": event.get("description") or "",
+                    "ticket_price": event.get("ticket_price"),
+                    "capacity": event.get("capacity"),
+                    "detail_route": f"/home/events/{event['_id']}",
+                }
+            )
+
+        total = len(cards)
+        return {"items": cards[skip : skip + limit], "total": total}
+
+    def get_event_details(self, customer_id: str, event_id: str) -> dict[str, Any] | None:
+        event = self.vendor_events.find_one(
+            {"_id": self._oid(event_id), "status": "published", "active": {"$ne": False}}
+        )
+        if not event:
+            return None
+
+        vendor_id = event.get("vendor_id")
+        if not isinstance(vendor_id, ObjectId):
+            return None
+
+        vendor = self.vendors.find_one({"_id": vendor_id, "status": "approved"})
+        if not vendor:
+            return None
+
+        bundle = self._get_vendor_bundle(vendor_id)
+        vendor_lat, vendor_lng = self._get_vendor_coords(bundle)
+        customer_lat, customer_lng = self._get_customer_coords(customer_id)
+        active_offer = bundle.get("active_offer") or {}
+        event_type = str(event.get("event_type") or "Event").strip()
+        venue = str(event.get("venue") or "").strip()
+
+        return {
+            "id": str(event["_id"]),
+            "vendor_id": str(vendor_id),
+            "title": str(event.get("title") or "Untitled Event").strip(),
+            "name": str(event.get("title") or "Untitled Event").strip(),
+            "category": str(event.get("category") or "Event").strip(),
+            "entity_type": "event",
+            "event_type": event_type,
+            "event_date": event.get("event_date"),
+            "start_time": event.get("start_time"),
+            "end_time": event.get("end_time"),
+            "timezone": event.get("timezone"),
+            "venue": venue,
+            "location": venue
+            or bundle["general"].get("business_address")
+            or bundle["business"].get("address")
+            or bundle["business"].get("city")
+            or "Qatar",
+            "address": bundle["general"].get("business_address") or bundle["business"].get("address"),
+            "city": bundle["business"].get("city"),
+            "latitude": vendor_lat,
+            "longitude": vendor_lng,
+            "distance_km": self._distance_between_km(customer_lat, customer_lng, vendor_lat, vendor_lng),
+            "cover_image_url": event.get("banner_image_url")
+            or bundle["cover_image"]
+            or "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=1200",
+            "banner_image_url": event.get("banner_image_url") or bundle["cover_image"],
+            "offer_text": active_offer.get("promotion_name") or event_type,
+            "description": event.get("description") or "",
+            "ticket_price": event.get("ticket_price"),
+            "capacity": event.get("capacity"),
+            "detail_route": f"/home/events/{event['_id']}",
+        }
+
+    def create_event_ticket_booking(
+        self,
+        customer_id: str,
+        event_id: str,
+        quantity: int,
+        notes: str | None,
+        auto_confirm: bool,
+    ) -> dict[str, Any]:
+        customer = self.users.find_one({"_id": self._oid(customer_id)})
+        if not customer:
+            raise ValueError("Customer not found.")
+
+        event = self.vendor_events.find_one(
+            {"_id": self._oid(event_id), "status": "published", "active": {"$ne": False}}
+        )
+        if not event:
+            raise ValueError("Event not found.")
+
+        vendor_id = event.get("vendor_id")
+        if not isinstance(vendor_id, ObjectId):
+            raise ValueError("Event vendor is invalid.")
+
+        vendor = self.vendors.find_one({"_id": vendor_id, "status": "approved"})
+        if not vendor:
+            raise ValueError("Provider not found.")
+
+        capacity = int(event.get("capacity") or 0)
+        sold = 0
+        for row in self.vendor_bookings.find(
+            {
+                "event_id": self._oid(event_id),
+                "status": {"$in": ["pending", "confirmed", "check_in"]},
+            },
+            {"quantity": 1},
+        ):
+            sold += int(row.get("quantity") or 0)
+
+        if capacity > 0 and sold + quantity > capacity:
+            remaining = max(capacity - sold, 0)
+            raise ValueError(
+                "Only "
+                f"{remaining} ticket{'s' if remaining != 1 else ''} remaining for this event."
+            )
+
+        unit_price = round(float(event.get("ticket_price") or 0), 2)
+        subtotal = round(unit_price * quantity, 2)
+        service_fee = 0.0
+        taxes = 0.0
+        total = subtotal
+        now = datetime.now(UTC)
+        booking_code = f"#EV{now.strftime('%Y%m')}-{str(ObjectId())[-4:].upper()}"
+        status = "confirmed" if auto_confirm else "pending"
+        scheduled_date = str(event.get("event_date") or "")
+        scheduled_time = str(event.get("start_time") or "")
+
+        vendor_booking_payload = {
+            "vendor_id": vendor["_id"],
+            "customer_id": customer["_id"],
+            "event_id": self._oid(event_id),
+            "booking_code": booking_code,
+            "customer_name": customer.get("full_name"),
+            "customer_phone": customer.get("phone"),
+            "customer_email": customer.get("email"),
+            "scheduled_date": scheduled_date,
+            "scheduled_time": scheduled_time,
+            "service": str(event.get("title") or "Event Ticket"),
+            "provider_type": "event",
+            "guests": quantity,
+            "quantity": quantity,
+            "status": status,
+            "payment_status": "unpaid",
+            "special_requests": notes,
+            "total_amount": total,
+            "subtotal": subtotal,
+            "service_fee": service_fee,
+            "taxes": taxes,
+            "unit_price": unit_price,
+            "source": "customer_app",
+            "created_at": now,
+            "updated_at": now,
+        }
+        insert_result = self.vendor_bookings.insert_one(vendor_booking_payload)
+        booking_id = insert_result.inserted_id
+        self.bookings.insert_one(
+            {
+                "customer_id": customer["_id"],
+                "vendor_id": vendor["_id"],
+                "event_id": self._oid(event_id),
+                "provider_type": "event",
+                "booking_id": booking_id,
+                "booking_code": booking_code,
+                "date": scheduled_date,
+                "time": scheduled_time,
+                "guests": quantity,
+                "quantity": quantity,
+                "status": status,
+                "total_amount": total,
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+        created = self.vendor_bookings.find_one({"_id": booking_id})
+        self._create_vendor_notification(
+            vendor["_id"],
+            "new_booking",
+            "New Event Ticket Booking",
+            (
+                f"{customer.get('full_name') or 'A customer'} booked {quantity} ticket"
+                f"{'s' if quantity != 1 else ''} for {event.get('title') or 'your event'}."
+                f" Reference: {booking_code}."
+            ),
+            action_type="view_details",
+            action_label="View Booking",
+            metadata={
+                "booking_id": str(booking_id),
+                "booking_code": booking_code,
+                "customer_id": str(customer["_id"]),
+                "status": status,
+                "provider_type": "event",
+                "event_id": str(event["_id"]),
+            },
+            settings_key="new_booking",
+        )
+        return self._serialize(created) or {}
+
     def get_booking_availability(self, provider_id: str, date: str) -> dict[str, Any]:
         vendor_id = self._oid(provider_id)
         settings_doc = self.vendor_portal_settings.find_one({"vendor_id": vendor_id}) or {}
@@ -823,6 +1085,52 @@ class CustomerRepository:
                     "rating": row["rating"],
                     "distance_km": row["distance_km"],
                     "offer_text": row.get("offer_text"),
+                }
+            )
+        events = self.list_events(customer_id=customer_id, limit=max(1, min(limit, 50)), skip=0).get("items", [])
+        for row in events:
+            lat = self._to_float(row.get("latitude"))
+            lng = self._to_float(row.get("longitude"))
+            if lat is None or lng is None:
+                continue
+            pins.append(
+                {
+                    "id": row["id"],
+                    "name": row["title"],
+                    "lat": lat,
+                    "lng": lng,
+                    "rating": None,
+                    "distance_km": row["distance_km"],
+                    "offer_text": row.get("offer_text"),
+                    "entity_type": "event",
+                }
+            )
+        return pins
+
+    def map_events(self, customer_id: str, limit: int) -> list[dict[str, Any]]:
+        events = self.list_events(customer_id=customer_id, limit=limit, skip=0).get("items", [])
+        pins: list[dict[str, Any]] = []
+        for row in events:
+            lat = self._to_float(row.get("latitude"))
+            lng = self._to_float(row.get("longitude"))
+            if lat is None or lng is None:
+                continue
+            pins.append(
+                {
+                    "id": row["id"],
+                    "title": row["title"],
+                    "name": row["title"],
+                    "lat": lat,
+                    "lng": lng,
+                    "latitude": lat,
+                    "longitude": lng,
+                    "distance_km": row.get("distance_km"),
+                    "offer_text": row.get("offer_text"),
+                    "event_type": row.get("event_type"),
+                    "venue": row.get("venue"),
+                    "cover_image_url": row.get("cover_image_url"),
+                    "entity_type": "event",
+                    "detail_route": row.get("detail_route"),
                 }
             )
         return pins

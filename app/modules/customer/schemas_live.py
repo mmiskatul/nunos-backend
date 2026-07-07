@@ -44,3 +44,9 @@ class CustomerBookingActionResponse(BaseModel):
     status: str
     updated_at: datetime | str
 
+
+class CustomerEventTicketBookingRequest(BaseModel):
+    quantity: int = Field(default=1, ge=1, le=20)
+    notes: str | None = Field(default=None, max_length=2000)
+    auto_confirm: bool = True
+

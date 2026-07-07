@@ -479,6 +479,101 @@ async def test_ai_plan_stub(client, test_db):
 
 
 @pytest.mark.asyncio
+async def test_customer_events_and_map_events_return_published_vendor_events(client, test_db):
+    register_res = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "full_name": "Event Viewer",
+            "email": "event-viewer@example.com",
+            "password": "StrongPass123!",
+            "location_enabled": True,
+            "latitude": 23.8103,
+            "longitude": 90.4125,
+        },
+    )
+    assert register_res.status_code == 200
+
+    signup_code = await test_db.otp_codes.find_one(
+        {"email": "event-viewer@example.com", "purpose": "signup_verification"}
+    )
+    verify_res = await client.post(
+        "/api/v1/auth/verify-email",
+        json={"email": "event-viewer@example.com", "otp": signup_code["code"]},
+    )
+    assert verify_res.status_code == 200
+    token = verify_res.json()["data"]["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    now = datetime.now(UTC)
+    vendor_id = (
+        await test_db.vendors.insert_one(
+            {
+                "business_name": "Skyline Events",
+                "owner_full_name": "Vendor Owner",
+                "email": "vendor@example.com",
+                "status": "approved",
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+    ).inserted_id
+    await test_db.vendor_portal_settings.insert_one(
+        {
+            "vendor_id": vendor_id,
+            "general": {
+                "business_address": "Banani, Dhaka",
+                "latitude": 23.7937,
+                "longitude": 90.4066,
+            },
+            "profile": {
+                "location_label": "Banani",
+            },
+        }
+    )
+    event_id = (
+        await test_db.vendor_events.insert_one(
+            {
+                "vendor_id": vendor_id,
+                "title": "Rooftop Summer Concert",
+                "category": "Event",
+                "event_type": "Concert",
+                "event_date": "2026-07-20",
+                "start_time": "19:00:00",
+                "end_time": "22:00:00",
+                "timezone": "Asia/Dhaka",
+                "venue": "Skyline Rooftop",
+                "capacity": 250,
+                "ticket_price": 1200,
+                "description": "Live music and dinner.",
+                "banner_image_url": "https://example.com/event.jpg",
+                "status": "published",
+                "active": True,
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+    ).inserted_id
+
+    events_res = await client.get("/api/v1/customer/events", headers=headers)
+    assert events_res.status_code == 200
+    events_payload = events_res.json()
+    assert events_payload["total"] == 1
+    assert events_payload["items"][0]["id"] == str(event_id)
+    assert events_payload["items"][0]["entity_type"] == "event"
+    assert events_payload["items"][0]["latitude"] == pytest.approx(23.7937)
+    assert events_payload["items"][0]["longitude"] == pytest.approx(90.4066)
+
+    map_events_res = await client.get("/api/v1/customer/map/events", headers=headers)
+    assert map_events_res.status_code == 200
+    map_items = map_events_res.json()["items"]
+    assert len(map_items) == 1
+    assert map_items[0]["id"] == str(event_id)
+    assert map_items[0]["entity_type"] == "event"
+    assert map_items[0]["lat"] == pytest.approx(23.7937)
+    assert map_items[0]["lng"] == pytest.approx(90.4066)
+
+
+@pytest.mark.asyncio
 async def test_dashboard_login(client, test_db):
     await test_db.platform_admins.insert_one(
         {
