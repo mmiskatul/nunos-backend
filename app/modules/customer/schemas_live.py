@@ -19,6 +19,26 @@ class CustomerBookingCreateRequest(CustomerBookingQuoteRequest):
     auto_confirm: bool = False
 
 
+class CustomerRestaurantBookingCreateRequest(BaseModel):
+    date: str = Field(min_length=10, max_length=10)
+    time: str = Field(min_length=3, max_length=20)
+    guests: int = Field(ge=1, le=20)
+    seating_preference: str | None = Field(default=None, max_length=50)
+    special_notes: str | None = Field(default=None, max_length=2000)
+    auto_confirm: bool = False
+
+
+class CustomerHotelBookingCreateRequest(BaseModel):
+    check_in_date: str = Field(min_length=10, max_length=10)
+    check_out_date: str = Field(min_length=10, max_length=10)
+    guests: int = Field(ge=1, le=10)
+    special_notes: str | None = Field(default=None, max_length=2000)
+    auto_confirm: bool = False
+    guest_name: str | None = Field(default=None, max_length=200)
+    guest_email: str | None = Field(default=None, max_length=200)
+    guest_phone: str | None = Field(default=None, max_length=40)
+
+
 class CustomerBookingRescheduleRequest(BaseModel):
     date: str = Field(min_length=10, max_length=10)
     time: str = Field(min_length=3, max_length=20)

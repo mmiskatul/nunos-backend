@@ -7,9 +7,11 @@ from app.modules.customer.schemas_live import (
     CustomerAvailabilityRequest,
     CustomerBookingCancelRequest,
     CustomerBookingCreateRequest,
+    CustomerHotelBookingCreateRequest,
     CustomerBookingQuoteRequest,
     CustomerBookingRescheduleRequest,
     CustomerEventTicketBookingRequest,
+    CustomerRestaurantBookingCreateRequest,
 )
 from app.modules.customer.service_customer import CustomerService
 from app.modules.schemas import (
@@ -506,6 +508,90 @@ def create_booking(
         )
     except InvalidId as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/restaurants/{restaurant_id}/bookings", tags=["Customer - Restaurants"])
+def create_restaurant_booking(
+    restaurant_id: str,
+    payload: CustomerRestaurantBookingCreateRequest,
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    try:
+        return customer_service.repo.create_booking(
+            customer_id=current_user["id"],
+            provider_id=restaurant_id,
+            provider_type="restaurant",
+            date=payload.date,
+            time=payload.time,
+            guests=payload.guests,
+            seating_preference=payload.seating_preference,
+            special_notes=payload.special_notes,
+            auto_confirm=payload.auto_confirm,
+        )
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Restaurant not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/hotels/{hotel_id}/bookings", tags=["Customer - Hotels"])
+def create_hotel_booking(
+    hotel_id: str,
+    payload: CustomerHotelBookingCreateRequest,
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    try:
+        return customer_service.repo.create_hotel_booking(
+            customer_id=current_user["id"],
+            hotel_id=hotel_id,
+            check_in_date=payload.check_in_date,
+            check_out_date=payload.check_out_date,
+            guests=payload.guests,
+            special_notes=payload.special_notes,
+            auto_confirm=payload.auto_confirm,
+            guest_name=payload.guest_name,
+            guest_email=payload.guest_email,
+            guest_phone=payload.guest_phone,
+        )
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hotel not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/hotels/rooms/{room_id}/bookings", tags=["Customer - Hotels"])
+def create_hotel_room_booking(
+    room_id: str,
+    payload: CustomerHotelBookingCreateRequest,
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    try:
+        room = customer_service.repo.get_hotel_room_details(room_id)
+        if not room:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found.")
+        hotel_id = str(room.get("hotel_id") or room.get("vendor_id") or "")
+        if not hotel_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Room is missing a hotel reference.")
+        return customer_service.repo.create_hotel_booking(
+            customer_id=current_user["id"],
+            hotel_id=hotel_id,
+            check_in_date=payload.check_in_date,
+            check_out_date=payload.check_out_date,
+            guests=payload.guests,
+            special_notes=payload.special_notes,
+            auto_confirm=payload.auto_confirm,
+            room_id=room_id,
+            guest_name=payload.guest_name,
+            guest_email=payload.guest_email,
+            guest_phone=payload.guest_phone,
+        )
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found.") from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 

@@ -429,6 +429,8 @@ class CustomerRepository:
             amenities_with_icons.append({"name": name, "icon": icon})
         return {
             "id": str(doc["_id"]),
+            "hotel_id": str(doc.get("vendor_id")),
+            "vendor_id": str(doc.get("vendor_id")),
             "title": doc.get("name") or "Standard Room",
             "status": "Available" if doc.get("available", True) else "Unavailable",
             "size": f"{doc.get('size_sqm', 45)} m²",
@@ -1072,6 +1074,130 @@ class CustomerRepository:
                 "customer_id": str(customer["_id"]),
                 "status": status,
                 "provider_type": provider_type,
+            },
+            settings_key="new_booking",
+        )
+        return self._serialize(created) or {}
+
+    def create_hotel_booking(
+        self,
+        customer_id: str,
+        hotel_id: str,
+        check_in_date: str,
+        check_out_date: str,
+        guests: int,
+        special_notes: str | None,
+        auto_confirm: bool,
+        room_id: str | None = None,
+        guest_name: str | None = None,
+        guest_email: str | None = None,
+        guest_phone: str | None = None,
+    ) -> dict[str, Any]:
+        customer = self.users.find_one({"_id": self._oid(customer_id)})
+        if not customer:
+            raise ValueError("Customer not found.")
+        vendor = self.vendors.find_one({"_id": self._oid(hotel_id), "status": "approved"})
+        if not vendor:
+            raise ValueError("Provider not found.")
+
+        room_query: dict[str, Any] = {"vendor_id": vendor["_id"], "available": True}
+        if room_id:
+            room_query["_id"] = self._oid(room_id)
+        room = self.vendor_rooms.find_one(room_query, sort=[("base_price", ASCENDING)])
+        if not room:
+            raise ValueError("No available room found for this hotel.")
+
+        try:
+            check_in = datetime.fromisoformat(check_in_date).date()
+            check_out = datetime.fromisoformat(check_out_date).date()
+        except ValueError as exc:
+            raise ValueError("Invalid check-in or check-out date.") from exc
+
+        nights = (check_out - check_in).days
+        if nights <= 0:
+            raise ValueError("check_out_date must be after check_in_date.")
+
+        base_price = round(float(room.get("base_price") or 150), 2)
+        subtotal = round(base_price * nights, 2)
+        service_fee = round(subtotal * 0.08, 2)
+        taxes = round(subtotal * 0.05, 2)
+        total = round(subtotal + service_fee + taxes, 2)
+        now = datetime.now(UTC)
+        booking_code = f"#HT{now.strftime('%Y%m')}-{str(ObjectId())[-4:].upper()}"
+        status = "confirmed" if auto_confirm else "pending"
+        room_name = str(room.get("name") or "Hotel Room")
+        provider_type = "hotel_room" if room_id else "hotel"
+
+        vendor_booking_payload = {
+            "vendor_id": vendor["_id"],
+            "customer_id": customer["_id"],
+            "booking_code": booking_code,
+            "customer_name": guest_name or customer.get("full_name"),
+            "customer_phone": guest_phone or customer.get("phone"),
+            "customer_email": guest_email or customer.get("email"),
+            "scheduled_date": check_in_date,
+            "scheduled_time": "15:00",
+            "check_in_date": check_in_date,
+            "check_out_date": check_out_date,
+            "nights": nights,
+            "service": room_name,
+            "room_id": room["_id"],
+            "room_type": room_name,
+            "provider_type": provider_type,
+            "guests": guests,
+            "status": status,
+            "payment_status": "unpaid",
+            "special_requests": special_notes,
+            "total_amount": total,
+            "subtotal": subtotal,
+            "service_fee": service_fee,
+            "taxes": taxes,
+            "rate_per_night": base_price,
+            "source": "customer_app",
+            "created_at": now,
+            "updated_at": now,
+        }
+        insert_result = self.vendor_bookings.insert_one(vendor_booking_payload)
+        booking_id = insert_result.inserted_id
+        self.bookings.insert_one(
+            {
+                "customer_id": customer["_id"],
+                "vendor_id": vendor["_id"],
+                "provider_type": provider_type,
+                "booking_id": booking_id,
+                "booking_code": booking_code,
+                "date": check_in_date,
+                "time": "15:00",
+                "guests": guests,
+                "status": status,
+                "room_id": room["_id"],
+                "room_type": room_name,
+                "check_in_date": check_in_date,
+                "check_out_date": check_out_date,
+                "nights": nights,
+                "total_amount": total,
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+        created = self.vendor_bookings.find_one({"_id": booking_id})
+        self._create_vendor_notification(
+            vendor["_id"],
+            "new_booking",
+            "New Hotel Booking Received",
+            (
+                f"{guest_name or customer.get('full_name') or 'A customer'} booked {room_name} "
+                f"from {check_in_date} to {check_out_date}. Reference: {booking_code}."
+            ),
+            action_type="view_details",
+            action_label="View Booking",
+            metadata={
+                "booking_id": str(booking_id),
+                "booking_code": booking_code,
+                "customer_id": str(customer["_id"]),
+                "status": status,
+                "provider_type": provider_type,
+                "room_id": str(room["_id"]),
             },
             settings_key="new_booking",
         )

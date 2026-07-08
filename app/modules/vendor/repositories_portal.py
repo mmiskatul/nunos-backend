@@ -239,6 +239,7 @@ class VendorPortalRepository:
         skip: int,
         search: str | None = None,
         status: str | None = None,
+        provider_type: str | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
     ) -> dict[str, Any]:
@@ -265,6 +266,12 @@ class VendorPortalRepository:
             if date_to:
                 range_q["$lte"] = date_to
             query["scheduled_date"] = range_q
+        if provider_type:
+            values = [value.strip().lower() for value in provider_type.split(",") if value.strip()]
+            if len(values) == 1:
+                query["provider_type"] = values[0]
+            elif values:
+                query["provider_type"] = {"$in": values}
         total = int(self.bookings.count_documents(query))
         docs = self.bookings.find(query).sort("created_at", DESCENDING).skip(skip).limit(limit)
         return {"items": [self._serialize(doc) for doc in docs], "total": total}

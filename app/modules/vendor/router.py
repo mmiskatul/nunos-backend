@@ -186,6 +186,7 @@ def list_vendor_bookings(
     skip: int = Query(default=0, ge=0),
     search: str | None = Query(default=None),
     status_filter: str | None = Query(default=None, alias="status"),
+    provider_type: str | None = Query(default=None),
     date_from: str | None = Query(default=None),
     date_to: str | None = Query(default=None),
     current_vendor: dict = Depends(get_current_vendor),
@@ -197,6 +198,7 @@ def list_vendor_bookings(
         skip=skip,
         search=search,
         status=status_filter,
+        provider_type=provider_type,
         date_from=date_from,
         date_to=date_to,
     )
