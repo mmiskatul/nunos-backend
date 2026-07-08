@@ -8,6 +8,7 @@ from app.api.deps import get_ai_service, get_email_sender
 from app.core.config import Settings, get_settings
 from app.db.mongo import get_database
 from app.main import create_app
+from app.modules.customer.deps import get_db as get_customer_db
 from app.modules.platform_admin.deps_auth import get_platform_admin_db
 from app.modules.vendor.deps_auth import get_vendor_db
 from app.repositories.listing_repository import ListingRepository
@@ -40,9 +41,16 @@ def app(test_db):
         debug_return_reset_code=True,
     )
 
+    class FakeCustomerMongoDatabase:
+        def __init__(self, db):
+            self.db = db
+
     application.dependency_overrides[get_database] = _override_get_db
     application.dependency_overrides[get_email_sender] = lambda: FakeEmailSender()
     application.dependency_overrides[get_settings] = lambda: test_settings
+    application.dependency_overrides[get_customer_db] = lambda: FakeCustomerMongoDatabase(
+        test_db._AsyncMongoMockDatabase__database
+    )
     application.dependency_overrides[get_vendor_db] = lambda: test_db._AsyncMongoMockDatabase__database
     application.dependency_overrides[get_platform_admin_db] = lambda: test_db._AsyncMongoMockDatabase__database
     application.dependency_overrides[get_ai_service] = lambda: AIPlannerService(ListingRepository(test_db), StubLLMClient())

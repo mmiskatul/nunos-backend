@@ -132,6 +132,13 @@ class CustomerRepository:
             longitude = self._to_float(general_settings.get("longitude"))
         return latitude, longitude
 
+    def _get_event_coords(self, event: dict[str, Any], bundle: dict[str, Any]) -> tuple[float | None, float | None]:
+        latitude = self._to_float(event.get("latitude"))
+        longitude = self._to_float(event.get("longitude"))
+        if latitude is None or longitude is None:
+            return self._get_vendor_coords(bundle)
+        return latitude, longitude
+
     @staticmethod
     def _distance_between_km(
         origin_lat: float | None,
@@ -657,12 +664,19 @@ class CustomerRepository:
                 continue
 
             bundle = self._get_vendor_bundle(vendor_id)
-            vendor_lat, vendor_lng = self._get_vendor_coords(bundle)
-            if vendor_lat is None or vendor_lng is None:
+            event_lat, event_lng = self._get_event_coords(event, bundle)
+            if event_lat is None or event_lng is None:
                 continue
 
             active_offer = bundle.get("active_offer") or {}
             venue = str(event.get("venue") or "").strip()
+            display_address = (
+                venue
+                or str(bundle["general"].get("business_address") or "").strip()
+                or str(bundle["business"].get("address") or "").strip()
+                or str(bundle["business"].get("city") or "").strip()
+                or "Qatar"
+            )
             event_type = str(event.get("event_type") or "Event").strip()
             capacity = int(event.get("capacity") or 0)
             booking_mode = self._event_booking_mode(event)
@@ -682,16 +696,12 @@ class CustomerRepository:
                     "end_time": event.get("end_time"),
                     "timezone": event.get("timezone"),
                     "venue": venue,
-                    "location": venue
-                    or bundle["general"].get("business_address")
-                    or bundle["business"].get("address")
-                    or bundle["business"].get("city")
-                    or "Qatar",
-                    "address": bundle["general"].get("business_address") or bundle["business"].get("address"),
+                    "location": display_address,
+                    "address": display_address,
                     "city": bundle["business"].get("city"),
-                    "latitude": vendor_lat,
-                    "longitude": vendor_lng,
-                    "distance_km": self._distance_between_km(customer_lat, customer_lng, vendor_lat, vendor_lng),
+                    "latitude": event_lat,
+                    "longitude": event_lng,
+                    "distance_km": self._distance_between_km(customer_lat, customer_lng, event_lat, event_lng),
                     "cover_image_url": event.get("banner_image_url")
                     or bundle["cover_image"]
                     or "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=1200",
@@ -726,11 +736,18 @@ class CustomerRepository:
             return None
 
         bundle = self._get_vendor_bundle(vendor_id)
-        vendor_lat, vendor_lng = self._get_vendor_coords(bundle)
+        event_lat, event_lng = self._get_event_coords(event, bundle)
         customer_lat, customer_lng = self._get_customer_coords(customer_id)
         active_offer = bundle.get("active_offer") or {}
         event_type = str(event.get("event_type") or "Event").strip()
         venue = str(event.get("venue") or "").strip()
+        display_address = (
+            venue
+            or str(bundle["general"].get("business_address") or "").strip()
+            or str(bundle["business"].get("address") or "").strip()
+            or str(bundle["business"].get("city") or "").strip()
+            or "Qatar"
+        )
         capacity = int(event.get("capacity") or 0)
         booking_mode = self._event_booking_mode(event)
         booking_summary = self._event_booking_summary(customer_id, event["_id"], capacity)
@@ -748,16 +765,12 @@ class CustomerRepository:
             "end_time": event.get("end_time"),
             "timezone": event.get("timezone"),
             "venue": venue,
-            "location": venue
-            or bundle["general"].get("business_address")
-            or bundle["business"].get("address")
-            or bundle["business"].get("city")
-            or "Qatar",
-            "address": bundle["general"].get("business_address") or bundle["business"].get("address"),
+            "location": display_address,
+            "address": display_address,
             "city": bundle["business"].get("city"),
-            "latitude": vendor_lat,
-            "longitude": vendor_lng,
-            "distance_km": self._distance_between_km(customer_lat, customer_lng, vendor_lat, vendor_lng),
+            "latitude": event_lat,
+            "longitude": event_lng,
+            "distance_km": self._distance_between_km(customer_lat, customer_lng, event_lat, event_lng),
             "cover_image_url": event.get("banner_image_url")
             or bundle["cover_image"]
             or "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=1200",

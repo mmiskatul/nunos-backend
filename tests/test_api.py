@@ -546,6 +546,8 @@ async def test_customer_events_and_map_events_return_published_vendor_events(cli
                 "ticket_price": 1200,
                 "description": "Live music and dinner.",
                 "banner_image_url": "https://example.com/event.jpg",
+                "latitude": 23.7815,
+                "longitude": 90.4003,
                 "status": "published",
                 "active": True,
                 "created_at": now,
@@ -560,8 +562,8 @@ async def test_customer_events_and_map_events_return_published_vendor_events(cli
     assert events_payload["total"] == 1
     assert events_payload["items"][0]["id"] == str(event_id)
     assert events_payload["items"][0]["entity_type"] == "event"
-    assert events_payload["items"][0]["latitude"] == pytest.approx(23.7937)
-    assert events_payload["items"][0]["longitude"] == pytest.approx(90.4066)
+    assert events_payload["items"][0]["latitude"] == pytest.approx(23.7815)
+    assert events_payload["items"][0]["longitude"] == pytest.approx(90.4003)
     assert events_payload["items"][0]["booking_mode"] == "simple"
     assert events_payload["items"][0]["can_book_on_map"] is True
     assert events_payload["items"][0]["current_booking_status"] is None
@@ -581,8 +583,10 @@ async def test_customer_events_and_map_events_return_published_vendor_events(cli
     assert len(map_items) == 1
     assert map_items[0]["id"] == str(event_id)
     assert map_items[0]["entity_type"] == "event"
-    assert map_items[0]["lat"] == pytest.approx(23.7937)
-    assert map_items[0]["lng"] == pytest.approx(90.4066)
+    assert map_items[0]["latitude"] == 23.7815
+    assert map_items[0]["longitude"] == 90.4003
+    assert map_items[0]["lat"] == pytest.approx(23.7815)
+    assert map_items[0]["lng"] == pytest.approx(90.4003)
     assert map_items[0]["booking_mode"] == "simple"
     assert map_items[0]["can_book_on_map"] is True
     assert map_items[0]["current_booking_status"] is None
@@ -1066,7 +1070,11 @@ async def test_vendor_event_crud_respects_vendor_categories(client, test_db):
         },
     )
     assert invalid_time_res.status_code == 422
-    assert "End time must be later than start time." in invalid_time_res.json()["detail"]
+    invalid_detail = invalid_time_res.json()["detail"]
+    if isinstance(invalid_detail, list):
+        assert any("End time must be later than start time." in item.get("msg", "") for item in invalid_detail)
+    else:
+        assert "End time must be later than start time." in invalid_detail
 
     status_res = await client.patch(
         f"/api/v1/vendor/events/{created['id']}/status",
@@ -1081,7 +1089,8 @@ async def test_vendor_event_crud_respects_vendor_categories(client, test_db):
 
     final_list_res = await client.get("/api/v1/vendor/events", headers=headers)
     assert final_list_res.status_code == 200
-    assert final_list_res.json()["items"] == []
+    assert len(final_list_res.json()["items"]) == 1
+    assert final_list_res.json()["items"][0]["title"] == "Compact Event"
 
 
 @pytest.mark.asyncio

@@ -64,6 +64,8 @@ class VendorEventUpsertRequest(BaseModel):
     end_time: str
     timezone: str = Field(default="Asia/Dhaka", min_length=2, max_length=80)
     venue: str = Field(min_length=2, max_length=500)
+    latitude: float | None = None
+    longitude: float | None = None
     capacity: int = Field(ge=1, le=100000)
     ticket_price: float = Field(ge=0)
     registration_deadline: str | None = None
