@@ -509,40 +509,15 @@ class CustomerRepository:
             vendor_id = self._oid(card["id"])
             category = str(card.get("category") or "restaurant").strip().lower()
 
-            if category == "hotel":
-                has_listing = self.vendor_rooms.count_documents(
-                    {"vendor_id": vendor_id, "available": True},
-                    limit=1,
-                ) > 0
-                route = f"/home/hotels/{card['id']}"
-            elif category == "event":
-                published_event = self.vendor_events.find_one(
-                    {"vendor_id": vendor_id, "status": "published", "active": {"$ne": False}},
-                    sort=[("created_at", DESCENDING)],
-                )
-                has_listing = published_event is not None
-                route = f"/home/events/{published_event['_id']}" if published_event else ""
-            else:
-                has_active_service = self.vendor_services.count_documents(
-                    {"vendor_id": vendor_id, "available": True},
-                    limit=1,
-                ) > 0
-                has_menu = self.vendor_assets.count_documents(
-                    {"vendor_id": vendor_id, "asset_type": "menu"},
-                    limit=1,
-                ) > 0
-                portal_settings = self.vendor_portal_settings.find_one({"vendor_id": vendor_id}) or {}
-                general_settings = portal_settings.get("general")
-                has_booking_slots = bool(
-                    general_settings.get("booking_availability_slots", [])
-                    if isinstance(general_settings, dict)
-                    else []
-                )
-                has_listing = has_active_service or has_menu or has_booking_slots
-                route_prefix = "spa" if category == "spa" else "dining"
-                route = f"/home/{route_prefix}/{card['id']}"
-
-            if not has_listing:
+            # Trending Now is intentionally hotel-only. A hotel is eligible
+            # only while it has at least one available room right now.
+            if category != "hotel":
+                continue
+            has_available_room = self.vendor_rooms.count_documents(
+                {"vendor_id": vendor_id, "available": True},
+                limit=1,
+            ) > 0
+            if not has_available_room:
                 continue
 
             usage_count = self.vendor_bookings.count_documents(
@@ -551,14 +526,11 @@ class CustomerRepository:
                     "status": {"$nin": ["cancelled", "rejected"]},
                 }
             )
-            if usage_count == 0:
-                continue
-
             trending.append(
                 {
                     **card,
                     "entity_type": category,
-                    "detail_route": route,
+                    "detail_route": f"/home/hotels/{card['id']}",
                     "usage_count": usage_count,
                 }
             )
