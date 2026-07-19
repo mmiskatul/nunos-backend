@@ -52,6 +52,15 @@ def get_current_location(current_user: dict = Depends(get_current_user), custome
     return {"location_enabled": bool(profile.get("location_enabled")), "latitude": profile.get("latitude"), "longitude": profile.get("longitude"), "location_label": profile.get("location_label")}
 
 
+@router.get("/trending/hotels", tags=["Customer - Home"])
+def get_trending_hotels(
+    limit: int = Query(default=6, ge=1, le=50),
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    return {"items": customer_service.repo.get_trending_hotels(current_user["id"], limit=limit)}
+
+
 @router.patch("/location/current", tags=["Customer - Home"])
 def update_current_location(payload: GenericPatchRequest, current_user: dict = Depends(get_current_user), customer_service: CustomerService = Depends(get_customer_service)) -> dict:
     return customer_service.repo.update_customer_profile(current_user["id"], payload.data)

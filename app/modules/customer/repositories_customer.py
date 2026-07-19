@@ -504,6 +504,22 @@ class CustomerRepository:
 
     def get_home_feed(self, customer_id: str) -> dict[str, Any]:
         restaurants = self.list_restaurants(customer_id=customer_id, limit=50, skip=0).get("items", [])
+        featured = restaurants[:6]
+        return {
+            "greeting": "Good Morning",
+            "plan_for_me": {"title": "Plan for me", "subtitle": "Tell us your mood, budget & time"},
+            "quick_access": [
+                {"key": "dining", "label": "Dining"},
+                {"key": "events", "label": "Events"},
+                {"key": "spa", "label": "Spa"},
+                {"key": "hotels", "label": "Hotels"},
+            ],
+            "trending_now": self.get_trending_hotels(customer_id),
+            "featured_experiences": featured,
+        }
+
+    def get_trending_hotels(self, customer_id: str, limit: int = 6) -> list[dict[str, Any]]:
+        restaurants = self.list_restaurants(customer_id=customer_id, limit=50, skip=0).get("items", [])
         trending: list[dict[str, Any]] = []
         for card in restaurants:
             vendor_id = self._oid(card["id"])
@@ -543,20 +559,7 @@ class CustomerRepository:
             ),
             reverse=True,
         )
-        trending = trending[:6]
-        featured = restaurants[:6]
-        return {
-            "greeting": "Good Morning",
-            "plan_for_me": {"title": "Plan for me", "subtitle": "Tell us your mood, budget & time"},
-            "quick_access": [
-                {"key": "dining", "label": "Dining"},
-                {"key": "events", "label": "Events"},
-                {"key": "spa", "label": "Spa"},
-                {"key": "hotels", "label": "Hotels"},
-            ],
-            "trending_now": trending,
-            "featured_experiences": featured,
-        }
+        return trending[: max(1, min(limit, 50))]
 
     def list_spas(self, customer_id: str, limit: int, skip: int, search: str | None = None) -> dict[str, Any]:
         result = self.list_restaurants(customer_id, limit=100, skip=0, search=search)
