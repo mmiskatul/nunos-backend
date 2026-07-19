@@ -610,6 +610,15 @@ class CustomerRepository:
     def list_spa_offers(self, spa_id: str) -> list[dict[str, Any]]:
         return self.list_restaurant_offers(spa_id)
 
+    def list_provider_services(self, provider_id: str) -> list[dict[str, Any]]:
+        vendor_id = self._oid(provider_id)
+        if not self.vendors.find_one({"_id": vendor_id, "status": "approved"}, {"_id": 1}):
+            return []
+        docs = self.vendor_services.find(
+            {"vendor_id": vendor_id, "$or": [{"available": True}, {"active_status": True}]}
+        ).sort("created_at", DESCENDING)
+        return [self._serialize(doc) for doc in docs]
+
     def list_categories(self) -> dict[str, Any]:
         counts = {"restaurant": 0, "hotel": 0, "spa": 0, "event": 0}
         for vendor in self.vendors.find({"status": "approved"}, {"_id": 1}):

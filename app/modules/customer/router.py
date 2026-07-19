@@ -234,6 +234,14 @@ def get_spa_offers(spa_id: str, customer_service: CustomerService = Depends(get_
     return {"items": customer_service.repo.list_spa_offers(spa_id)}
 
 
+@router.get("/spas/{spa_id}/services", tags=["Customer - Spa"])
+def get_spa_services(spa_id: str, customer_service: CustomerService = Depends(get_customer_service)) -> dict:
+    try:
+        return {"items": customer_service.repo.list_provider_services(spa_id)}
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Spa not found.") from exc
+
+
 @router.get("/events", tags=["Customer - Events"])
 def list_events(
     limit: int = Query(default=20, ge=1, le=100),
