@@ -11,10 +11,6 @@ class VendorSignupVerificationRepository:
     def __init__(self, db: Database):
         self.code_collection: Collection = db["vendor_signup_codes"]
         self.token_collection: Collection = db["vendor_signup_tokens"]
-        self.code_collection.create_index("email", unique=True)
-        self.code_collection.create_index("expires_at", expireAfterSeconds=0)
-        self.token_collection.create_index("token", unique=True)
-        self.token_collection.create_index("expires_at", expireAfterSeconds=0)
 
     def create_validation_code(self, email: str, code_length: int, expires_in_minutes: int) -> str:
         max_code = 10**code_length

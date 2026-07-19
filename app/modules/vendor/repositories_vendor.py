@@ -16,19 +16,9 @@ class VendorRepository:
         self.bookings_collection: Collection = db["bookings"]
         self.reviews_collection: Collection = db["vendor_reviews"]
 
-        self.collection.create_index("email", unique=True, sparse=True)
-        try:
-            self.collection.drop_index("phone_1")
-        except Exception:
-            pass
-        self.collection.create_index("phone", sparse=True)
-        self.collection.create_index("status")
-
-        self.profile_collection.create_index("vendor_id", unique=True)
-        self.business_collection.create_index("vendor_id", unique=True)
-        self.verification_collection.create_index("vendor_id", unique=True)
-        self.admin_review_collection.create_index("vendor_id", unique=True)
-        self.admin_review_collection.create_index("review_status")
+        # Indexes are installed once by ``scripts/ensure_vendor_indexes.py``.
+        # Repository instances are request scoped, so creating or inspecting
+        # indexes here adds multiple network round trips to every API request.
 
     def _serialize(self, document: dict[str, Any] | None) -> dict[str, Any] | None:
         if not document:

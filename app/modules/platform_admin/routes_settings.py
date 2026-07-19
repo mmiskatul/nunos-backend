@@ -13,7 +13,11 @@ from app.modules.platform_admin.deps import get_platform_admin_db
 from app.modules.vendor.repositories_portal import VendorPortalRepository
 from app.providers.cloudinary_uploader import CloudinaryUploader
 
-router = APIRouter(prefix="/platform-admin/settings", tags=["Platform Admin - Settings (Live)"])
+router = APIRouter(
+    prefix="/platform-admin/settings",
+    tags=["Platform Admin - Settings (Live)"],
+    dependencies=[Depends(get_current_platform_admin)],
+)
 
 SETTINGS_DOC_ID = "platform_admin_settings"
 LEGAL_DOCUMENT_KEYS = {"terms", "privacy"}

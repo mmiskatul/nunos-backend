@@ -111,3 +111,12 @@ Each strategy validates required fields and returns a normalized `details` paylo
 ```bash
 pytest -q
 ```
+# Vendor index migration
+
+Vendor indexes are intentionally not managed inside request-scoped repositories. Run the idempotent migration once during every deployment before serving traffic:
+
+```bash
+python scripts/ensure_vendor_indexes.py
+```
+
+This keeps normal API reads free of index-management round trips while ensuring the dashboard, analytics, booking, review, promotion, and notification query paths are indexed.

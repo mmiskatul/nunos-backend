@@ -31,6 +31,8 @@ class CustomerRepository:
         self.bookings: Collection = db["bookings"]
         self.customer_recent_searches: Collection = db["customer_recent_searches"]
         self.customer_saved_items: Collection = db["customer_saved_items"]
+        self.notifications: Collection = db["notifications"]
+        self.customer_plan_sessions: Collection = db["customer_plan_sessions"]
 
         self.vendor_bookings.create_index([("vendor_id", ASCENDING), ("scheduled_date", ASCENDING), ("scheduled_time", ASCENDING)])
         self.vendor_bookings.create_index([("customer_id", ASCENDING), ("created_at", DESCENDING)])
@@ -38,6 +40,8 @@ class CustomerRepository:
         self.vendor_notification_settings.create_index([("vendor_id", ASCENDING)], unique=True)
         self.customer_recent_searches.create_index([("customer_id", ASCENDING), ("created_at", DESCENDING)])
         self.customer_saved_items.create_index([("customer_id", ASCENDING), ("entity_type", ASCENDING), ("entity_id", ASCENDING)], unique=True)
+        self.notifications.create_index([("user_id", ASCENDING), ("created_at", DESCENDING)])
+        self.customer_plan_sessions.create_index([("customer_id", ASCENDING), ("updated_at", DESCENDING)])
 
     @staticmethod
     def _oid(value: str) -> ObjectId:
@@ -567,6 +571,125 @@ class CustomerRepository:
             "featured_experiences": featured,
         }
 
+    def list_spas(self, customer_id: str, limit: int, skip: int, search: str | None = None) -> dict[str, Any]:
+        result = self.list_restaurants(customer_id, limit=100, skip=0, search=search)
+        items = [item for item in result.get("items", []) if str(item.get("category", "")).lower() == "spa"]
+        for item in items:
+            item["title"] = item.get("name") or "Spa"
+            item["type"] = item.get("category") or "Wellness"
+            item["reviews"] = item.get("reviews_count", 0)
+            item["image"] = item.get("cover_image_url")
+        return {"items": items[skip : skip + limit], "total": len(items)}
+
+    def get_spa_details(self, customer_id: str, spa_id: str) -> dict[str, Any] | None:
+        row = self.get_restaurant_details(customer_id, spa_id)
+        if not row or str(row.get("category", "")).lower() != "spa":
+            return None
+        row["title"] = row.get("name") or "Spa"
+        row["type"] = row.get("category") or "Wellness"
+        return row
+
+    def list_spa_assets(self, spa_id: str, asset_type: str) -> list[dict[str, Any]]:
+        return self.list_restaurant_assets(spa_id, asset_type)
+
+    def list_spa_offers(self, spa_id: str) -> list[dict[str, Any]]:
+        return self.list_restaurant_offers(spa_id)
+
+    def list_categories(self) -> dict[str, Any]:
+        counts = {"restaurant": 0, "hotel": 0, "spa": 0, "event": 0}
+        for vendor in self.vendors.find({"status": "approved"}, {"_id": 1}):
+            category = str(self._get_vendor_bundle(vendor["_id"]).get("category") or "restaurant").lower()
+            counts[category] = counts.get(category, 0) + 1
+        counts["event"] = int(self.vendor_events.count_documents({"status": "published", "active": {"$ne": False}}))
+        return {"items": [{"key": key, "label": key.title(), "count": value} for key, value in counts.items()]}
+
+    def get_customer_profile(self, customer_id: str) -> dict[str, Any]:
+        profile = self._serialize(self.users.find_one({"_id": self._oid(customer_id)})) or {}
+        for sensitive_key in ("password_hash", "hashed_password", "refresh_token"):
+            profile.pop(sensitive_key, None)
+        return profile
+
+    def update_customer_profile(self, customer_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        allowed = {key: value for key, value in data.items() if key in {"full_name", "email", "phone", "date_of_birth", "location_enabled", "latitude", "longitude"}}
+        allowed["updated_at"] = datetime.now(UTC)
+        self.users.update_one({"_id": self._oid(customer_id)}, {"$set": allowed})
+        return self.get_customer_profile(customer_id)
+
+    def get_customer_notifications(self, customer_id: str, limit: int = 50, skip: int = 0) -> dict[str, Any]:
+        query = {"user_id": self._oid(customer_id)}
+        total = int(self.notifications.count_documents(query))
+        docs = self.notifications.find(query).sort("created_at", DESCENDING).skip(skip).limit(limit)
+        return {"items": [self._serialize(doc) for doc in docs], "total": total, "unread_count": int(self.notifications.count_documents({**query, "read": {"$ne": True}}))}
+
+    def update_customer_notification_preferences(self, customer_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        self.users.update_one({"_id": self._oid(customer_id)}, {"$set": {"notification_preferences": data, "updated_at": datetime.now(UTC)}})
+        return self.get_customer_profile(customer_id)
+
+    def get_customer_points_summary(self, customer_id: str) -> dict[str, Any]:
+        profile = self.get_customer_profile(customer_id)
+        points = int(profile.get("points_balance") or 0)
+        tier = "gold" if points >= 500 else "silver" if points >= 200 else "bronze"
+        return {"points_balance": points, "tier": tier}
+
+    def list_saved_items(self, customer_id: str) -> dict[str, Any]:
+        docs = self.customer_saved_items.find({"customer_id": self._oid(customer_id)}).sort("created_at", DESCENDING)
+        items: list[dict[str, Any]] = []
+        for saved in docs:
+            entity_type = str(saved.get("entity_type") or "").lower()
+            entity_id = str(saved.get("entity_id") or "")
+            detail = None
+            if entity_type in {"restaurant", "spa", "dining"}:
+                detail = self.get_restaurant_details(customer_id, entity_id)
+            elif entity_type == "hotel":
+                detail = self.get_hotel_details(customer_id, entity_id)
+            elif entity_type == "event":
+                detail = self.get_event_details(customer_id, entity_id)
+            if detail:
+                items.append({"entity_type": entity_type, "entity_id": entity_id, **detail})
+        return {"items": items, "total": len(items)}
+
+    def add_saved_item(self, customer_id: str, entity_type: str, entity_id: str) -> dict[str, Any]:
+        now = datetime.now(UTC)
+        self.customer_saved_items.update_one(
+            {"customer_id": self._oid(customer_id), "entity_type": entity_type.lower(), "entity_id": entity_id},
+            {"$set": {"updated_at": now}, "$setOnInsert": {"created_at": now}},
+            upsert=True,
+        )
+        return {"entity_type": entity_type.lower(), "entity_id": entity_id, "saved": True}
+
+    def remove_saved_item(self, customer_id: str, entity_type: str, entity_id: str) -> dict[str, Any]:
+        self.customer_saved_items.delete_one({"customer_id": self._oid(customer_id), "entity_type": entity_type.lower(), "entity_id": entity_id})
+        return {"entity_type": entity_type.lower(), "entity_id": entity_id, "saved": False}
+
+    def list_recent_searches(self, customer_id: str, limit: int = 20) -> dict[str, Any]:
+        docs = self.customer_recent_searches.find({"customer_id": self._oid(customer_id)}).sort("created_at", DESCENDING).limit(limit)
+        return {"items": [self._serialize(doc) for doc in docs]}
+
+    def add_recent_search(self, customer_id: str, query: str) -> None:
+        if query.strip():
+            self.customer_recent_searches.insert_one({"customer_id": self._oid(customer_id), "query": query.strip(), "created_at": datetime.now(UTC)})
+
+    def clear_recent_searches(self, customer_id: str) -> dict[str, Any]:
+        result = self.customer_recent_searches.delete_many({"customer_id": self._oid(customer_id)})
+        return {"deleted": int(result.deleted_count)}
+
+    def global_search(self, customer_id: str, query: str, limit: int = 20) -> dict[str, Any]:
+        self.add_recent_search(customer_id, query)
+        search = query.strip()
+        restaurants = self.list_restaurants(customer_id, limit=limit, skip=0, search=search).get("items", [])
+        events = self.list_events(customer_id, limit=limit, skip=0, search=search).get("items", [])
+        hotels = self.list_hotels(customer_id, limit=limit, skip=0, search=search).get("items", [])
+        return {"items": [{**row, "entity_type": "restaurant"} for row in restaurants] + [{**row, "entity_type": "event"} for row in events] + [{**row, "entity_type": "hotel"} for row in hotels]}
+
+    def create_plan_session(self, customer_id: str) -> dict[str, Any]:
+        now = datetime.now(UTC)
+        result = self.customer_plan_sessions.insert_one({"customer_id": self._oid(customer_id), "values": {}, "created_at": now, "updated_at": now})
+        return self._serialize(self.customer_plan_sessions.find_one({"_id": result.inserted_id})) or {}
+
+    def update_plan_session(self, customer_id: str, session_id: str, key: str, value: Any) -> dict[str, Any] | None:
+        self.customer_plan_sessions.update_one({"_id": self._oid(session_id), "customer_id": self._oid(customer_id)}, {"$set": {f"values.{key}": value, "updated_at": datetime.now(UTC)}})
+        return self._serialize(self.customer_plan_sessions.find_one({"_id": self._oid(session_id), "customer_id": self._oid(customer_id)}))
+
     def get_restaurant_details(self, customer_id: str, restaurant_id: str) -> dict[str, Any] | None:
         vendor = self.vendors.find_one({"_id": self._oid(restaurant_id), "status": "approved"})
         if not vendor:
@@ -631,6 +754,25 @@ class CustomerRepository:
             {"vendor_id": self._oid(restaurant_id), "active": True}
         ).sort("created_at", DESCENDING)
         return [self._serialize(doc) for doc in docs]
+
+    def get_provider_reviews_payload(self, provider_id: str) -> dict[str, Any]:
+        docs = list(self.vendor_reviews.find({"vendor_id": self._oid(provider_id)}).sort("created_at", DESCENDING))
+        total = len(docs)
+        ratings = [float(doc.get("rating", 0)) for doc in docs]
+        average = round(sum(ratings) / total, 1) if total else 0
+        breakdown = {str(star): sum(1 for rating in ratings if int(rating) == star) for star in range(1, 6)}
+        items = []
+        for doc in docs:
+            created_at = doc.get("created_at")
+            items.append({
+                "id": str(doc["_id"]),
+                "user": doc.get("customer_name") or "Anonymous",
+                "date": created_at.isoformat() if isinstance(created_at, datetime) else str(created_at or ""),
+                "rating": int(doc.get("rating", 0)),
+                "comment": doc.get("review_text") or doc.get("comment") or "",
+                "avatar": doc.get("customer_avatar") or "",
+            })
+        return {"average_rating": average, "total_reviews": total, "breakdown": breakdown, "items": items}
 
     def list_events(
         self,

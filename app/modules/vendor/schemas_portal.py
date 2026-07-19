@@ -1,4 +1,5 @@
 from datetime import date, datetime, time
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -19,6 +20,14 @@ class AssetUploadRequest(BaseModel):
     asset_type: str | None = Field(default=None, pattern="^(menu|gallery)$")
     file_name: str | None = None
     mime_type: str | None = None
+
+    @field_validator("asset_url")
+    @classmethod
+    def validate_asset_url(cls, value: str) -> str:
+        parsed = urlsplit(value.strip())
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("asset_url must be an absolute HTTP or HTTPS URL.")
+        return value.strip()
 
 
 class RoomUpsertRequest(BaseModel):
@@ -176,6 +185,28 @@ class PromotionUpsertRequest(BaseModel):
     active: bool = True
 
 
+class PromotionUpdateRequest(BaseModel):
+    promotion_name: str | None = None
+    internal_description: str | None = None
+    offer_type: str | None = Field(default=None, pattern="^(percentage|fixed_amount|happy_hour|custom_deal)$")
+    discount_value: float | None = Field(default=None, ge=0)
+    applicable_to: str | None = None
+    start_date: str | None = None
+    end_date: str | None = None
+    recurring_days: list[str] | None = None
+    require_promo_code: bool | None = None
+    promo_code: str | None = None
+    first_time_customers_only: bool | None = None
+    minimum_spend: float | None = Field(default=None, ge=0)
+    active: bool | None = None
+
+    @model_validator(mode="after")
+    def require_at_least_one_change(self) -> "PromotionUpdateRequest":
+        if not self.model_fields_set:
+            raise ValueError("At least one promotion field must be provided.")
+        return self
+
+
 class PromotionStatusRequest(BaseModel):
     active: bool
 
@@ -235,10 +266,6 @@ class VendorSettingsProfileRequest(BaseModel):
             if label and label not in normalized:
                 normalized.append(label)
         return normalized or None
-
-
-class VendorSettingsCommissionRequest(BaseModel):
-    commission_percent: float = Field(ge=0, le=100)
 
 
 class VendorLegalDocRequest(BaseModel):

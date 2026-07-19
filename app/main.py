@@ -1,5 +1,7 @@
 import logging
+import time
 import traceback
+from uuid import uuid4
 from contextlib import asynccontextmanager
 
 from bson.errors import InvalidId
@@ -47,6 +49,25 @@ def create_app(*, settings: Settings | None = None, disable_startup_db: bool = F
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def request_observability(request: Request, call_next):
+        request_id = request.headers.get("x-request-id", "")[:100] or str(uuid4())
+        started = time.perf_counter()
+        response = await call_next(request)
+        duration_ms = (time.perf_counter() - started) * 1000
+        response.headers["X-Request-ID"] = request_id
+        response.headers["Server-Timing"] = f'app;dur={duration_ms:.1f};desc="FastAPI"'
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        logger.info(
+            "request_complete method=%s path=%s status=%s duration_ms=%.1f request_id=%s",
+            request.method,
+            request.url.path,
+            response.status_code,
+            duration_ms,
+            request_id,
+        )
+        return response
 
     app.include_router(api_router, prefix=app_settings.api_v1_prefix)
 

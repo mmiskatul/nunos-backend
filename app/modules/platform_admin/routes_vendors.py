@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.modules.platform_admin.deps import get_vendor_repository
+from app.modules.platform_admin.deps_auth import get_current_platform_admin
 from app.modules.platform_admin.schemas import (
     AdminVendorListResponse,
     VendorStatusUpdateRequest,
@@ -8,7 +9,11 @@ from app.modules.platform_admin.schemas import (
 )
 from app.modules.vendor.repositories_vendor import VendorRepository
 
-router = APIRouter(prefix="/platform-admin/vendors", tags=["Platform Admin - Vendors (Live)"])
+router = APIRouter(
+    prefix="/platform-admin/vendors",
+    tags=["Platform Admin - Vendors (Live)"],
+    dependencies=[Depends(get_current_platform_admin)],
+)
 
 
 @router.get("", response_model=AdminVendorListResponse)

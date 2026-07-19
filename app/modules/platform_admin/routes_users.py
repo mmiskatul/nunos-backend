@@ -7,11 +7,18 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pymongo.database import Database
 
 from app.core.serializers import to_jsonable
+from app.api.deps import get_auth_service
+from app.models.user import ForgotPasswordRequest
 from app.modules.platform_admin.deps import get_platform_admin_db, get_user_repository
+from app.modules.platform_admin.deps_auth import get_current_platform_admin
 from app.modules.platform_admin.schemas import AdminUserListResponse, UserStatusUpdateRequest
 from app.repositories.user_repository import UserRepository
 
-router = APIRouter(prefix="/platform-admin/users", tags=["Platform Admin - Users (Live)"])
+router = APIRouter(
+    prefix="/platform-admin/users",
+    tags=["Platform Admin - Users (Live)"],
+    dependencies=[Depends(get_current_platform_admin)],
+)
 
 
 def _normalize_user_status(user: dict) -> str:
@@ -222,6 +229,29 @@ async def list_users(
         for user in users
     ]
     return AdminUserListResponse(users=to_jsonable(serialized), total=total)
+
+
+@router.post("/{user_id}/password-reset-request", response_model=dict)
+async def request_user_password_reset(
+    user_id: str,
+    user_repo: UserRepository = Depends(get_user_repository),
+    auth_service=Depends(get_auth_service),
+) -> dict:
+    try:
+        user = await user_repo.get_by_id(user_id)
+    except (InvalidId, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.") from exc
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+
+    email = str(user.get("email") or "").strip().lower()
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This user does not have an email address for password recovery.",
+        )
+    await auth_service.forgot_password(ForgotPasswordRequest(email=email))
+    return {"message": "Password reset instructions sent."}
 
 
 @router.get("/{user_id}", response_model=dict)

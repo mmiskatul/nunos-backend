@@ -6,8 +6,13 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from pymongo.database import Database
 
 from app.modules.platform_admin.deps import get_platform_admin_db
+from app.modules.platform_admin.deps_auth import get_current_platform_admin
 
-router = APIRouter(prefix="/platform-admin/offers", tags=["Platform Admin - Offers (Live)"])
+router = APIRouter(
+    prefix="/platform-admin/offers",
+    tags=["Platform Admin - Offers (Live)"],
+    dependencies=[Depends(get_current_platform_admin)],
+)
 
 
 def _serialize_offer(document: dict | None) -> dict | None:

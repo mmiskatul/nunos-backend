@@ -1,3 +1,5 @@
+import logging
+
 from bson.errors import InvalidId
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
@@ -20,6 +22,7 @@ from app.modules.vendor.schemas_portal import (
     NotificationSettingsRequest,
     PlatformCampaignJoinRequest,
     PromotionStatusRequest,
+    PromotionUpdateRequest,
     PromotionUpsertRequest,
     ReviewReplyRequest,
     RoomAvailabilityRequest,
@@ -29,7 +32,6 @@ from app.modules.vendor.schemas_portal import (
     VendorEventUpsertRequest,
     VendorLegalDocRequest,
     VendorPasswordChangeRequest,
-    VendorSettingsCommissionRequest,
     VendorSettingsGeneralRequest,
     VendorSettingsProfileRequest,
     VendorSupportTicketCreateRequest,
@@ -39,6 +41,7 @@ from app.modules.vendor.service_auth import VendorAuthService
 from app.modules.vendor.service_portal import VendorPortalService
 
 router = APIRouter(prefix="/vendor")
+logger = logging.getLogger("nunos.vendor")
 
 
 class MessageResponse(BaseModel):
@@ -66,9 +69,10 @@ def _safe_call(func, *args, detail: str = "Operation failed", **kwargs):
             detail=str(exc),
         ) from exc
     except Exception as exc:
+        logger.exception("%s", detail)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"{detail}: {exc}",
+            detail=detail,
         ) from exc
 
 
@@ -82,7 +86,11 @@ def get_public_vendor_legal_doc(
     doc_type: str,
     portal_service: VendorPortalService = Depends(get_vendor_portal_service),
 ) -> dict:
-    return portal_service.repo.get_legal_doc("public", doc_type)
+    return _safe_call(
+        portal_service.repo.get_public_legal_doc,
+        doc_type,
+        detail="Failed to load legal document",
+    )
 
 
 @router.get("/dashboard/overview", tags=["Vendor - Dashboard"])
@@ -107,12 +115,13 @@ def get_vendor_booking_trends(
 
 @router.get("/dashboard/calendar-preview", tags=["Vendor - Dashboard"])
 def get_vendor_calendar_preview(
+    month: str | None = Query(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$"),
     current_vendor: dict = Depends(get_current_vendor),
     portal_service: VendorPortalService = Depends(get_vendor_portal_service),
 ) -> dict:
     vendor_id = _vendor_id(current_vendor)
     portal_service.initialize(vendor_id)
-    return _safe_call(portal_service.repo.get_calendar_preview, vendor_id, detail="Failed to load calendar")
+    return _safe_call(portal_service.repo.get_calendar_preview, vendor_id, month, detail="Failed to load calendar")
 
 
 @router.get("/dashboard/upcoming-bookings", tags=["Vendor - Dashboard"])
@@ -277,6 +286,24 @@ def list_menu_assets(
     vendor_id = _vendor_id(current_vendor)
     portal_service.initialize(vendor_id)
     return {"items": portal_service.repo.list_assets(vendor_id, asset_type=asset_type)}
+
+
+@router.post("/menu-services/assets", tags=["Vendor - Menu/Services"])
+def register_vendor_asset(
+    payload: AssetUploadRequest,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    """Register an already-uploaded Cloudinary URL as a menu/gallery asset."""
+    if payload.asset_type not in {"menu", "gallery"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="asset_type must be either 'menu' or 'gallery'.",
+        )
+    return portal_service.repo.add_asset(
+        _vendor_id(current_vendor),
+        payload.model_dump(),
+    )
 
 
 @router.get("/menu-services/overview", tags=["Vendor - Menu/Services"])
@@ -660,12 +687,16 @@ def get_vendor_promotion(
 @router.patch("/promotions/{promotion_id}", tags=["Vendor - Promotions"])
 def update_vendor_promotion(
     promotion_id: str,
-    payload: PromotionUpsertRequest,
+    payload: PromotionUpdateRequest,
     current_vendor: dict = Depends(get_current_vendor),
     portal_service: VendorPortalService = Depends(get_vendor_portal_service),
 ) -> dict:
     try:
-        row = portal_service.repo.update_promotion(_vendor_id(current_vendor), promotion_id, payload.model_dump())
+        row = portal_service.repo.update_promotion(
+            _vendor_id(current_vendor),
+            promotion_id,
+            payload.model_dump(exclude_unset=True),
+        )
     except InvalidId as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Promotion not found.") from exc
     if not row:
@@ -730,12 +761,20 @@ def join_platform_campaign(
 
 @router.get("/analytics/overview", tags=["Vendor - Analytics"])
 def get_vendor_analytics_overview(
+    date_from: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    date_to: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     current_vendor: dict = Depends(get_current_vendor),
     portal_service: VendorPortalService = Depends(get_vendor_portal_service),
 ) -> dict:
     vendor_id = _vendor_id(current_vendor)
     portal_service.initialize(vendor_id)
-    return portal_service.repo.get_analytics_overview(vendor_id)
+    return _safe_call(
+        portal_service.repo.get_analytics_overview,
+        vendor_id,
+        date_from,
+        date_to,
+        detail="Failed to load analytics",
+    )
 
 
 @router.get("/analytics/demographics", tags=["Vendor - Analytics"])
@@ -770,10 +809,18 @@ def get_vendor_analytics_reviews_summary(
 
 @router.get("/analytics/export", tags=["Vendor - Analytics"])
 def export_vendor_analytics(
+    date_from: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    date_to: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
     current_vendor: dict = Depends(get_current_vendor),
     portal_service: VendorPortalService = Depends(get_vendor_portal_service),
 ) -> dict:
-    return portal_service.repo.export_analytics(_vendor_id(current_vendor))
+    return _safe_call(
+        portal_service.repo.export_analytics,
+        _vendor_id(current_vendor),
+        date_from,
+        date_to,
+        detail="Failed to export analytics",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -870,15 +917,6 @@ def update_vendor_settings_general(
     portal_service: VendorPortalService = Depends(get_vendor_portal_service),
 ) -> dict:
     return portal_service.repo.update_settings_general(_vendor_id(current_vendor), payload.model_dump())
-
-
-@router.patch("/settings/commission", tags=["Vendor - Settings"])
-def update_vendor_settings_commission(
-    payload: VendorSettingsCommissionRequest,
-    current_vendor: dict = Depends(get_current_vendor),
-    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
-) -> dict:
-    return portal_service.repo.update_settings_commission(_vendor_id(current_vendor), payload.model_dump())
 
 
 @router.get("/settings/commission", tags=["Vendor - Settings"])

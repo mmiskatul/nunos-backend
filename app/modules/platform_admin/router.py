@@ -8,8 +8,12 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.deps import get_db
 from app.modules.schemas import GenericPatchRequest, MessageCreateRequest, PlannedEndpointResponse, StatusUpdateRequest
+from app.modules.platform_admin.deps_auth import get_current_platform_admin
 
-router = APIRouter(prefix="/platform-admin")
+router = APIRouter(
+    prefix="/platform-admin",
+    dependencies=[Depends(get_current_platform_admin)],
+)
 
 _CACHE = {}
 

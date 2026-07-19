@@ -1,4 +1,7 @@
+import csv
+import html
 from datetime import UTC, datetime, timedelta
+from io import StringIO
 from typing import Any
 
 from bson import ObjectId
@@ -23,24 +26,8 @@ class VendorPortalRepository:
         self.notifications: Collection = db["vendor_notifications"]
         self.notification_settings: Collection = db["vendor_notification_settings"]
 
-        self.bookings.create_index([("vendor_id", 1), ("scheduled_date", 1), ("status", 1)])
-        self.bookings.create_index([("vendor_id", 1), ("customer_email", 1)])
-        self.bookings.create_index([("vendor_id", 1), ("customer_phone", 1)])
-        self.assets.create_index([("vendor_id", 1), ("asset_type", 1), ("created_at", -1)])
-        self.rooms.create_index([("vendor_id", 1), ("created_at", -1)])
-        self.services.create_index([("vendor_id", 1), ("created_at", -1)])
-        self.events.create_index([("vendor_id", 1), ("event_date", 1), ("start_time", 1)])
-        self.events.create_index([("vendor_id", 1), ("status", 1), ("created_at", -1)])
-        self.events.create_index([("vendor_id", 1), ("category", 1), ("created_at", -1)])
-        self.promotions.create_index([("vendor_id", 1), ("created_at", -1)])
-        self.promotions.create_index([("vendor_id", 1), ("active", 1)])
-        self.platform_campaigns.create_index([("active", 1), ("created_at", -1)])
-        self.reviews.create_index([("vendor_id", 1), ("created_at", -1)])
-        self.reviews.create_index([("vendor_id", 1), ("rating", -1)])
-        self.support_tickets.create_index([("vendor_id", 1), ("created_at", -1)])
-        self.notifications.create_index([("vendor_id", 1), ("created_at", -1)])
-        self.settings.create_index("vendor_id", unique=True)
-        self.notification_settings.create_index("vendor_id", unique=True)
+        # Indexes are installed out of band by the deployment migration. This
+        # constructor runs per request and must remain free of database writes.
 
     @staticmethod
     def _sanitize_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -257,6 +244,7 @@ class VendorPortalRepository:
                 query["status"] = "complete"
             elif status_norm == "upcoming":
                 query["status"] = {"$in": ["confirmed", "pending", "check_in"]}
+                query["scheduled_date"] = {"$gte": datetime.now(UTC).date().isoformat()}
             else:
                 query["status"] = status_norm
         if date_from or date_to:
@@ -310,7 +298,7 @@ class VendorPortalRepository:
             return None
         subtotal = float(booking.get("total_amount", 0))
         taxes = round(subtotal * 0.05, 2)
-        return {
+        receipt = {
             "booking_id": booking.get("id"),
             "booking_code": booking.get("booking_code"),
             "customer_name": booking.get("customer_name"),
@@ -320,40 +308,72 @@ class VendorPortalRepository:
             "total": round(subtotal + taxes, 2),
             "generated_at": datetime.now(UTC).isoformat(),
         }
+        raw_code = str(receipt.get("booking_code") or receipt["booking_id"] or "booking")
+        safe_code = "".join(char for char in raw_code if char.isalnum() or char in {"-", "_"})[:80] or "booking"
+        customer_label = html.escape(str(receipt.get("customer_name") or ""))
+        service_label = html.escape(str(receipt.get("service") or ""))
+        booking_label = html.escape(raw_code)
+        receipt["filename"] = f"receipt-{safe_code}.html"
+        receipt["content_type"] = "text/html;charset=utf-8"
+        receipt["content"] = (
+            "<!doctype html><html><head><meta charset='utf-8'><title>Booking receipt</title>"
+            "<style>body{font-family:Arial,sans-serif;max-width:640px;margin:40px auto;color:#1e293b}"
+            "h1{margin-bottom:24px}.row{display:flex;justify-content:space-between;padding:10px 0;"
+            "border-bottom:1px solid #e2e8f0}.total{font-size:20px;font-weight:700}</style></head><body>"
+            f"<h1>Booking Receipt</h1><div class='row'><span>Booking</span><span>{booking_label}</span></div>"
+            f"<div class='row'><span>Customer</span><span>{customer_label}</span></div>"
+            f"<div class='row'><span>Service</span><span>{service_label}</span></div>"
+            f"<div class='row'><span>Subtotal</span><span>${receipt['subtotal']:.2f}</span></div>"
+            f"<div class='row'><span>Taxes</span><span>${receipt['taxes']:.2f}</span></div>"
+            f"<div class='row total'><span>Total</span><span>${receipt['total']:.2f}</span></div>"
+            "</body></html>"
+        )
+        return receipt
 
     def get_dashboard_overview(self, vendor_id: str) -> dict[str, Any]:
-        today = datetime.now(UTC).date().isoformat()
-        month_key = datetime.now(UTC).strftime("%Y-%m")
-        bookings = list(self.bookings.find({"vendor_id": ObjectId(vendor_id)}))
-        reviews = list(self.reviews.find({"vendor_id": ObjectId(vendor_id)}))
+        now = datetime.now(UTC)
+        today = now.date().isoformat()
+        month_start = now.strftime("%Y-%m-01")
+        month_end = (now.replace(day=28) + timedelta(days=4)).replace(day=1).date().isoformat()
+        month_query = {
+            "vendor_id": ObjectId(vendor_id),
+            "scheduled_date": {"$gte": month_start, "$lt": month_end},
+        }
+        monthly_revenue = 0.0
+        todays_bookings = 0
+        for booking in self.bookings.find(month_query, {"scheduled_date": 1, "total_amount": 1}):
+            monthly_revenue += self._to_float(booking.get("total_amount"))
+            if booking.get("scheduled_date") == today:
+                todays_bookings += 1
+        total_bookings_month = int(self.bookings.count_documents(month_query))
+        review_summary = self.get_reviews_summary(vendor_id)
         kpis = {
-            "total_bookings_month": sum(1 for b in bookings if str(b.get("scheduled_date", "")).startswith(month_key)),
-            "todays_bookings": sum(1 for b in bookings if b.get("scheduled_date") == today),
-            "monthly_revenue": round(
-                sum(float(b.get("total_amount", 0)) for b in bookings if str(b.get("scheduled_date", "")).startswith(month_key)),
-                2,
-            ),
+            "total_bookings": total_bookings_month,
+            "total_bookings_month": total_bookings_month,
+            "todays_bookings": todays_bookings,
+            "monthly_revenue": round(monthly_revenue, 2),
             "occupancy_rate": self.get_occupancy_metrics(vendor_id).get("occupancy_rate", 0),
-            "average_rating": round(
-                (sum(float(r.get("rating", 0)) for r in reviews) / len(reviews)) if reviews else 0.0,
-                1,
-            ),
+            "average_rating": review_summary["average_rating"],
         }
         return {
             "kpis": kpis,
             "booking_trends": self.get_booking_trends(vendor_id),
             "calendar_preview": self.get_calendar_preview(vendor_id),
-            "upcoming_bookings": self.list_bookings(vendor_id, limit=10, skip=0, status="confirmed").get("items", []),
+            "upcoming_bookings": self.list_bookings(vendor_id, limit=10, skip=0, status="upcoming").get("items", []),
             "recent_reviews": self.list_reviews(vendor_id, limit=5, skip=0).get("items", []),
         }
 
     def get_booking_trends(self, vendor_id: str) -> list[dict[str, Any]]:
+        now = datetime.now(UTC)
+        earliest = (now.replace(day=1) - timedelta(days=32 * 11)).replace(day=1).strftime("%Y-%m-01")
         buckets: dict[str, int] = {}
-        for b in self.bookings.find({"vendor_id": ObjectId(vendor_id)}, {"scheduled_date": 1}):
+        for b in self.bookings.find(
+            {"vendor_id": ObjectId(vendor_id), "scheduled_date": {"$gte": earliest}},
+            {"scheduled_date": 1},
+        ):
             month = str(b.get("scheduled_date", ""))[:7]
             if month:
                 buckets[month] = buckets.get(month, 0) + 1
-        now = datetime.now(UTC)
         points: list[dict[str, Any]] = []
         for i in range(11, -1, -1):
             dt = (now.replace(day=1) - timedelta(days=32 * i)).replace(day=1)
@@ -361,8 +381,8 @@ class VendorPortalRepository:
             points.append({"month": dt.strftime("%b"), "bookings": buckets.get(key, 0)})
         return points
 
-    def get_calendar_preview(self, vendor_id: str) -> dict[str, Any]:
-        month_key = datetime.now(UTC).strftime("%Y-%m")
+    def get_calendar_preview(self, vendor_id: str, month: str | None = None) -> dict[str, Any]:
+        month_key = month or datetime.now(UTC).strftime("%Y-%m")
         counts: dict[int, int] = {}
         for b in self.bookings.find(
             {"vendor_id": ObjectId(vendor_id), "scheduled_date": {"$regex": f"^{month_key}"}},
@@ -647,13 +667,21 @@ class VendorPortalRepository:
             )
         return {"campaign_id": campaign_id, "joined": join}
 
-    def get_occupancy_metrics(self, vendor_id: str) -> dict[str, Any]:
+    def get_occupancy_metrics(self, vendor_id: str, on_date: str | None = None) -> dict[str, Any]:
+        target_date = on_date or datetime.now(UTC).date().isoformat()
         total_rooms = sum(
-            int(row.get("inventory_count", 0))
-            for row in self.rooms.find({"vendor_id": ObjectId(vendor_id)}, {"inventory_count": 1})
+            self._to_int(row.get("inventory_count") or row.get("total_inventory") or row.get("room_count"))
+            for row in self.rooms.find(
+                {"vendor_id": ObjectId(vendor_id)},
+                {"inventory_count": 1, "total_inventory": 1, "room_count": 1},
+            )
         )
         active_bookings = self.bookings.count_documents(
-            {"vendor_id": ObjectId(vendor_id), "status": {"$in": ["confirmed", "check_in"]}}
+            {
+                "vendor_id": ObjectId(vendor_id),
+                "scheduled_date": target_date,
+                "status": {"$in": ["confirmed", "check_in"]},
+            }
         )
         occupancy_rate = round((active_bookings / total_rooms) * 100, 1) if total_rooms else 0
         return {
@@ -661,10 +689,24 @@ class VendorPortalRepository:
             "rooms_available": max(total_rooms - active_bookings, 0),
             "rooms_total": total_rooms,
             "active_bookings": active_bookings,
+            "date": target_date,
         }
 
-    def get_reviews_summary(self, vendor_id: str) -> dict[str, Any]:
-        rows = list(self.reviews.find({"vendor_id": ObjectId(vendor_id)}, {"rating": 1}))
+    def get_reviews_summary(
+        self,
+        vendor_id: str,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> dict[str, Any]:
+        query: dict[str, Any] = {"vendor_id": ObjectId(vendor_id)}
+        if date_from or date_to:
+            created_range: dict[str, Any] = {}
+            if date_from:
+                created_range["$gte"] = datetime.fromisoformat(date_from).replace(tzinfo=UTC)
+            if date_to:
+                created_range["$lt"] = datetime.fromisoformat(date_to).replace(tzinfo=UTC) + timedelta(days=1)
+            query["created_at"] = created_range
+        rows = list(self.reviews.find(query, {"rating": 1}))
         total = len(rows)
         average = round(sum(float(r.get("rating", 0)) for r in rows) / total, 1) if total else 0.0
         breakdown = {str(star): 0 for star in [5, 4, 3, 2, 1]}
@@ -674,27 +716,105 @@ class VendorPortalRepository:
                 breakdown[star] += 1
         return {"average_rating": average, "total_reviews": total, "breakdown": breakdown}
 
-    def get_analytics_overview(self, vendor_id: str) -> dict[str, Any]:
-        dashboard = self.get_dashboard_overview(vendor_id)
+    def get_analytics_overview(
+        self,
+        vendor_id: str,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> dict[str, Any]:
+        now = datetime.now(UTC)
+        start = date_from or now.strftime("%Y-%m-01")
+        end = date_to or now.date().isoformat()
+        if start > end:
+            raise ValueError("date_from must be on or before date_to.")
+        query = {
+            "vendor_id": ObjectId(vendor_id),
+            "scheduled_date": {"$gte": start, "$lte": end},
+        }
+        total_bookings = int(self.bookings.count_documents(query))
+        revenue = sum(
+            self._to_float(row.get("total_amount"))
+            for row in self.bookings.find(query, {"total_amount": 1})
+        )
+        review_summary = self.get_reviews_summary(vendor_id, start, end)
         return {
-            **dashboard["kpis"],
-            "demographics": self.get_demographics(vendor_id),
-            "occupancy_tracking": self.get_occupancy_metrics(vendor_id),
-            "reviews_summary": self.get_reviews_summary(vendor_id),
+            "date_from": start,
+            "date_to": end,
+            "total_bookings": total_bookings,
+            "total_bookings_month": total_bookings,
+            "todays_bookings": int(
+                self.bookings.count_documents({"vendor_id": ObjectId(vendor_id), "scheduled_date": end})
+            ),
+            "monthly_revenue": round(revenue, 2),
+            "occupancy_rate": self.get_occupancy_metrics(vendor_id, end)["occupancy_rate"],
+            "average_rating": review_summary["average_rating"],
+            "demographics": self.get_demographics(vendor_id, start, end),
+            "occupancy_tracking": self.get_occupancy_metrics(vendor_id, end),
+            "reviews_summary": review_summary,
         }
 
-    def get_demographics(self, vendor_id: str) -> dict[str, Any]:
-        _ = vendor_id
+    def get_demographics(
+        self,
+        vendor_id: str,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> dict[str, Any]:
+        query: dict[str, Any] = {"vendor_id": ObjectId(vendor_id)}
+        if date_from or date_to:
+            query["scheduled_date"] = {
+                **({"$gte": date_from} if date_from else {}),
+                **({"$lte": date_to} if date_to else {}),
+            }
+        gender_counts = {"female": 0, "male": 0, "other": 0}
+        age_counts = {"18-25": 0, "26-40": 0, "41-60": 0, "60+": 0}
+        known_gender = 0
+        known_age = 0
+        for booking in self.bookings.find(query, {"customer_gender": 1, "customer_age": 1}):
+            gender = str(booking.get("customer_gender") or "").strip().lower()
+            if gender:
+                gender_counts[gender if gender in {"female", "male"} else "other"] += 1
+                known_gender += 1
+            age = self._to_int(booking.get("customer_age"), -1)
+            if age >= 18:
+                bucket = "18-25" if age <= 25 else "26-40" if age <= 40 else "41-60" if age <= 60 else "60+"
+                age_counts[bucket] += 1
+                known_age += 1
+
+        def percentages(values: dict[str, int], total: int) -> dict[str, int]:
+            return {key: round(value * 100 / total) if total else 0 for key, value in values.items()}
+
         return {
-            "gender_distribution": {"female": 62, "male": 38},
-            "age_groups": {"18-25": 15, "26-40": 48, "41-60": 24, "60+": 13},
+            "available": bool(known_gender or known_age),
+            "gender_distribution": percentages(gender_counts, known_gender),
+            "age_groups": percentages(age_counts, known_age),
+            "sample_size": max(known_gender, known_age),
         }
 
-    def export_analytics(self, vendor_id: str) -> dict[str, Any]:
-        _ = vendor_id
+    def export_analytics(
+        self,
+        vendor_id: str,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> dict[str, Any]:
+        analytics = self.get_analytics_overview(vendor_id, date_from, date_to)
+        output = StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["Metric", "Value"])
+        writer.writerows(
+            [
+                ["Date from", analytics["date_from"]],
+                ["Date to", analytics["date_to"]],
+                ["Total bookings", analytics["total_bookings"]],
+                ["Revenue", analytics["monthly_revenue"]],
+                ["Occupancy rate", analytics["occupancy_rate"]],
+                ["Average rating", analytics["average_rating"]],
+            ]
+        )
         return {
             "message": "Analytics export prepared.",
-            "download_url": "https://files.example.com/exports/vendor-analytics-report.csv",
+            "filename": f"vendor-analytics-{analytics['date_from']}-{analytics['date_to']}.csv",
+            "content_type": "text/csv;charset=utf-8",
+            "content": output.getvalue(),
         }
 
     def get_loyalty_settings(self, vendor_id: str) -> dict[str, Any]:
@@ -804,22 +924,35 @@ class VendorPortalRepository:
         )
         return self.get_settings_general(vendor_id)
 
-    def update_settings_commission(self, vendor_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-        sanitized = self._sanitize_payload(payload)
-        self.settings.update_one(
-            {"vendor_id": ObjectId(vendor_id)},
-            {"$set": {"commission": sanitized, "updated_at": datetime.now(UTC)}},
-            upsert=True,
-        )
-        return self.get_settings_commission(vendor_id)
-
     def get_settings_commission(self, vendor_id: str) -> dict[str, Any]:
-        settings_doc = self.get_settings(vendor_id)
-        commission = settings_doc.get("commission", {}) if isinstance(settings_doc.get("commission"), dict) else {}
+        platform_settings = self.settings.database["platform_admin_settings"].find_one(
+            {"_id": "platform_admin_settings"},
+            {"commission": 1},
+        ) or {}
+        stored_commission = platform_settings.get("commission")
+        commission = stored_commission if isinstance(stored_commission, dict) else {}
+        global_rate = self._to_float(commission.get("globalRate", commission.get("global_rate", 12.5)))
+        category_rate = self._to_float(commission.get("categoryRate", commission.get("category_rate", global_rate)))
+        category_label = str(commission.get("categoryLabel") or commission.get("category_label") or "").strip()
+
+        business = self.settings.database["vendor_business_details"].find_one(
+            {"vendor_id": ObjectId(vendor_id)},
+            {"category": 1, "categories": 1},
+        ) or {}
+        vendor_categories = business.get("categories") if isinstance(business.get("categories"), list) else []
+        if business.get("category"):
+            vendor_categories.append(business["category"])
+        category_applies = bool(category_label) and any(
+            str(category).strip().casefold() == category_label.casefold() for category in vendor_categories
+        )
+        effective_rate = category_rate if category_applies else global_rate
         return {
-            "globalRate": str(commission.get("globalRate") or commission.get("global_rate") or ""),
-            "categoryRate": str(commission.get("categoryRate") or commission.get("category_rate") or ""),
-            "categoryLabel": str(commission.get("categoryLabel") or commission.get("category_label") or ""),
+            "commission_percent": effective_rate,
+            "globalRate": str(commission.get("globalRate") or commission.get("global_rate") or global_rate),
+            "categoryRate": str(commission.get("categoryRate") or commission.get("category_rate") or category_rate),
+            "categoryLabel": category_label,
+            "category_applies": category_applies,
+            "source": "platform_admin_settings",
         }
 
     def _default_legal_docs(self) -> dict[str, Any]:
@@ -846,36 +979,66 @@ class VendorPortalRepository:
             return legal_content
         return self._default_legal_docs()
 
-    def get_legal_doc(self, vendor_id: str, doc_type: str) -> dict[str, Any]:
-        _ = vendor_id
+    @staticmethod
+    def _validate_legal_doc_type(doc_type: str) -> str:
+        normalized = str(doc_type).strip().lower()
+        if normalized not in {"terms", "privacy"}:
+            raise ValueError("Unsupported legal document type.")
+        return normalized
+
+    def get_public_legal_doc(self, doc_type: str) -> dict[str, Any]:
+        normalized_doc_type = self._validate_legal_doc_type(doc_type)
         legal_content = self._platform_legal_content()
-        content_map = legal_content.get("content", {}).get(doc_type, {})
+        content_map = legal_content.get("content", {}).get(normalized_doc_type, {})
         return {
-            "doc_type": doc_type,
-            "title": legal_content.get("documents", {}).get(doc_type, doc_type.title()),
+            "doc_type": normalized_doc_type,
+            "title": legal_content.get("documents", {}).get(normalized_doc_type, normalized_doc_type.title()),
             "content": str(content_map.get("business") or ""),
+            "content_by_audience": {
+                "apps": str(content_map.get("apps") or ""),
+                "business": str(content_map.get("business") or ""),
+            },
             "audience": "business",
             "last_updated": legal_content.get("lastUpdated", ""),
         }
 
+    def get_legal_doc(self, vendor_id: str, doc_type: str) -> dict[str, Any]:
+        normalized_doc_type = self._validate_legal_doc_type(doc_type)
+        platform_doc = self.get_public_legal_doc(normalized_doc_type)
+        settings_doc = self.settings.find_one(
+            {"vendor_id": ObjectId(vendor_id)},
+            {"legal_content": 1},
+        ) or {}
+        vendor_legal = settings_doc.get("legal_content", {})
+        content_map = vendor_legal.get("content", {}).get(normalized_doc_type, {})
+        fallback = platform_doc["content_by_audience"]
+        content_by_audience = {
+            "apps": str(content_map.get("apps") or fallback.get("apps") or ""),
+            "business": str(content_map.get("business") or fallback.get("business") or ""),
+        }
+        return {
+            **platform_doc,
+            "content": content_by_audience["business"],
+            "content_by_audience": content_by_audience,
+            "last_updated": vendor_legal.get("lastUpdated") or platform_doc["last_updated"],
+        }
+
     def update_legal_doc(self, vendor_id: str, doc_type: str, content: str, audience: str) -> dict[str, Any]:
-        _ = vendor_id
-        normalized_doc_type = str(doc_type).strip().lower()
+        normalized_doc_type = self._validate_legal_doc_type(doc_type)
         normalized_audience = str(audience).strip().lower() or "business"
-        settings_collection = self.settings.database["platform_admin_settings"]
-        settings_doc = settings_collection.find_one({"_id": "platform_admin_settings"}) or {"_id": "platform_admin_settings"}
-        legal_content = settings_doc.get("legalContent")
-        if not isinstance(legal_content, dict):
-            legal_content = self._default_legal_docs()
-        legal_content.setdefault("content", {}).setdefault(normalized_doc_type, {})[normalized_audience] = content
-        legal_content["lastUpdated"] = datetime.now(UTC).strftime("%B %d, %Y at %I:%M %p").replace(" 0", " ")
-        settings_doc["legalContent"] = legal_content
-        settings_doc["updated_at"] = datetime.now(UTC)
-        settings_collection.update_one(
-            {"_id": "platform_admin_settings"},
+        if normalized_audience not in {"apps", "business"}:
+            raise ValueError("Unsupported legal document audience.")
+        now = datetime.now(UTC)
+        last_updated = now.strftime("%B %d, %Y at %I:%M %p").replace(" 0", " ")
+        self.settings.update_one(
+            {"vendor_id": ObjectId(vendor_id)},
             {
-                "$set": {key: value for key, value in settings_doc.items() if key not in {"_id", "created_at"}},
-                "$setOnInsert": {"created_at": datetime.now(UTC)},
+                "$set": {
+                    f"legal_content.content.{normalized_doc_type}.{normalized_audience}": content,
+                    "legal_content.lastUpdated": last_updated,
+                    "updated_at": now,
+                },
+                "$setOnInsert": {"created_at": now},
             },
             upsert=True,
         )
@@ -949,6 +1112,11 @@ class VendorPortalRepository:
             "location_value": location_value,
             "description": description,
             "name": business_name,
+            "unread_notifications": int(
+                self.notifications.count_documents(
+                    {"vendor_id": ObjectId(vendor_id), "read": {"$ne": True}}
+                )
+            ),
         }
 
     def update_settings_profile(self, vendor_id: str, payload: dict[str, Any]) -> dict[str, Any]:

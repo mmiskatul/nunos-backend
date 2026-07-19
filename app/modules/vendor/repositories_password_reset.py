@@ -12,10 +12,6 @@ class VendorPasswordResetRepository:
     def __init__(self, db: Database):
         self.token_collection: Collection = db["vendor_password_reset_tokens"]
         self.code_collection: Collection = db["vendor_password_reset_codes"]
-        self.token_collection.create_index("token", unique=True)
-        self.token_collection.create_index("expires_at", expireAfterSeconds=0)
-        self.code_collection.create_index("vendor_id", unique=True)
-        self.code_collection.create_index("expires_at", expireAfterSeconds=0)
 
     def create_validation_code(self, vendor_id: str, code_length: int, expires_in_minutes: int) -> str:
         max_code = 10**code_length
