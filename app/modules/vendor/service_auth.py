@@ -6,7 +6,7 @@ from fastapi import HTTPException, UploadFile, status
 from pymongo.errors import DuplicateKeyError
 
 from app.core.account_lookup import find_existing_email_sync
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.core.contact import parse_email_or_phone
 from app.core.mongo_errors import duplicate_contact_conflict_detail
 from app.core.session_tokens import SESSION_COLLECTION, build_session_document, session_is_active
@@ -62,12 +62,13 @@ class VendorAuthService:
         password_reset_repo: VendorPasswordResetRepository,
         email_sender: EmailSender,
         cloudinary_uploader: CloudinaryUploader,
+        settings: Settings | None = None,
     ):
         self.vendor_repo = vendor_repo
         self.signup_repo = signup_repo
         self.password_reset_repo = password_reset_repo
         self.email_sender = email_sender
-        self.settings = get_settings()
+        self.settings = settings or get_settings()
         self.cloudinary_uploader = cloudinary_uploader
         self.session_collection = self.vendor_repo.collection.database[SESSION_COLLECTION]
         self.registration_config_collection = self.vendor_repo.collection.database["vendor_registration_configs"]

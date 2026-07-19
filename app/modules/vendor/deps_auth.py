@@ -46,6 +46,7 @@ def get_vendor_auth_service(
     password_reset_repo: VendorPasswordResetRepository = Depends(get_vendor_password_reset_repository),
     email_sender: EmailSender = Depends(get_email_sender),
     cloudinary_uploader=Depends(get_cloudinary_uploader),
+    settings: Settings = Depends(get_settings),
 ) -> VendorAuthService:
     return VendorAuthService(
         vendor_repo=vendor_repo,
@@ -53,6 +54,7 @@ def get_vendor_auth_service(
         password_reset_repo=password_reset_repo,
         email_sender=email_sender,
         cloudinary_uploader=cloudinary_uploader,
+        settings=settings,
     )
 
 
