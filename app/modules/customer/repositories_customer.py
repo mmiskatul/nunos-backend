@@ -283,6 +283,7 @@ class CustomerRepository:
         vendor_docs = list(self.vendors.find(query).sort("created_at", DESCENDING))
         cards: list[dict[str, Any]] = []
         customer_lat, customer_lng = self._get_customer_coords(customer_id)
+        customer_lat, customer_lng = self._get_customer_coords(customer_id)
         for vendor in vendor_docs:
             vendor_id = vendor["_id"]
             bundle = self._get_vendor_bundle(vendor_id)
@@ -351,6 +352,8 @@ class CustomerRepository:
             if rooms:
                 min_price = min(float(r.get("base_price", 150.0)) for r in rooms)
             has_rooms = len(rooms) > 0
+            room_image = next((image for room in rooms for image in (room.get("images") or []) if image), None)
+            vendor_lat, vendor_lng = self._get_vendor_coords(bundle)
             cards.append(
                 {
                     "id": str(vendor_id),
@@ -358,12 +361,13 @@ class CustomerRepository:
                     "rating": str(bundle["rating"]),
                     "reviews": str(bundle["reviews_count"]),
                     "location": f"{bundle['general'].get('business_address') or bundle['business'].get('city') or 'Qatar'}",
+                    "distance_km": self._distance_between_km(customer_lat, customer_lng, vendor_lat, vendor_lng),
                     "price": str(int(min_price)),
                     "status": "Available" if has_rooms else "Limited",
                     "badge": (bundle["active_offer"] or {}).get("promotion_name"),
                     "badgeColor": "#3b82f6",
                     "amenities": ["WiFi", "Pool", "Breakfast"] if has_rooms else ["WiFi"],
-                    "image": bundle["cover_image"] or "https://images.unsplash.com/photo-1566073771259-6a8506099945?w=800",
+                    "image": room_image or bundle["cover_image"] or "https://images.unsplash.com/photo-1566073771259-6a8506099945?w=800",
                 }
             )
         total = len(cards)
@@ -375,12 +379,14 @@ class CustomerRepository:
             return None
         vendor_id = vendor["_id"]
         bundle = self._get_vendor_bundle(vendor_id)
-        if bundle["category"].lower() != "hotel":
+        customer_lat, customer_lng = self._get_customer_coords(customer_id)
+        vendor_lat, vendor_lng = self._get_vendor_coords(bundle)
+        rooms = list(self.vendor_rooms.find({"vendor_id": vendor_id, "available": True}))
+        if bundle["category"].lower() != "hotel" and not rooms:
             return None
         rooms_count = self.vendor_rooms.count_documents({"vendor_id": vendor_id, "available": True})
         gallery_count = self.vendor_assets.count_documents({"vendor_id": vendor_id, "asset_type": "gallery"})
         offers_count = self.vendor_promotions.count_documents({"vendor_id": vendor_id, "active": True})
-        rooms = list(self.vendor_rooms.find({"vendor_id": vendor_id, "available": True}))
         min_price = 150.0
         if rooms:
             min_price = min(float(r.get("base_price", 150.0)) for r in rooms)
@@ -391,9 +397,12 @@ class CustomerRepository:
             "rating": str(bundle["rating"]),
             "reviews": str(bundle["reviews_count"]),
             "location": f"{bundle['general'].get('business_address') or bundle['business'].get('city') or 'Qatar'}",
+            "distance_km": self._distance_between_km(customer_lat, customer_lng, vendor_lat, vendor_lng),
             "address": bundle["general"].get("business_address") or bundle["business"].get("address") or "Qatar",
             "about": bundle["business"].get("business_description") or bundle["profile"].get("about_business") or "Welcome to our hotel.",
-            "image": bundle["cover_image"] or "https://images.unsplash.com/photo-1566073771259-6a8506099945?w=800",
+            "image": next((image for room in rooms for image in (room.get("images") or []) if image), None)
+            or bundle["cover_image"]
+            or "https://images.unsplash.com/photo-1566073771259-6a8506099945?w=800",
             "price": str(int(min_price)),
             "status": "Available",
             "amenities": ["Free WiFi", "Breakfast", "Pool", "Gym", "Parking", "Room Service"],
