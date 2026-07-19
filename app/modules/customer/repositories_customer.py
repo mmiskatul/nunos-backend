@@ -341,9 +341,12 @@ class CustomerRepository:
         for vendor in vendor_docs:
             vendor_id = vendor["_id"]
             bundle = self._get_vendor_bundle(vendor_id)
-            if bundle["category"].lower() != "hotel":
-                continue
             rooms = list(self.vendor_rooms.find({"vendor_id": vendor_id, "available": True}))
+            # Room inventory is the source of truth for hotel visibility. A
+            # provider may have an old/misclassified profile category while
+            # actively publishing hotel rooms.
+            if bundle["category"].lower() != "hotel" and not rooms:
+                continue
             min_price = 150.0
             if rooms:
                 min_price = min(float(r.get("base_price", 150.0)) for r in rooms)
@@ -527,12 +530,12 @@ class CustomerRepository:
 
             # Trending Now is intentionally hotel-only. A hotel is eligible
             # only while it has at least one available room right now.
-            if category != "hotel":
-                continue
             has_available_room = self.vendor_rooms.count_documents(
                 {"vendor_id": vendor_id, "available": True},
                 limit=1,
             ) > 0
+            if category != "hotel" and not has_available_room:
+                continue
             if not has_available_room:
                 continue
 
