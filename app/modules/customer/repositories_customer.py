@@ -2,6 +2,7 @@ import hashlib
 import math
 from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from bson import ObjectId
 from bson.errors import InvalidId
@@ -142,6 +143,20 @@ class CustomerRepository:
         if latitude is None or longitude is None:
             return self._get_vendor_coords(bundle)
         return latitude, longitude
+
+    @staticmethod
+    def _event_is_not_expired(event: dict[str, Any]) -> bool:
+        """Evaluate an event's end time in the event's own timezone."""
+        event_date = str(event.get("event_date") or "").strip()
+        end_time = str(event.get("end_time") or "").strip()
+        if not event_date or not end_time:
+            return False
+        try:
+            timezone = ZoneInfo(str(event.get("timezone") or "UTC"))
+            end_at = datetime.fromisoformat(f"{event_date}T{end_time}").replace(tzinfo=timezone)
+        except (TypeError, ValueError):
+            return False
+        return end_at >= datetime.now(timezone)
 
     @staticmethod
     def _distance_between_km(
@@ -600,7 +615,11 @@ class CustomerRepository:
         for vendor in self.vendors.find({"status": "approved"}, {"_id": 1}):
             category = str(self._get_vendor_bundle(vendor["_id"]).get("category") or "restaurant").lower()
             counts[category] = counts.get(category, 0) + 1
-        counts["event"] = int(self.vendor_events.count_documents({"status": "published", "active": {"$ne": False}}))
+        counts["event"] = sum(
+            1
+            for event in self.vendor_events.find({"status": "published", "active": {"$ne": False}})
+            if self._event_is_not_expired(event)
+        )
         return {"items": [{"key": key, "label": key.title(), "count": value} for key, value in counts.items()]}
 
     def get_customer_profile(self, customer_id: str) -> dict[str, Any]:
@@ -781,32 +800,14 @@ class CustomerRepository:
         skip: int,
         search: str | None = None,
     ) -> dict[str, Any]:
-        today = datetime.now(UTC).date().isoformat()
-        # Event forms store end times as HH:MM. Keep the comparison in the
-        # same format so same-day events remain visible until their end time.
-        current_time = datetime.now(UTC).strftime("%H:%M")
-        expiry_query = [
-            {"event_date": {"$gt": today}},
-            {"event_date": today, "end_time": {"$gte": current_time}},
-        ]
-        query: dict[str, Any] = {
-            "status": "published",
-            "active": {"$ne": False},
-            "$or": expiry_query,
-        }
+        query: dict[str, Any] = {"status": "published", "active": {"$ne": False}}
         if search:
-            query["$and"] = [
-                {"$or": expiry_query},
-                {
-                    "$or": [
-                        {"title": {"$regex": search, "$options": "i"}},
-                        {"venue": {"$regex": search, "$options": "i"}},
-                        {"event_type": {"$regex": search, "$options": "i"}},
-                        {"category": {"$regex": search, "$options": "i"}},
-                    ]
-                },
+            query["$or"] = [
+                {"title": {"$regex": search, "$options": "i"}},
+                {"venue": {"$regex": search, "$options": "i"}},
+                {"event_type": {"$regex": search, "$options": "i"}},
+                {"category": {"$regex": search, "$options": "i"}},
             ]
-            query.pop("$or", None)
 
         docs = list(
             self.vendor_events.find(query).sort(
@@ -817,6 +818,8 @@ class CustomerRepository:
         customer_lat, customer_lng = self._get_customer_coords(customer_id)
 
         for event in docs:
+            if not self._event_is_not_expired(event):
+                continue
             vendor_id = event.get("vendor_id")
             if not isinstance(vendor_id, ObjectId):
                 continue
@@ -887,6 +890,8 @@ class CustomerRepository:
             {"_id": self._oid(event_id), "status": "published", "active": {"$ne": False}}
         )
         if not event:
+            return None
+        if not self._event_is_not_expired(event):
             return None
 
         vendor_id = event.get("vendor_id")
