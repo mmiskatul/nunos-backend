@@ -781,14 +781,32 @@ class CustomerRepository:
         skip: int,
         search: str | None = None,
     ) -> dict[str, Any]:
-        query: dict[str, Any] = {"status": "published", "active": {"$ne": False}}
+        today = datetime.now(UTC).date().isoformat()
+        # Event forms store end times as HH:MM. Keep the comparison in the
+        # same format so same-day events remain visible until their end time.
+        current_time = datetime.now(UTC).strftime("%H:%M")
+        expiry_query = [
+            {"event_date": {"$gt": today}},
+            {"event_date": today, "end_time": {"$gte": current_time}},
+        ]
+        query: dict[str, Any] = {
+            "status": "published",
+            "active": {"$ne": False},
+            "$or": expiry_query,
+        }
         if search:
-            query["$or"] = [
-                {"title": {"$regex": search, "$options": "i"}},
-                {"venue": {"$regex": search, "$options": "i"}},
-                {"event_type": {"$regex": search, "$options": "i"}},
-                {"category": {"$regex": search, "$options": "i"}},
+            query["$and"] = [
+                {"$or": expiry_query},
+                {
+                    "$or": [
+                        {"title": {"$regex": search, "$options": "i"}},
+                        {"venue": {"$regex": search, "$options": "i"}},
+                        {"event_type": {"$regex": search, "$options": "i"}},
+                        {"category": {"$regex": search, "$options": "i"}},
+                    ]
+                },
             ]
+            query.pop("$or", None)
 
         docs = list(
             self.vendor_events.find(query).sort(
@@ -1463,6 +1481,12 @@ class CustomerRepository:
                     "latitude": lat,
                     "longitude": lng,
                     "distance_km": row.get("distance_km"),
+                    # Keep the schedule on map pins so clients can apply the
+                    # same non-expired-event rule when rendering markers.
+                    "event_date": row.get("event_date"),
+                    "start_time": row.get("start_time"),
+                    "end_time": row.get("end_time"),
+                    "timezone": row.get("timezone"),
                     "offer_text": row.get("offer_text"),
                     "event_type": row.get("event_type"),
                     "venue": row.get("venue"),
