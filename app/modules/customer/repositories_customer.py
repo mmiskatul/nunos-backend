@@ -342,6 +342,7 @@ class CustomerRepository:
             ]
         vendor_docs = list(self.vendors.find(query).sort("created_at", DESCENDING))
         cards: list[dict[str, Any]] = []
+        customer_lat, customer_lng = self._get_customer_coords(customer_id)
         for vendor in vendor_docs:
             vendor_id = vendor["_id"]
             bundle = self._get_vendor_bundle(vendor_id)
