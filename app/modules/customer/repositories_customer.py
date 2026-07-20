@@ -458,6 +458,7 @@ class CustomerRepository:
             "distance_km": self._distance_between_km(customer_lat, customer_lng, vendor_lat, vendor_lng),
             "address": service_settings.get("address") or bundle["general"].get("business_address") or bundle["business"].get("address") or "",
             "about": service_settings.get("about") or bundle["business"].get("business_description") or bundle["profile"].get("about_business") or "",
+            "amenities": service_settings.get("amenities") or amenities,
             "image": next((image for room in rooms for image in (room.get("images") or []) if image), None)
             or bundle["cover_image"],
             "price": str(int(min_price)),

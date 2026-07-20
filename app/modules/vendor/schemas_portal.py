@@ -253,6 +253,7 @@ class VendorServiceSettings(BaseModel):
     opening_time: str = ""
     closing_time: str = ""
     policy: str = ""
+    amenities: list[str] = Field(default_factory=list)
     model_config = ConfigDict(extra="allow")
 
 
