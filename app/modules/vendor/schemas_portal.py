@@ -2,7 +2,7 @@ from datetime import date, datetime, time
 from typing import Any
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class BookingStatusUpdateRequest(BaseModel):
@@ -240,6 +240,22 @@ class VendorSettingsGeneralRequest(BaseModel):
     emergency_contact: str | None = None
 
 
+class VendorServiceSettings(BaseModel):
+    """Common editable settings shared by restaurant, hotel and spa services."""
+    name: str = ""
+    address: str = ""
+    city: str = ""
+    phone: str = ""
+    email: str = ""
+    latitude: float | None = None
+    longitude: float | None = None
+    about: str = ""
+    opening_time: str = ""
+    closing_time: str = ""
+    policy: str = ""
+    model_config = ConfigDict(extra="allow")
+
+
 class VendorSettingsProfileRequest(BaseModel):
     business_name: str
     category: str
@@ -255,9 +271,9 @@ class VendorSettingsProfileRequest(BaseModel):
     website: str | None = None
     map_embed_url: str | None = None
     avatar_url: str | None = None
-    restaurant_settings: dict[str, Any] = Field(default_factory=dict)
-    hotel_settings: dict[str, Any] = Field(default_factory=dict)
-    spa_settings: dict[str, Any] = Field(default_factory=dict)
+    restaurant_settings: VendorServiceSettings = Field(default_factory=VendorServiceSettings)
+    hotel_settings: VendorServiceSettings = Field(default_factory=VendorServiceSettings)
+    spa_settings: VendorServiceSettings = Field(default_factory=VendorServiceSettings)
 
     @field_validator("categories")
     @classmethod
@@ -273,7 +289,7 @@ class VendorSettingsProfileRequest(BaseModel):
 
 
 class VendorServiceSettingsRequest(BaseModel):
-    data: dict[str, Any] = Field(default_factory=dict)
+    data: VendorServiceSettings = Field(default_factory=VendorServiceSettings)
 
 
 class VendorLegalDocRequest(BaseModel):
