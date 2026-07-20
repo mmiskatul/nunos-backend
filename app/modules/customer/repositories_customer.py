@@ -547,6 +547,16 @@ class CustomerRepository:
             if not has_available_room:
                 continue
 
+            room_image = self.vendor_rooms.find_one(
+                {"vendor_id": vendor_id, "available": True, "images": {"$exists": True, "$ne": []}},
+                {"images": 1},
+                sort=[("created_at", DESCENDING)],
+            )
+            uploaded_image = next(
+                (image for image in (room_image or {}).get("images", []) if image),
+                None,
+            )
+
             usage_count = self.vendor_bookings.count_documents(
                 {
                     "vendor_id": vendor_id,
@@ -556,6 +566,7 @@ class CustomerRepository:
             trending.append(
                 {
                     **card,
+                    "cover_image_url": uploaded_image or card.get("cover_image_url"),
                     "entity_type": category,
                     "detail_route": f"/home/hotels/{card['id']}",
                     "usage_count": usage_count,
