@@ -316,7 +316,7 @@ class CustomerRepository:
                     "latitude": vendor_lat,
                     "longitude": vendor_lng,
                     "is_open_now": bool(slots),
-                    "cover_image_url": bundle["cover_image"] or "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=1200",
+                    "cover_image_url": bundle["cover_image"],
                     "offer_text": (bundle["active_offer"] or {}).get("promotion_name"),
                 }
             )
@@ -367,7 +367,7 @@ class CustomerRepository:
                     "badge": (bundle["active_offer"] or {}).get("promotion_name"),
                     "badgeColor": "#3b82f6",
                     "amenities": ["WiFi", "Pool", "Breakfast"] if has_rooms else ["WiFi"],
-                    "image": room_image or bundle["cover_image"] or "https://images.unsplash.com/photo-1566073771259-6a8506099945?w=800",
+                    "image": room_image or bundle["cover_image"],
                 }
             )
         total = len(cards)
@@ -401,8 +401,7 @@ class CustomerRepository:
             "address": bundle["general"].get("business_address") or bundle["business"].get("address") or "Qatar",
             "about": bundle["business"].get("business_description") or bundle["profile"].get("about_business") or "Welcome to our hotel.",
             "image": next((image for room in rooms for image in (room.get("images") or []) if image), None)
-            or bundle["cover_image"]
-            or "https://images.unsplash.com/photo-1566073771259-6a8506099945?w=800",
+            or bundle["cover_image"],
             "price": str(int(min_price)),
             "status": "Available",
             "amenities": ["Free WiFi", "Breakfast", "Pool", "Gym", "Parking", "Room Service"],
@@ -432,7 +431,7 @@ class CustomerRepository:
                 "price": str(int(base_price)),
                 "totalPrice": str(int(base_price * 2)),
                 "nights": "2 nights",
-                "image": images[0] if images else "https://images.unsplash.com/photo-1618773928121-c32242e63f39?w=800",
+                "image": images[0] if images else None,
                 "amenities": doc.get("amenities") or ["WiFi", "AC"],
             })
         return rooms
@@ -468,7 +467,7 @@ class CustomerRepository:
             "guests": f"{doc.get('max_guests', 2)} Guests",
             "bed": doc.get("bed_type") or "King Bed",
             "view": "City View",
-            "images": doc.get("images") or ["https://images.unsplash.com/photo-1618773928121-c32242e63f39?w=800"],
+            "images": doc.get("images") or [],
             "amenities": amenities_with_icons,
             "price": {
                 "rate": str(int(base_price * 2)),
