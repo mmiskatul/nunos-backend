@@ -144,6 +144,27 @@ class CustomerRepository:
             longitude = self._to_float(general_settings.get("longitude"))
         return latitude, longitude
 
+    @staticmethod
+    def _service_settings(bundle: dict[str, Any], category: str | None = None) -> dict[str, Any]:
+        key = f"{str(category or bundle.get('category') or '').strip().lower()}_settings"
+        settings = bundle.get("profile_settings", {}).get(key, {})
+        return settings if isinstance(settings, dict) else {}
+
+    @staticmethod
+    def _service_is_open(settings: dict[str, Any], fallback: bool) -> bool:
+        opening = str(settings.get("opening_time") or "").strip()
+        closing = str(settings.get("closing_time") or "").strip()
+        if not opening or not closing:
+            return fallback
+        try:
+            from datetime import datetime as _datetime
+            current = _datetime.now().strftime("%H:%M")
+            parse = lambda value: _datetime.strptime(value, "%I:%M %p").strftime("%H:%M")
+            start, end = parse(opening), parse(closing)
+            return start <= current < end if start <= end else current >= start or current < end
+        except ValueError:
+            return fallback
+
     def _get_event_coords(self, event: dict[str, Any], bundle: dict[str, Any]) -> tuple[float | None, float | None]:
         latitude = self._to_float(event.get("latitude"))
         longitude = self._to_float(event.get("longitude"))
@@ -295,9 +316,7 @@ class CustomerRepository:
         for vendor in vendor_docs:
             vendor_id = vendor["_id"]
             bundle = self._get_vendor_bundle(vendor_id)
-            service_settings = bundle["profile_settings"].get(f"{str(bundle['category']).strip().lower()}_settings", {})
-            if not isinstance(service_settings, dict):
-                service_settings = {}
+            service_settings = self._service_settings(bundle)
             slots = bundle["general"].get("booking_availability_slots", [])
             if open_now is True and not slots:
                 continue
@@ -330,7 +349,9 @@ class CustomerRepository:
                     "city": service_settings.get("city") or bundle["business"].get("city"),
                     "latitude": vendor_lat,
                     "longitude": vendor_lng,
-                    "is_open_now": bool(slots),
+                    "is_open_now": self._service_is_open(service_settings, bool(slots)),
+                    "opening_time": service_settings.get("opening_time"),
+                    "closing_time": service_settings.get("closing_time"),
                     "cover_image_url": bundle["cover_image"],
                     "offer_text": (bundle["active_offer"] or {}).get("promotion_name"),
                 }
@@ -358,9 +379,7 @@ class CustomerRepository:
         for vendor in vendor_docs:
             vendor_id = vendor["_id"]
             bundle = self._get_vendor_bundle(vendor_id)
-            service_settings = bundle["profile_settings"].get("hotel_settings", {})
-            if not isinstance(service_settings, dict):
-                service_settings = {}
+            service_settings = self._service_settings(bundle, "hotel")
             rooms = list(self.vendor_rooms.find({"vendor_id": vendor_id, "available": True}))
             # Room inventory is the source of truth for hotel visibility. A
             # provider may have an old/misclassified profile category while
@@ -383,6 +402,9 @@ class CustomerRepository:
                     "distance_km": self._distance_between_km(customer_lat, customer_lng, vendor_lat, vendor_lng),
                     "price": str(int(min_price)),
                     "status": "Available" if has_rooms else "Limited",
+                    "is_open_now": self._service_is_open(service_settings, has_rooms),
+                    "opening_time": service_settings.get("opening_time"),
+                    "closing_time": service_settings.get("closing_time"),
                     "badge": (bundle["active_offer"] or {}).get("promotion_name"),
                     "badgeColor": "#3b82f6",
                     "amenities": ["WiFi", "Pool", "Breakfast"] if has_rooms else ["WiFi"],
@@ -398,9 +420,7 @@ class CustomerRepository:
             return None
         vendor_id = vendor["_id"]
         bundle = self._get_vendor_bundle(vendor_id)
-        service_settings = bundle["profile_settings"].get("hotel_settings", {})
-        if not isinstance(service_settings, dict):
-            service_settings = {}
+        service_settings = self._service_settings(bundle, "hotel")
         customer_lat, customer_lng = self._get_customer_coords(customer_id)
         vendor_lat, vendor_lng = self._get_vendor_coords(bundle, bundle["category"])
         rooms = list(self.vendor_rooms.find({"vendor_id": vendor_id, "available": True}))
@@ -434,6 +454,9 @@ class CustomerRepository:
             or bundle["cover_image"],
             "price": str(int(min_price)),
             "status": "Available",
+            "is_open_now": self._service_is_open(service_settings, bool(rooms)),
+            "opening_time": service_settings.get("opening_time"),
+            "closing_time": service_settings.get("closing_time"),
             "amenities": amenities,
             "offers": active_offers,
             "tabs": {
@@ -757,9 +780,7 @@ class CustomerRepository:
         offers_count = self.vendor_promotions.count_documents({"vendor_id": vendor_id, "active": True})
         opening_slots = bundle["general"].get("booking_availability_slots", [])
         customer_lat, customer_lng = self._get_customer_coords(customer_id)
-        service_settings = bundle["profile_settings"].get(f"{str(bundle['category']).strip().lower()}_settings", {})
-        if not isinstance(service_settings, dict):
-            service_settings = {}
+        service_settings = self._service_settings(bundle)
         vendor_lat, vendor_lng = self._get_vendor_coords(bundle, bundle["category"])
         location = (
             service_settings.get("address")
@@ -790,7 +811,9 @@ class CustomerRepository:
             "opening_hours": {
                 "monday_friday": "12:00 PM - 11:00 PM",
                 "saturday_sunday": "11:00 AM - 12:00 AM",
-                "is_open_now": bool(opening_slots),
+                "open_time": service_settings.get("opening_time"),
+                "close_time": service_settings.get("closing_time"),
+                "is_open_now": self._service_is_open(service_settings, bool(opening_slots)),
             },
             "amenities": ["Free WiFi", "Parking", "Outdoor", "Cards", "Accessible", "Bar"],
             "tabs": {
@@ -800,8 +823,8 @@ class CustomerRepository:
                 "offers_count": int(offers_count),
             },
             "contact": {
-                "phone": bundle["general"].get("front_desk_phone"),
-                "reservations_email": bundle["general"].get("reservations_email"),
+                "phone": service_settings.get("phone") or bundle["general"].get("front_desk_phone"),
+                "reservations_email": service_settings.get("email") or bundle["general"].get("reservations_email"),
             },
         }
 
