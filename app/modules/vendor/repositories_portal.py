@@ -419,9 +419,10 @@ class VendorPortalRepository:
         now = datetime.now(UTC)
         sanitized = self._sanitize_payload(payload)
         profile = self.get_settings_profile(vendor_id)
-        sanitized.setdefault("location_label", profile.get("location_label") or profile.get("office_address"))
-        sanitized.setdefault("latitude", profile.get("latitude"))
-        sanitized.setdefault("longitude", profile.get("longitude"))
+        service_settings = profile.get("hotel_settings") if isinstance(profile.get("hotel_settings"), dict) else {}
+        sanitized.setdefault("location_label", service_settings.get("address") or profile.get("location_label") or profile.get("office_address"))
+        sanitized.setdefault("latitude", service_settings.get("latitude") or profile.get("latitude"))
+        sanitized.setdefault("longitude", service_settings.get("longitude") or profile.get("longitude"))
         inserted = self.rooms.insert_one(
             {
                 "vendor_id": ObjectId(vendor_id),
@@ -472,9 +473,11 @@ class VendorPortalRepository:
         now = datetime.now(UTC)
         sanitized = self._sanitize_payload(payload)
         profile = self.get_settings_profile(vendor_id)
-        sanitized.setdefault("location_label", profile.get("location_label") or profile.get("office_address"))
-        sanitized.setdefault("latitude", profile.get("latitude"))
-        sanitized.setdefault("longitude", profile.get("longitude"))
+        category = str(sanitized.get("category") or "").strip().lower()
+        service_settings = profile.get(f"{category}_settings") if isinstance(profile.get(f"{category}_settings"), dict) else {}
+        sanitized.setdefault("location_label", service_settings.get("address") or profile.get("location_label") or profile.get("office_address"))
+        sanitized.setdefault("latitude", service_settings.get("latitude") or profile.get("latitude"))
+        sanitized.setdefault("longitude", service_settings.get("longitude") or profile.get("longitude"))
         inserted = self.services.insert_one(
             {
                 "vendor_id": ObjectId(vendor_id),

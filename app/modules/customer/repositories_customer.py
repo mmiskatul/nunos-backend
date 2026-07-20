@@ -126,11 +126,18 @@ class CustomerRepository:
             }
         )
 
-    def _get_vendor_coords(self, bundle: dict[str, Any]) -> tuple[float | None, float | None]:
+    def _get_vendor_coords(self, bundle: dict[str, Any], category: str | None = None) -> tuple[float | None, float | None]:
         profile_settings = bundle.get("profile_settings", {})
         general_settings = bundle.get("general", {})
-        latitude = self._to_float(profile_settings.get("latitude"))
-        longitude = self._to_float(profile_settings.get("longitude"))
+        service_settings = profile_settings.get(f"{str(category or '').strip().lower()}_settings", {})
+        if not isinstance(service_settings, dict):
+            service_settings = {}
+        latitude = self._to_float(service_settings.get("latitude"))
+        longitude = self._to_float(service_settings.get("longitude"))
+        if latitude is None:
+            latitude = self._to_float(profile_settings.get("latitude"))
+        if longitude is None:
+            longitude = self._to_float(profile_settings.get("longitude"))
         if latitude is None:
             latitude = self._to_float(general_settings.get("latitude"))
         if longitude is None:
@@ -294,7 +301,7 @@ class CustomerRepository:
             if with_offers is True and not bundle["active_offer"]:
                 continue
 
-            vendor_lat, vendor_lng = self._get_vendor_coords(bundle)
+            vendor_lat, vendor_lng = self._get_vendor_coords(bundle, bundle["category"])
             name = bundle["vendor"].get("business_name") or bundle["profile"].get("business_name")
             if not name:
                 continue
@@ -357,7 +364,7 @@ class CustomerRepository:
                 min_price = min(float(r.get("base_price", 150.0)) for r in rooms)
             has_rooms = len(rooms) > 0
             room_image = next((image for room in rooms for image in (room.get("images") or []) if image), None)
-            vendor_lat, vendor_lng = self._get_vendor_coords(bundle)
+            vendor_lat, vendor_lng = self._get_vendor_coords(bundle, "hotel")
             cards.append(
                 {
                     "id": str(vendor_id),
@@ -384,7 +391,7 @@ class CustomerRepository:
         vendor_id = vendor["_id"]
         bundle = self._get_vendor_bundle(vendor_id)
         customer_lat, customer_lng = self._get_customer_coords(customer_id)
-        vendor_lat, vendor_lng = self._get_vendor_coords(bundle)
+        vendor_lat, vendor_lng = self._get_vendor_coords(bundle, bundle["category"])
         rooms = list(self.vendor_rooms.find({"vendor_id": vendor_id, "available": True}))
         if bundle["category"].lower() != "hotel" and not rooms:
             return None
@@ -739,7 +746,7 @@ class CustomerRepository:
         offers_count = self.vendor_promotions.count_documents({"vendor_id": vendor_id, "active": True})
         opening_slots = bundle["general"].get("booking_availability_slots", [])
         customer_lat, customer_lng = self._get_customer_coords(customer_id)
-        vendor_lat, vendor_lng = self._get_vendor_coords(bundle)
+        vendor_lat, vendor_lng = self._get_vendor_coords(bundle, "hotel")
         location = (
             bundle["profile_settings"].get("location_label")
             or bundle["general"].get("business_address")
