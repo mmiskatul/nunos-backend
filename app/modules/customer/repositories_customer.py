@@ -324,6 +324,14 @@ class CustomerRepository:
                 continue
 
             vendor_lat, vendor_lng = self._get_vendor_coords(bundle, bundle["category"])
+            room_image = None
+            if str(bundle["category"]).strip().lower() == "hotel":
+                room = self.vendor_rooms.find_one(
+                    {"vendor_id": vendor_id, "available": True, "images": {"$exists": True, "$ne": []}},
+                    {"images": 1},
+                    sort=[("created_at", DESCENDING)],
+                )
+                room_image = next((image for image in (room or {}).get("images", []) if image), None)
             name = service_settings.get("name") or bundle["vendor"].get("business_name") or bundle["profile"].get("business_name")
             if not name:
                 continue
@@ -352,7 +360,7 @@ class CustomerRepository:
                     "is_open_now": self._service_is_open(service_settings, bool(slots)),
                     "opening_time": service_settings.get("opening_time"),
                     "closing_time": service_settings.get("closing_time"),
-                    "cover_image_url": bundle["cover_image"],
+                    "cover_image_url": room_image or bundle["cover_image"],
                     "offer_text": (bundle["active_offer"] or {}).get("promotion_name"),
                 }
             )
