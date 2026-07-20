@@ -34,6 +34,7 @@ from app.modules.vendor.schemas_portal import (
     VendorPasswordChangeRequest,
     VendorSettingsGeneralRequest,
     VendorSettingsProfileRequest,
+    VendorServiceSettingsRequest,
     VendorSupportTicketCreateRequest,
     VendorSupportTicketMessageRequest,
 )
@@ -967,6 +968,27 @@ def update_vendor_profile_settings(
     portal_service: VendorPortalService = Depends(get_vendor_portal_service),
 ) -> dict:
     return portal_service.repo.update_settings_profile(_vendor_id(current_vendor), payload.model_dump())
+
+
+@router.get("/settings/services/{service_type}", tags=["Vendor - Settings"])
+def get_vendor_service_settings(service_type: str, current_vendor: dict = Depends(get_current_vendor), portal_service: VendorPortalService = Depends(get_vendor_portal_service)) -> dict:
+    normalized = service_type.strip().lower()
+    if normalized not in {"restaurant", "hotel", "spa"}:
+        raise HTTPException(status_code=400, detail="Unsupported service type.")
+    profile = portal_service.repo.get_settings_profile(_vendor_id(current_vendor))
+    return {"service_type": normalized, "settings": profile.get(f"{normalized}_settings", {})}
+
+
+@router.patch("/settings/services/{service_type}", tags=["Vendor - Settings"])
+def update_vendor_service_settings(service_type: str, payload: VendorServiceSettingsRequest, current_vendor: dict = Depends(get_current_vendor), portal_service: VendorPortalService = Depends(get_vendor_portal_service)) -> dict:
+    normalized = service_type.strip().lower()
+    if normalized not in {"restaurant", "hotel", "spa"}:
+        raise HTTPException(status_code=400, detail="Unsupported service type.")
+    profile = portal_service.repo.get_settings_profile(_vendor_id(current_vendor))
+    merged = dict(profile.get(f"{normalized}_settings", {}) or {})
+    merged.update(payload.data)
+    updated = portal_service.repo.update_settings_profile(_vendor_id(current_vendor), {f"{normalized}_settings": merged})
+    return {"service_type": normalized, "settings": updated.get(f"{normalized}_settings", merged)}
 
 
 # ---------------------------------------------------------------------------

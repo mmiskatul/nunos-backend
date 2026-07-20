@@ -272,6 +272,10 @@ class VendorSettingsProfileRequest(BaseModel):
         return normalized or None
 
 
+class VendorServiceSettingsRequest(BaseModel):
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
 class VendorLegalDocRequest(BaseModel):
     content: str
     audience: str = Field(pattern="^(apps|business)$")

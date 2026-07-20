@@ -295,6 +295,9 @@ class CustomerRepository:
         for vendor in vendor_docs:
             vendor_id = vendor["_id"]
             bundle = self._get_vendor_bundle(vendor_id)
+            service_settings = bundle["profile_settings"].get(f"{str(bundle['category']).strip().lower()}_settings", {})
+            if not isinstance(service_settings, dict):
+                service_settings = {}
             slots = bundle["general"].get("booking_availability_slots", [])
             if open_now is True and not slots:
                 continue
@@ -302,11 +305,13 @@ class CustomerRepository:
                 continue
 
             vendor_lat, vendor_lng = self._get_vendor_coords(bundle, bundle["category"])
-            name = bundle["vendor"].get("business_name") or bundle["profile"].get("business_name")
+            name = service_settings.get("name") or bundle["vendor"].get("business_name") or bundle["profile"].get("business_name")
             if not name:
                 continue
             location = (
-                bundle["profile_settings"].get("location_label")
+                service_settings.get("address")
+                or service_settings.get("city")
+                or bundle["profile_settings"].get("location_label")
                 or bundle["general"].get("business_address")
                 or bundle["business"].get("address")
                 or bundle["business"].get("city")
@@ -321,8 +326,8 @@ class CustomerRepository:
                     "reviews_count": bundle["reviews_count"],
                     "distance_km": self._distance_between_km(customer_lat, customer_lng, vendor_lat, vendor_lng),
                     "location": location,
-                    "address": bundle["general"].get("business_address") or bundle["business"].get("address"),
-                    "city": bundle["business"].get("city"),
+                    "address": service_settings.get("address") or bundle["general"].get("business_address") or bundle["business"].get("address"),
+                    "city": service_settings.get("city") or bundle["business"].get("city"),
                     "latitude": vendor_lat,
                     "longitude": vendor_lng,
                     "is_open_now": bool(slots),
@@ -353,6 +358,9 @@ class CustomerRepository:
         for vendor in vendor_docs:
             vendor_id = vendor["_id"]
             bundle = self._get_vendor_bundle(vendor_id)
+            service_settings = bundle["profile_settings"].get("hotel_settings", {})
+            if not isinstance(service_settings, dict):
+                service_settings = {}
             rooms = list(self.vendor_rooms.find({"vendor_id": vendor_id, "available": True}))
             # Room inventory is the source of truth for hotel visibility. A
             # provider may have an old/misclassified profile category while
@@ -368,10 +376,10 @@ class CustomerRepository:
             cards.append(
                 {
                     "id": str(vendor_id),
-                    "title": bundle["vendor"].get("business_name") or bundle["profile"].get("business_name") or "Unnamed Hotel",
+                    "title": service_settings.get("name") or bundle["vendor"].get("business_name") or bundle["profile"].get("business_name") or "Unnamed Hotel",
                     "rating": str(bundle["rating"]),
                     "reviews": str(bundle["reviews_count"]),
-                    "location": f"{bundle['general'].get('business_address') or bundle['business'].get('city') or 'Qatar'}",
+                    "location": f"{service_settings.get('address') or service_settings.get('city') or bundle['general'].get('business_address') or bundle['business'].get('city') or 'Qatar'}",
                     "distance_km": self._distance_between_km(customer_lat, customer_lng, vendor_lat, vendor_lng),
                     "price": str(int(min_price)),
                     "status": "Available" if has_rooms else "Limited",
@@ -390,6 +398,9 @@ class CustomerRepository:
             return None
         vendor_id = vendor["_id"]
         bundle = self._get_vendor_bundle(vendor_id)
+        service_settings = bundle["profile_settings"].get("hotel_settings", {})
+        if not isinstance(service_settings, dict):
+            service_settings = {}
         customer_lat, customer_lng = self._get_customer_coords(customer_id)
         vendor_lat, vendor_lng = self._get_vendor_coords(bundle, bundle["category"])
         rooms = list(self.vendor_rooms.find({"vendor_id": vendor_id, "available": True}))
@@ -411,14 +422,14 @@ class CustomerRepository:
             min_price = min(float(r.get("base_price", 150.0)) for r in rooms)
         return {
             "id": str(vendor_id),
-            "title": bundle["vendor"].get("business_name") or bundle["profile"].get("business_name") or "Unnamed Hotel",
+            "title": service_settings.get("name") or bundle["vendor"].get("business_name") or bundle["profile"].get("business_name") or "Unnamed Hotel",
             "category": bundle["category"],
             "rating": str(bundle["rating"]),
             "reviews": str(bundle["reviews_count"]),
-            "location": bundle["general"].get("business_address") or bundle["business"].get("city") or "",
+            "location": service_settings.get("address") or service_settings.get("city") or bundle["general"].get("business_address") or bundle["business"].get("city") or "",
             "distance_km": self._distance_between_km(customer_lat, customer_lng, vendor_lat, vendor_lng),
-            "address": bundle["general"].get("business_address") or bundle["business"].get("address") or "",
-            "about": bundle["business"].get("business_description") or bundle["profile"].get("about_business") or "",
+            "address": service_settings.get("address") or bundle["general"].get("business_address") or bundle["business"].get("address") or "",
+            "about": service_settings.get("about") or bundle["business"].get("business_description") or bundle["profile"].get("about_business") or "",
             "image": next((image for room in rooms for image in (room.get("images") or []) if image), None)
             or bundle["cover_image"],
             "price": str(int(min_price)),
@@ -746,9 +757,14 @@ class CustomerRepository:
         offers_count = self.vendor_promotions.count_documents({"vendor_id": vendor_id, "active": True})
         opening_slots = bundle["general"].get("booking_availability_slots", [])
         customer_lat, customer_lng = self._get_customer_coords(customer_id)
-        vendor_lat, vendor_lng = self._get_vendor_coords(bundle, "hotel")
+        service_settings = bundle["profile_settings"].get(f"{str(bundle['category']).strip().lower()}_settings", {})
+        if not isinstance(service_settings, dict):
+            service_settings = {}
+        vendor_lat, vendor_lng = self._get_vendor_coords(bundle, bundle["category"])
         location = (
-            bundle["profile_settings"].get("location_label")
+            service_settings.get("address")
+            or service_settings.get("city")
+            or bundle["profile_settings"].get("location_label")
             or bundle["general"].get("business_address")
             or bundle["business"].get("address")
             or bundle["business"].get("city")
@@ -756,17 +772,18 @@ class CustomerRepository:
         )
         return {
             "id": str(vendor_id),
-            "name": bundle["vendor"].get("business_name") or bundle["profile"].get("business_name") or "Unnamed Restaurant",
+            "name": service_settings.get("name") or bundle["vendor"].get("business_name") or bundle["profile"].get("business_name") or "Unnamed Restaurant",
             "category": bundle["category"],
             "rating": bundle["rating"],
             "reviews_count": bundle["reviews_count"],
             "distance_km": self._distance_between_km(customer_lat, customer_lng, vendor_lat, vendor_lng),
             "location": location,
-            "address": bundle["general"].get("business_address") or bundle["business"].get("address"),
-            "city": bundle["business"].get("city"),
+            "address": service_settings.get("address") or bundle["general"].get("business_address") or bundle["business"].get("address"),
+            "city": service_settings.get("city") or bundle["business"].get("city"),
             "latitude": vendor_lat,
             "longitude": vendor_lng,
-            "about": bundle["business"].get("business_description")
+            "about": service_settings.get("about")
+            or bundle["business"].get("business_description")
             or bundle["profile"].get("about_business")
             or "Welcome to our venue.",
             "cover_image_url": bundle["cover_image"],
