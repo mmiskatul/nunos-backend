@@ -390,7 +390,15 @@ class CustomerRepository:
         rooms_count = self.vendor_rooms.count_documents({"vendor_id": vendor_id, "available": True})
         gallery_count = self.vendor_assets.count_documents({"vendor_id": vendor_id, "asset_type": "gallery"})
         offers_count = self.vendor_promotions.count_documents({"vendor_id": vendor_id, "active": True})
-        min_price = 150.0
+        active_offers = [self._serialize(doc) for doc in self.vendor_promotions.find(
+            {"vendor_id": vendor_id, "active": True}
+        ).sort("created_at", DESCENDING)]
+        amenities = []
+        for room in rooms:
+            for amenity in room.get("amenities") or []:
+                if amenity and amenity not in amenities:
+                    amenities.append(amenity)
+        min_price = 0.0
         if rooms:
             min_price = min(float(r.get("base_price", 150.0)) for r in rooms)
         return {
@@ -399,15 +407,16 @@ class CustomerRepository:
             "category": bundle["category"],
             "rating": str(bundle["rating"]),
             "reviews": str(bundle["reviews_count"]),
-            "location": f"{bundle['general'].get('business_address') or bundle['business'].get('city') or 'Qatar'}",
+            "location": bundle["general"].get("business_address") or bundle["business"].get("city") or "",
             "distance_km": self._distance_between_km(customer_lat, customer_lng, vendor_lat, vendor_lng),
-            "address": bundle["general"].get("business_address") or bundle["business"].get("address") or "Qatar",
-            "about": bundle["business"].get("business_description") or bundle["profile"].get("about_business") or "Welcome to our hotel.",
+            "address": bundle["general"].get("business_address") or bundle["business"].get("address") or "",
+            "about": bundle["business"].get("business_description") or bundle["profile"].get("about_business") or "",
             "image": next((image for room in rooms for image in (room.get("images") or []) if image), None)
             or bundle["cover_image"],
             "price": str(int(min_price)),
             "status": "Available",
-            "amenities": ["Free WiFi", "Breakfast", "Pool", "Gym", "Parking", "Room Service"],
+            "amenities": amenities,
+            "offers": active_offers,
             "tabs": {
                 "overview": True,
                 "rooms_count": int(rooms_count),
