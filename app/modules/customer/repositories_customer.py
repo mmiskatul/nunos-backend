@@ -648,7 +648,7 @@ class CustomerRepository:
         return profile
 
     def update_customer_profile(self, customer_id: str, data: dict[str, Any]) -> dict[str, Any]:
-        allowed = {key: value for key, value in data.items() if key in {"full_name", "email", "phone", "date_of_birth", "location_enabled", "latitude", "longitude"}}
+        allowed = {key: value for key, value in data.items() if key in {"full_name", "email", "phone", "date_of_birth", "location_enabled", "latitude", "longitude", "location_accuracy_meters"}}
         allowed["updated_at"] = datetime.now(UTC)
         self.users.update_one({"_id": self._oid(customer_id)}, {"$set": allowed})
         return self.get_customer_profile(customer_id)
