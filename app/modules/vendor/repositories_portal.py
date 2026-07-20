@@ -418,6 +418,10 @@ class VendorPortalRepository:
     def create_room(self, vendor_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         now = datetime.now(UTC)
         sanitized = self._sanitize_payload(payload)
+        profile = self.get_settings_profile(vendor_id)
+        sanitized.setdefault("location_label", profile.get("location_label") or profile.get("office_address"))
+        sanitized.setdefault("latitude", profile.get("latitude"))
+        sanitized.setdefault("longitude", profile.get("longitude"))
         inserted = self.rooms.insert_one(
             {
                 "vendor_id": ObjectId(vendor_id),
@@ -467,6 +471,10 @@ class VendorPortalRepository:
     def create_service(self, vendor_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         now = datetime.now(UTC)
         sanitized = self._sanitize_payload(payload)
+        profile = self.get_settings_profile(vendor_id)
+        sanitized.setdefault("location_label", profile.get("location_label") or profile.get("office_address"))
+        sanitized.setdefault("latitude", profile.get("latitude"))
+        sanitized.setdefault("longitude", profile.get("longitude"))
         inserted = self.services.insert_one(
             {
                 "vendor_id": ObjectId(vendor_id),

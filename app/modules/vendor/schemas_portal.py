@@ -1,4 +1,5 @@
 from datetime import date, datetime, time
+from typing import Any
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -254,6 +255,9 @@ class VendorSettingsProfileRequest(BaseModel):
     website: str | None = None
     map_embed_url: str | None = None
     avatar_url: str | None = None
+    restaurant_settings: dict[str, Any] = Field(default_factory=dict)
+    hotel_settings: dict[str, Any] = Field(default_factory=dict)
+    spa_settings: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("categories")
     @classmethod
