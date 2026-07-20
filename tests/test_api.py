@@ -537,7 +537,8 @@ async def test_customer_events_and_map_events_return_published_vendor_events(cli
                 "title": "Rooftop Summer Concert",
                 "category": "Event",
                 "event_type": "Concert",
-                "event_date": "2026-07-20",
+                # Keep the fixture active regardless of when CI runs.
+                "event_date": (now + timedelta(days=1)).date().isoformat(),
                 "start_time": "19:00:00",
                 "end_time": "22:00:00",
                 "timezone": "Asia/Dhaka",
