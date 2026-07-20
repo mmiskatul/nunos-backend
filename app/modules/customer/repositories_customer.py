@@ -257,7 +257,8 @@ class CustomerRepository:
             "verification": verification,
             "general": general_settings,
             "cover_image": (first_gallery or {}).get("asset_url"),
-            "rating": round(float(avg_row[0]["avg_rating"]), 1) if avg_row else 4.5,
+            # Do not invent ratings for providers without reviews.
+            "rating": round(float(avg_row[0]["avg_rating"]), 1) if avg_row else 0.0,
             "reviews_count": int(avg_row[0]["count"]) if avg_row else 0,
             "category": str(category),
             "active_offer": active_offer,
@@ -294,17 +295,19 @@ class CustomerRepository:
                 continue
 
             vendor_lat, vendor_lng = self._get_vendor_coords(bundle)
+            name = bundle["vendor"].get("business_name") or bundle["profile"].get("business_name")
+            if not name:
+                continue
             location = (
                 bundle["profile_settings"].get("location_label")
                 or bundle["general"].get("business_address")
                 or bundle["business"].get("address")
                 or bundle["business"].get("city")
-                or "Qatar"
             )
             cards.append(
                 {
                     "id": str(vendor_id),
-                    "name": bundle["vendor"].get("business_name") or bundle["profile"].get("business_name") or "Unnamed Restaurant",
+                    "name": name,
                     "category": bundle["category"],
                     "rating": bundle["rating"],
                     "avg_rating": bundle["rating"],
@@ -749,7 +752,7 @@ class CustomerRepository:
             "about": bundle["business"].get("business_description")
             or bundle["profile"].get("about_business")
             or "Welcome to our venue.",
-            "cover_image_url": bundle["cover_image"] or "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=1200",
+            "cover_image_url": bundle["cover_image"],
             "opening_hours": {
                 "monday_friday": "12:00 PM - 11:00 PM",
                 "saturday_sunday": "11:00 AM - 12:00 AM",
