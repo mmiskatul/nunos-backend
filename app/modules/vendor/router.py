@@ -34,6 +34,7 @@ from app.modules.vendor.schemas_portal import (
     VendorPasswordChangeRequest,
     VendorSettingsGeneralRequest,
     VendorSettingsProfileRequest,
+    VendorServiceSettings,
     VendorServiceSettingsRequest,
     VendorSupportTicketCreateRequest,
     VendorSupportTicketMessageRequest,
@@ -986,7 +987,7 @@ def update_vendor_service_settings(service_type: str, payload: VendorServiceSett
         raise HTTPException(status_code=400, detail="Unsupported service type.")
     profile = portal_service.repo.get_settings_profile(_vendor_id(current_vendor))
     merged = dict(profile.get(f"{normalized}_settings", {}) or {})
-    merged.update(payload.data.model_dump(exclude_unset=True))
+    merged.update((payload.data or VendorServiceSettings()).model_dump(exclude_unset=True))
     updated = portal_service.repo.update_settings_profile(_vendor_id(current_vendor), {f"{normalized}_settings": merged})
     return {"service_type": normalized, "settings": updated.get(f"{normalized}_settings", merged)}
 

@@ -299,11 +299,11 @@ class VendorServiceSettings(BaseModel):
 
 
 class VendorSettingsProfileRequest(BaseModel):
-    business_name: str
-    category: str
+    business_name: str = ""
+    category: str = ""
     categories: list[str] | None = None
-    email_address: str
-    phone_number: str
+    email_address: str = ""
+    phone_number: str = ""
     about_business: str = ""
     office_address: str | None = None
     latitude: float | None = None
@@ -331,7 +331,14 @@ class VendorSettingsProfileRequest(BaseModel):
 
 
 class VendorServiceSettingsRequest(BaseModel):
-    data: VendorServiceSettings = Field(default_factory=VendorServiceSettings)
+    data: VendorServiceSettings | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_direct_service_payload(cls, value):
+        if isinstance(value, dict) and "data" not in value:
+            return {"data": value}
+        return value
 
 
 class VendorLegalDocRequest(BaseModel):
