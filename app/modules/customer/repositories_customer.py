@@ -324,6 +324,11 @@ class CustomerRepository:
             # restaurant-specific identity for restaurant listings instead of
             # leaking the hotel's name into this feed.
             listing_category = "restaurant" if restaurant_settings.get("name") and primary_category != "restaurant" else primary_category
+            # The restaurant feed must not expose hotel-only records. A
+            # provider offering both services is still included through its
+            # explicitly configured restaurant identity.
+            if listing_category not in {"restaurant", "spa"}:
+                continue
             service_settings = self._service_settings(bundle, listing_category)
             if service_settings.get("published") is False:
                 continue
