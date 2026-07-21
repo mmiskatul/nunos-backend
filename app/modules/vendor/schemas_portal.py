@@ -268,23 +268,28 @@ class VendorServiceSettings(BaseModel):
         if not text:
             return ""
         import re
+        # Accept older saved values from the previous free-text field and
+        # normalize 24-hour input into the new quarter-hour AM/PM contract.
+        if " - " in text:
+            text = text.split(" - ", 1)[0].strip()
+        match_24 = re.fullmatch(r"([01]\d|2[0-3]):(00|15|30|45)", text)
+        if match_24:
+            from datetime import datetime as _datetime
+            return _datetime.strptime(text, "%H:%M").strftime("%I:%M %p")
         if not re.fullmatch(r"(?:0[1-9]|1[0-2]):(?:00|15|30|45) (?:AM|PM)", text):
             raise ValueError("Time must use 12-hour format with 00, 15, 30, or 45 minutes (for example 09:15 AM).")
         return text
 
-    @field_validator("latitude")
+    @field_validator("latitude", "longitude", mode="before")
     @classmethod
-    def validate_latitude(cls, value):
-        if value is not None and not -90 <= value <= 90:
-            raise ValueError("Latitude must be between -90 and 90.")
-        return value
-
-    @field_validator("longitude")
-    @classmethod
-    def validate_longitude(cls, value):
-        if value is not None and not -180 <= value <= 180:
-            raise ValueError("Longitude must be between -180 and 180.")
-        return value
+    def validate_coordinates(cls, value, info):
+        if value is None or value == "":
+            return None
+        numeric = float(value)
+        limit = 90 if info.field_name == "latitude" else 180
+        if not -limit <= numeric <= limit:
+            raise ValueError(f"{info.field_name.title()} must be within its valid geographic range.")
+        return numeric
 
     @field_validator("amenities", mode="before")
     @classmethod
