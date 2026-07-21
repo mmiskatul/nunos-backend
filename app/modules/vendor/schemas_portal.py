@@ -254,6 +254,7 @@ class VendorServiceSettings(BaseModel):
     closing_time: str = ""
     policy: str = ""
     amenities: list[str] = Field(default_factory=list)
+    published: bool | None = None
     model_config = ConfigDict(extra="allow")
 
     @field_validator("name", "address", "city", "phone", "email", "about", "policy", mode="before")

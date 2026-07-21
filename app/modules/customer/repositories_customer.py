@@ -323,6 +323,8 @@ class CustomerRepository:
             # leaking the hotel's name into this feed.
             listing_category = "restaurant" if restaurant_settings.get("name") and primary_category != "restaurant" else primary_category
             service_settings = self._service_settings(bundle, listing_category)
+            if service_settings.get("published") is False:
+                continue
             slots = bundle["general"].get("booking_availability_slots", [])
             if open_now is True and not slots:
                 continue
@@ -394,6 +396,8 @@ class CustomerRepository:
             vendor_id = vendor["_id"]
             bundle = self._get_vendor_bundle(vendor_id)
             service_settings = self._service_settings(bundle, "hotel")
+            if service_settings.get("published") is False:
+                continue
             rooms = list(self.vendor_rooms.find({"vendor_id": vendor_id, "available": True}))
             # Room inventory is the source of truth for hotel visibility. A
             # provider may have an old/misclassified profile category while
@@ -435,6 +439,8 @@ class CustomerRepository:
         vendor_id = vendor["_id"]
         bundle = self._get_vendor_bundle(vendor_id)
         service_settings = self._service_settings(bundle, "hotel")
+        if service_settings.get("published") is False:
+            return None
         customer_lat, customer_lng = self._get_customer_coords(customer_id)
         vendor_lat, vendor_lng = self._get_vendor_coords(bundle, bundle["category"])
         rooms = list(self.vendor_rooms.find({"vendor_id": vendor_id, "available": True}))
@@ -796,6 +802,8 @@ class CustomerRepository:
         opening_slots = bundle["general"].get("booking_availability_slots", [])
         customer_lat, customer_lng = self._get_customer_coords(customer_id)
         service_settings = self._service_settings(bundle, "restaurant")
+        if service_settings.get("published") is False:
+            return None
         vendor_lat, vendor_lng = self._get_vendor_coords(bundle, "restaurant")
         location = (
             service_settings.get("address")
