@@ -1137,7 +1137,12 @@ class VendorPortalRepository:
         current_general = current.get("general", {}) if isinstance(current.get("general"), dict) else {}
         vendor, _, _, verification = self._get_vendor_records(vendor_id)
 
-        next_profile = {**current_profile, **sanitized}
+        # Optional service blocks are independently owned. A profile update
+        # that omits Restaurant must not erase Hotel or Spa settings.
+        next_profile = {
+            **current_profile,
+            **{key: value for key, value in sanitized.items() if value is not None},
+        }
         next_category = (
             sanitized.get("category")
             or current_profile.get("category")

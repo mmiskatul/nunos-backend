@@ -256,6 +256,42 @@ class VendorServiceSettings(BaseModel):
     amenities: list[str] = Field(default_factory=list)
     model_config = ConfigDict(extra="allow")
 
+    @field_validator("name", "address", "city", "phone", "email", "about", "policy", mode="before")
+    @classmethod
+    def strip_text(cls, value):
+        return str(value or "").strip()
+
+    @field_validator("opening_time", "closing_time", mode="before")
+    @classmethod
+    def validate_time(cls, value):
+        text = str(value or "").strip().upper()
+        if not text:
+            return ""
+        import re
+        if not re.fullmatch(r"(?:0[1-9]|1[0-2]):(?:00|15|30|45) (?:AM|PM)", text):
+            raise ValueError("Time must use 12-hour format with 00, 15, 30, or 45 minutes (for example 09:15 AM).")
+        return text
+
+    @field_validator("latitude")
+    @classmethod
+    def validate_latitude(cls, value):
+        if value is not None and not -90 <= value <= 90:
+            raise ValueError("Latitude must be between -90 and 90.")
+        return value
+
+    @field_validator("longitude")
+    @classmethod
+    def validate_longitude(cls, value):
+        if value is not None and not -180 <= value <= 180:
+            raise ValueError("Longitude must be between -180 and 180.")
+        return value
+
+    @field_validator("amenities", mode="before")
+    @classmethod
+    def normalize_amenities(cls, value):
+        values = value if isinstance(value, list) else str(value or "").split(",")
+        return list(dict.fromkeys(str(item).strip() for item in values if str(item).strip()))
+
 
 class VendorSettingsProfileRequest(BaseModel):
     business_name: str
@@ -272,9 +308,9 @@ class VendorSettingsProfileRequest(BaseModel):
     website: str | None = None
     map_embed_url: str | None = None
     avatar_url: str | None = None
-    restaurant_settings: VendorServiceSettings = Field(default_factory=VendorServiceSettings)
-    hotel_settings: VendorServiceSettings = Field(default_factory=VendorServiceSettings)
-    spa_settings: VendorServiceSettings = Field(default_factory=VendorServiceSettings)
+    restaurant_settings: VendorServiceSettings | None = None
+    hotel_settings: VendorServiceSettings | None = None
+    spa_settings: VendorServiceSettings | None = None
 
     @field_validator("categories")
     @classmethod
