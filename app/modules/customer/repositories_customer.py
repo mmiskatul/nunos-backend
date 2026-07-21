@@ -356,6 +356,8 @@ class CustomerRepository:
                     "id": str(vendor_id),
                     "name": name,
                     "category": listing_category,
+                    "service_type": listing_category,
+                    "entity_type": listing_category,
                     "rating": bundle["rating"],
                     "avg_rating": bundle["rating"],
                     "reviews_count": bundle["reviews_count"],
@@ -414,6 +416,8 @@ class CustomerRepository:
                 {
                     "id": str(vendor_id),
                     "title": service_settings.get("name") or bundle["vendor"].get("business_name") or bundle["profile"].get("business_name") or "Unnamed Hotel",
+                    "service_type": "hotel",
+                    "entity_type": "hotel",
                     "rating": str(bundle["rating"]),
                     "reviews": str(bundle["reviews_count"]),
                     "location": f"{service_settings.get('address') or service_settings.get('city') or bundle['general'].get('business_address') or bundle['business'].get('city') or 'Qatar'}",
