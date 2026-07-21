@@ -299,6 +299,8 @@ class VendorServiceSettings(BaseModel):
 
 
 class VendorSettingsProfileRequest(BaseModel):
+    owner_full_name: str = ""
+    business_location_label: str | None = None
     business_name: str = ""
     category: str = ""
     categories: list[str] | None = None
