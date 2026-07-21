@@ -316,16 +316,22 @@ class CustomerRepository:
         for vendor in vendor_docs:
             vendor_id = vendor["_id"]
             bundle = self._get_vendor_bundle(vendor_id)
-            service_settings = self._service_settings(bundle)
+            primary_category = str(bundle.get("category") or "restaurant").strip().lower()
+            restaurant_settings = self._service_settings(bundle, "restaurant")
+            # A provider may offer both a hotel and a restaurant. Use the
+            # restaurant-specific identity for restaurant listings instead of
+            # leaking the hotel's name into this feed.
+            listing_category = "restaurant" if restaurant_settings.get("name") and primary_category != "restaurant" else primary_category
+            service_settings = self._service_settings(bundle, listing_category)
             slots = bundle["general"].get("booking_availability_slots", [])
             if open_now is True and not slots:
                 continue
             if with_offers is True and not bundle["active_offer"]:
                 continue
 
-            vendor_lat, vendor_lng = self._get_vendor_coords(bundle, bundle["category"])
+            vendor_lat, vendor_lng = self._get_vendor_coords(bundle, listing_category)
             room_image = None
-            if str(bundle["category"]).strip().lower() == "hotel":
+            if listing_category == "hotel":
                 room = self.vendor_rooms.find_one(
                     {"vendor_id": vendor_id, "available": True, "images": {"$exists": True, "$ne": []}},
                     {"images": 1},
@@ -347,7 +353,7 @@ class CustomerRepository:
                 {
                     "id": str(vendor_id),
                     "name": name,
-                    "category": bundle["category"],
+                    "category": listing_category,
                     "rating": bundle["rating"],
                     "avg_rating": bundle["rating"],
                     "reviews_count": bundle["reviews_count"],
@@ -789,8 +795,8 @@ class CustomerRepository:
         offers_count = self.vendor_promotions.count_documents({"vendor_id": vendor_id, "active": True})
         opening_slots = bundle["general"].get("booking_availability_slots", [])
         customer_lat, customer_lng = self._get_customer_coords(customer_id)
-        service_settings = self._service_settings(bundle)
-        vendor_lat, vendor_lng = self._get_vendor_coords(bundle, bundle["category"])
+        service_settings = self._service_settings(bundle, "restaurant")
+        vendor_lat, vendor_lng = self._get_vendor_coords(bundle, "restaurant")
         location = (
             service_settings.get("address")
             or service_settings.get("city")
@@ -803,7 +809,7 @@ class CustomerRepository:
         return {
             "id": str(vendor_id),
             "name": service_settings.get("name") or bundle["vendor"].get("business_name") or bundle["profile"].get("business_name") or "Unnamed Restaurant",
-            "category": bundle["category"],
+            "category": "restaurant",
             "rating": bundle["rating"],
             "reviews_count": bundle["reviews_count"],
             "distance_km": self._distance_between_km(customer_lat, customer_lng, vendor_lat, vendor_lng),
