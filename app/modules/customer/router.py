@@ -251,6 +251,14 @@ def get_spa_services(spa_id: str, customer_service: CustomerService = Depends(ge
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Spa not found.") from exc
 
 
+@router.get("/restaurants/{restaurant_id}/services", tags=["Customer - Restaurant"])
+def get_restaurant_services(restaurant_id: str, customer_service: CustomerService = Depends(get_customer_service)) -> dict:
+    try:
+        return {"items": customer_service.repo.list_restaurant_services(restaurant_id)}
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Restaurant not found.") from exc
+
+
 @router.get("/events", tags=["Customer - Events"])
 def list_events(
     limit: int = Query(default=20, ge=1, le=100),

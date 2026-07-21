@@ -849,6 +849,9 @@ class CustomerRepository:
         ).sort("created_at", DESCENDING)
         return [self._serialize(doc) for doc in docs]
 
+    def list_restaurant_services(self, restaurant_id: str) -> list[dict[str, Any]]:
+        return self.list_provider_services(restaurant_id)
+
     def get_provider_reviews_payload(self, provider_id: str) -> dict[str, Any]:
         docs = list(self.vendor_reviews.find({"vendor_id": self._oid(provider_id)}).sort("created_at", DESCENDING))
         total = len(docs)
