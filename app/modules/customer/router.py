@@ -134,6 +134,8 @@ def list_restaurants(
     open_now: bool | None = Query(default=None),
     top_rated: bool | None = Query(default=None),
     offers: bool | None = Query(default=None),
+    nearby: bool = Query(default=False),
+    max_distance_km: float = Query(default=50.0, gt=0, le=500),
     current_user: dict = Depends(get_current_user),
     customer_service: CustomerService = Depends(get_customer_service),
 ) -> dict:
@@ -145,6 +147,8 @@ def list_restaurants(
         open_now=open_now,
         top_rated=top_rated,
         with_offers=offers,
+        nearby=nearby,
+        max_distance_km=max_distance_km,
     )
 
 
@@ -216,8 +220,8 @@ def get_spa_reviews(spa_id: str, customer_service: CustomerService = Depends(get
 
 
 @router.get("/spas", tags=["Customer - Spa"])
-def list_spas(limit: int = Query(default=20, ge=1, le=100), skip: int = Query(default=0, ge=0), search: str | None = Query(default=None), current_user: dict = Depends(get_current_user), customer_service: CustomerService = Depends(get_customer_service)) -> dict:
-    return customer_service.repo.list_spas(current_user["id"], limit, skip, search)
+def list_spas(limit: int = Query(default=20, ge=1, le=100), skip: int = Query(default=0, ge=0), search: str | None = Query(default=None), nearby: bool = Query(default=False), max_distance_km: float = Query(default=50.0, gt=0, le=500), current_user: dict = Depends(get_current_user), customer_service: CustomerService = Depends(get_customer_service)) -> dict:
+    return customer_service.repo.list_spas(current_user["id"], limit, skip, search, nearby, max_distance_km)
 
 
 @router.get("/spas/{spa_id}", tags=["Customer - Spa"])
@@ -329,6 +333,8 @@ def list_hotels(
     limit: int = Query(default=20, ge=1, le=100),
     skip: int = Query(default=0, ge=0),
     search: str | None = Query(default=None),
+    nearby: bool = Query(default=False),
+    max_distance_km: float = Query(default=50.0, gt=0, le=500),
     current_user: dict = Depends(get_current_user),
     customer_service: CustomerService = Depends(get_customer_service),
 ) -> dict:
@@ -337,6 +343,8 @@ def list_hotels(
         limit=limit,
         skip=skip,
         search=search,
+        nearby=nearby,
+        max_distance_km=max_distance_km,
     )
 
 

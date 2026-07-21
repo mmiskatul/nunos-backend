@@ -301,6 +301,8 @@ class CustomerRepository:
         open_now: bool | None = None,
         top_rated: bool | None = None,
         with_offers: bool | None = None,
+        nearby: bool = False,
+        max_distance_km: float = 50.0,
     ) -> dict[str, Any]:
         query: dict[str, Any] = {"status": "approved"}
         if search:
@@ -332,6 +334,9 @@ class CustomerRepository:
                 continue
 
             vendor_lat, vendor_lng = self._get_vendor_coords(bundle, listing_category)
+            distance_km = self._distance_between_km(customer_lat, customer_lng, vendor_lat, vendor_lng)
+            if nearby and (distance_km is None or distance_km > max_distance_km):
+                continue
             room_image = None
             if listing_category == "hotel":
                 room = self.vendor_rooms.find_one(
@@ -361,7 +366,7 @@ class CustomerRepository:
                     "rating": bundle["rating"],
                     "avg_rating": bundle["rating"],
                     "reviews_count": bundle["reviews_count"],
-                    "distance_km": self._distance_between_km(customer_lat, customer_lng, vendor_lat, vendor_lng),
+                    "distance_km": distance_km,
                     "location": location,
                     "address": service_settings.get("address") or bundle["general"].get("business_address") or bundle["business"].get("address"),
                     "city": service_settings.get("city") or bundle["business"].get("city"),
@@ -385,6 +390,8 @@ class CustomerRepository:
         limit: int,
         skip: int,
         search: str | None = None,
+        nearby: bool = False,
+        max_distance_km: float = 50.0,
     ) -> dict[str, Any]:
         query: dict[str, Any] = {"status": "approved"}
         if search:
@@ -412,6 +419,9 @@ class CustomerRepository:
             has_rooms = len(rooms) > 0
             room_image = next((image for room in rooms for image in (room.get("images") or []) if image), None)
             vendor_lat, vendor_lng = self._get_vendor_coords(bundle, "hotel")
+            distance_km = self._distance_between_km(customer_lat, customer_lng, vendor_lat, vendor_lng)
+            if nearby and (distance_km is None or distance_km > max_distance_km):
+                continue
             cards.append(
                 {
                     "id": str(vendor_id),
@@ -421,7 +431,7 @@ class CustomerRepository:
                     "rating": str(bundle["rating"]),
                     "reviews": str(bundle["reviews_count"]),
                     "location": f"{service_settings.get('address') or service_settings.get('city') or bundle['general'].get('business_address') or bundle['business'].get('city') or 'Qatar'}",
-                    "distance_km": self._distance_between_km(customer_lat, customer_lng, vendor_lat, vendor_lng),
+                    "distance_km": distance_km,
                     "price": str(int(min_price)),
                     "status": "Available" if has_rooms else "Limited",
                     "is_open_now": self._service_is_open(service_settings, has_rooms),
@@ -593,7 +603,7 @@ class CustomerRepository:
         }
 
     def get_home_feed(self, customer_id: str) -> dict[str, Any]:
-        restaurants = self.list_restaurants(customer_id=customer_id, limit=50, skip=0).get("items", [])
+        restaurants = self.list_restaurants(customer_id=customer_id, limit=50, skip=0, nearby=True).get("items", [])
         featured = restaurants[:6]
         return {
             "greeting": "Good Morning",
@@ -609,11 +619,11 @@ class CustomerRepository:
         }
 
     def get_trending_hotels(self, customer_id: str, limit: int = 6) -> list[dict[str, Any]]:
-        restaurants = self.list_restaurants(customer_id=customer_id, limit=50, skip=0).get("items", [])
+        restaurants = self.list_hotels(customer_id=customer_id, limit=50, skip=0, nearby=True).get("items", [])
         trending: list[dict[str, Any]] = []
         for card in restaurants:
             vendor_id = self._oid(card["id"])
-            category = str(card.get("category") or "restaurant").strip().lower()
+            category = "hotel"
 
             # Trending Now is intentionally hotel-only. A hotel is eligible
             # only while it has at least one available room right now.
@@ -621,8 +631,6 @@ class CustomerRepository:
                 {"vendor_id": vendor_id, "available": True},
                 limit=1,
             ) > 0
-            if category != "hotel" and not has_available_room:
-                continue
             if not has_available_room:
                 continue
 
@@ -662,8 +670,8 @@ class CustomerRepository:
         )
         return trending[: max(1, min(limit, 50))]
 
-    def list_spas(self, customer_id: str, limit: int, skip: int, search: str | None = None) -> dict[str, Any]:
-        result = self.list_restaurants(customer_id, limit=100, skip=0, search=search)
+    def list_spas(self, customer_id: str, limit: int, skip: int, search: str | None = None, nearby: bool = False, max_distance_km: float = 50.0) -> dict[str, Any]:
+        result = self.list_restaurants(customer_id, limit=100, skip=0, search=search, nearby=nearby, max_distance_km=max_distance_km)
         items = [item for item in result.get("items", []) if str(item.get("category", "")).lower() == "spa"]
         for item in items:
             item["title"] = item.get("name") or "Spa"
