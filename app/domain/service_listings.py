@@ -2,6 +2,8 @@
 
 from typing import Final
 
+__all__ = ["SERVICE_TYPES", "SERVICE_COLLECTIONS", "normalize_service_type", "collection_name_for"]
+
 SERVICE_TYPES: Final[tuple[str, ...]] = ("restaurant", "hotel", "spa")
 SERVICE_COLLECTIONS: Final[dict[str, str]] = {
     "restaurant": "restaurants",
