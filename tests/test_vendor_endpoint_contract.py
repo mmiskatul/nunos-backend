@@ -149,3 +149,23 @@ def test_asset_registration_rejects_unsafe_url_schemes():
         asset_type="gallery",
     )
     assert payload.asset_url.startswith("https://")
+
+
+def test_mobile_service_alias_endpoints_exist(app):
+    actual = {
+        (method, route.path)
+        for route in app.routes
+        for method in (getattr(route, "methods", None) or set())
+    }
+    expected = {
+        ("GET", "/api/v1/restaurants"),
+        ("GET", "/api/v1/restaurants/{restaurant_id}"),
+        ("GET", "/api/v1/restaurants/{restaurant_id}/menu"),
+        ("GET", "/api/v1/hotels"),
+        ("GET", "/api/v1/hotels/{hotel_id}"),
+        ("GET", "/api/v1/hotels/{hotel_id}/rooms"),
+        ("GET", "/api/v1/spas"),
+        ("GET", "/api/v1/spas/{spa_id}"),
+        ("GET", "/api/v1/spas/{spa_id}/services"),
+    }
+    assert expected <= actual

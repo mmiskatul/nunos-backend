@@ -9,6 +9,8 @@ from pymongo import DESCENDING
 from pymongo.collection import Collection
 from pymongo.database import Database
 
+from app.domain.service_listings import SERVICE_TYPES, collection_name_for, normalize_service_type
+
 
 class VendorPortalRepository:
     def __init__(self, db: Database):
@@ -29,9 +31,7 @@ class VendorPortalRepository:
         # These are publication projections; operational data remains keyed
         # by vendor_id in the existing vendor collections.
         self.service_collections: dict[str, Collection] = {
-            "restaurant": db["restaurants"],
-            "hotel": db["hotels"],
-            "spa": db["spas"],
+            service_type: db[collection_name_for(service_type)] for service_type in SERVICE_TYPES
         }
 
         # Indexes are installed out of band by the deployment migration. This
@@ -897,10 +897,8 @@ class VendorPortalRepository:
 
     def sync_service_listing(self, vendor_id: str, service_type: str, settings: dict[str, Any]) -> dict[str, Any]:
         """Publish one service identity into its dedicated public collection."""
-        normalized = service_type.strip().lower()
-        collection = self.service_collections.get(normalized)
-        if collection is None:
-            raise ValueError("Unsupported service type.")
+        normalized = normalize_service_type(service_type)
+        collection = self.service_collections[normalized]
 
         now = datetime.now(UTC)
         payload = self._sanitize_payload(dict(settings))

@@ -95,6 +95,14 @@ endpoints:
 - `GET /api/v1/customer/hotels`
 - `GET /api/v1/customer/spas`
 
+The mobile app also has dedicated top-level aliases for the same service
+resources, including details, menus/services, galleries, offers, reviews, and
+bookings:
+
+- `GET /api/v1/restaurants`
+- `GET /api/v1/hotels`
+- `GET /api/v1/spas`
+
 Service names are saved independently through
 `PATCH /api/v1/vendor/settings/services/{restaurant|hotel|spa}` with a payload
 such as `{"data": {"name": "Nuno Garden", "published": true}}`.

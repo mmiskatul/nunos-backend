@@ -16,6 +16,7 @@ from app.modules.vendor.routes_users import router as vendor_users_router
 
 # Module routers — customer
 from app.modules.customer.router import router as customer_router
+from app.modules.customer.routes_service_aliases import router as customer_service_alias_router
 from app.modules.customer.routes_ai_concierge import router as customer_ai_concierge_router
 
 # Module routers — platform admin
@@ -42,6 +43,7 @@ api_router.include_router(legal_router)
 # ── Customer module (home, restaurants, spas, events, hotels, bookings…) ──
 api_router.include_router(customer_ai_concierge_router)
 api_router.include_router(customer_router)
+api_router.include_router(customer_service_alias_router)
 
 # ── Vendor auth ────────────────────────────────────────────────────────────
 api_router.include_router(vendor_auth_router)

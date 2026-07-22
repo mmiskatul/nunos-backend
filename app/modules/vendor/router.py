@@ -39,6 +39,7 @@ from app.modules.vendor.schemas_portal import (
     VendorSupportTicketCreateRequest,
     VendorSupportTicketMessageRequest,
 )
+from app.domain.service_listings import normalize_service_type
 from app.modules.vendor.service_auth import VendorAuthService
 from app.modules.vendor.service_portal import VendorPortalService
 
@@ -973,8 +974,9 @@ def update_vendor_profile_settings(
 
 @router.get("/settings/services/{service_type}", tags=["Vendor - Settings"])
 def get_vendor_service_settings(service_type: str, current_vendor: dict = Depends(get_current_vendor), portal_service: VendorPortalService = Depends(get_vendor_portal_service)) -> dict:
-    normalized = service_type.strip().lower()
-    if normalized not in {"restaurant", "hotel", "spa"}:
+    try:
+        normalized = normalize_service_type(service_type)
+    except ValueError:
         raise HTTPException(status_code=400, detail="Unsupported service type.")
     profile = portal_service.repo.get_settings_profile(_vendor_id(current_vendor))
     return {"service_type": normalized, "settings": profile.get(f"{normalized}_settings", {})}
@@ -982,8 +984,9 @@ def get_vendor_service_settings(service_type: str, current_vendor: dict = Depend
 
 @router.patch("/settings/services/{service_type}", tags=["Vendor - Settings"])
 def update_vendor_service_settings(service_type: str, payload: VendorServiceSettingsRequest, current_vendor: dict = Depends(get_current_vendor), portal_service: VendorPortalService = Depends(get_vendor_portal_service)) -> dict:
-    normalized = service_type.strip().lower()
-    if normalized not in {"restaurant", "hotel", "spa"}:
+    try:
+        normalized = normalize_service_type(service_type)
+    except ValueError:
         raise HTTPException(status_code=400, detail="Unsupported service type.")
     profile = portal_service.repo.get_settings_profile(_vendor_id(current_vendor))
     merged = dict(profile.get(f"{normalized}_settings", {}) or {})
