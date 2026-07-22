@@ -25,6 +25,14 @@ class VendorPortalRepository:
         self.support_tickets: Collection = db["vendor_support_tickets"]
         self.notifications: Collection = db["vendor_notifications"]
         self.notification_settings: Collection = db["vendor_notification_settings"]
+        # Public service listings are intentionally split by service type.
+        # These are publication projections; operational data remains keyed
+        # by vendor_id in the existing vendor collections.
+        self.service_collections: dict[str, Collection] = {
+            "restaurant": db["restaurants"],
+            "hotel": db["hotels"],
+            "spa": db["spas"],
+        }
 
         # Indexes are installed out of band by the deployment migration. This
         # constructor runs per request and must remain free of database writes.
@@ -887,6 +895,30 @@ class VendorPortalRepository:
         doc.pop("vendor_id", None)
         return doc
 
+    def sync_service_listing(self, vendor_id: str, service_type: str, settings: dict[str, Any]) -> dict[str, Any]:
+        """Publish one service identity into its dedicated public collection."""
+        normalized = service_type.strip().lower()
+        collection = self.service_collections.get(normalized)
+        if collection is None:
+            raise ValueError("Unsupported service type.")
+
+        now = datetime.now(UTC)
+        payload = self._sanitize_payload(dict(settings))
+        payload.update({
+            "vendor_id": ObjectId(vendor_id),
+            "service_type": normalized,
+            # A listing is public only after the vendor explicitly publishes it.
+            "published": bool(payload.get("published") is True),
+            "updated_at": now,
+        })
+        payload.setdefault("created_at", now)
+        collection.update_one(
+            {"vendor_id": ObjectId(vendor_id)},
+            {"$set": payload, "$setOnInsert": {"created_at": now}},
+            upsert=True,
+        )
+        return self._serialize(collection.find_one({"vendor_id": ObjectId(vendor_id)})) or {}
+
     def get_settings_general(self, vendor_id: str) -> dict[str, Any]:
         settings_general = self.get_settings(vendor_id).get("general", {})
         vendor, profile, business, _ = self._get_vendor_records(vendor_id)
@@ -1208,6 +1240,10 @@ class VendorPortalRepository:
             },
             upsert=True,
         )
+        for service_type in ("restaurant", "hotel", "spa"):
+            service_settings = next_profile.get(f"{service_type}_settings")
+            if isinstance(service_settings, dict):
+                self.sync_service_listing(vendor_id, service_type, service_settings)
         return self.get_settings_profile(vendor_id)
 
     # ------------------------------------------------------------------

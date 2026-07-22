@@ -56,6 +56,13 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
 
     await db.offers.create_index([("listing_id", ASCENDING), ("promo_code", ASCENDING)])
 
+    # Public service listings are separated so each app feed can only query
+    # its own published entity type.
+    for collection_name in ("restaurants", "hotels", "spas"):
+        await db[collection_name].create_index("vendor_id", unique=True)
+        await db[collection_name].create_index("published")
+        await db[collection_name].create_index("updated_at")
+
 
 async def ensure_platform_admin(db: AsyncIOMotorDatabase, settings: Settings) -> None:
     if not settings.platform_admin_email or not settings.platform_admin_password:

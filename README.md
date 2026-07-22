@@ -84,6 +84,21 @@ python scripts/seed_demo.py
 - `DELETE /api/v1/listings/{listing_id}/favorite`
 - `GET /api/v1/listings/me/favorites`
 
+### Published service feeds
+
+Vendor service identities are projected into separate MongoDB collections when
+the vendor updates a service listing: `restaurants`, `hotels`, and `spas`.
+Only records with `published: true` are returned by the corresponding customer
+endpoints:
+
+- `GET /api/v1/customer/restaurants`
+- `GET /api/v1/customer/hotels`
+- `GET /api/v1/customer/spas`
+
+Service names are saved independently through
+`PATCH /api/v1/vendor/settings/services/{restaurant|hotel|spa}` with a payload
+such as `{"data": {"name": "Nuno Garden", "published": true}}`.
+
 ### Bookings
 - `POST /api/v1/bookings`
 - `GET /api/v1/bookings/{id}`

@@ -85,6 +85,11 @@ def ensure_mongodb_indexes(db: Database) -> None:
     db["vendor_notifications"].create_index([("vendor_id", ASCENDING), ("created_at", DESCENDING)])
     db["vendor_notification_settings"].create_index("vendor_id", unique=True)
 
+    for collection_name in ("restaurants", "hotels", "spas"):
+        db[collection_name].create_index("vendor_id", unique=True)
+        db[collection_name].create_index("published")
+        db[collection_name].create_index("updated_at")
+
     db["customer_recent_searches"].create_index([("customer_id", ASCENDING), ("created_at", DESCENDING)])
     db["customer_saved_items"].create_index(
         [("customer_id", ASCENDING), ("entity_type", ASCENDING), ("entity_id", ASCENDING)],
