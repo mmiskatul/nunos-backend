@@ -172,6 +172,70 @@ def test_published_service_types_use_independent_collections():
     assert [row["_id"] for row in customer._published_vendor_docs("spa")] == [vendor_id]
 
 
+def test_unpublished_spa_is_not_counted_before_projection_sync():
+    database = mongomock.MongoClient().nuno
+    published_vendor_id = ObjectId()
+    unpublished_vendor_id = ObjectId()
+    database.vendors.insert_many(
+        [
+            {
+                "_id": published_vendor_id,
+                "status": "approved",
+                "business_name": "Published Wellness",
+            },
+            {
+                "_id": unpublished_vendor_id,
+                "status": "approved",
+                "business_name": "Private Wellness",
+            },
+        ]
+    )
+    database.vendor_profiles.insert_many(
+        [
+            {"vendor_id": published_vendor_id, "category": "Spa"},
+            {"vendor_id": unpublished_vendor_id, "category": "Spa"},
+        ]
+    )
+    database.vendor_portal_settings.insert_many(
+        [
+            {
+                "vendor_id": published_vendor_id,
+                "profile": {
+                    "spa_settings": {
+                        "name": "Published Wellness",
+                        "published": True,
+                    }
+                },
+            },
+            {
+                "vendor_id": unpublished_vendor_id,
+                "profile": {
+                    "spa_settings": {
+                        "name": "Private Wellness",
+                        "published": False,
+                    }
+                },
+            },
+        ]
+    )
+
+    repository = CustomerRepository(database)
+    categories = repository.list_categories()["items"]
+    counts = {item["key"]: item["count"] for item in categories}
+    spas = repository.list_spas(str(ObjectId()), limit=20, skip=0)
+
+    assert counts["spa"] == 1
+    assert spas["total"] == 1
+    assert spas["items"][0]["name"] == "Published Wellness"
+    assert repository.list_spas(
+        str(ObjectId()),
+        limit=20,
+        skip=0,
+        search="Private Wellness",
+    )["total"] == 0
+    assert repository._is_public_service(unpublished_vendor_id, "spa") is False
+
+
 def test_spa_detail_checks_spa_publication_instead_of_restaurant_publication():
     database = mongomock.MongoClient().nuno
     vendor_id = ObjectId()

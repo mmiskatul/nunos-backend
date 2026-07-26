@@ -90,28 +90,95 @@ class CustomerRepository:
         user = self.users.find_one({"_id": self._oid(customer_id)}, {"latitude": 1, "longitude": 1}) or {}
         return self._to_float(user.get("latitude")), self._to_float(user.get("longitude"))
 
-    def _published_vendor_docs(self, service_type: str, search: str | None = None) -> list[dict[str, Any]] | None:
-        """Return dedicated published listings, or None before migration."""
-        collection = self.public_service_collections[normalize_service_type(service_type)]
-        if collection.count_documents({}) == 0:
-            return None
-        public_query: dict[str, Any] = {"published": True}
-        if search:
-            public_query["$or"] = [
-                {"name": {"$regex": search, "$options": "i"}},
-                {"city": {"$regex": search, "$options": "i"}},
-                {"address": {"$regex": search, "$options": "i"}},
-            ]
-        vendor_ids = [doc["vendor_id"] for doc in collection.find(public_query, {"vendor_id": 1})]
-        if not vendor_ids:
+    def _published_vendor_docs(
+        self,
+        service_type: str,
+        search: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return approved vendors that explicitly published this service."""
+        normalized = normalize_service_type(service_type)
+        collection = self.public_service_collections[normalized]
+        listing_docs = list(collection.find({}))
+        listings_by_vendor = {
+            row["vendor_id"]: row
+            for row in listing_docs
+            if isinstance(row.get("vendor_id"), ObjectId)
+        }
+        public_vendor_ids = {
+            vendor_id
+            for vendor_id, row in listings_by_vendor.items()
+            if row.get("published") is True
+        }
+
+        settings_key = f"{normalized}_settings"
+        settings_path = f"profile.{settings_key}"
+        settings_docs = list(
+            self.vendor_portal_settings.find(
+                {f"{settings_path}.published": True},
+                {"vendor_id": 1, settings_path: 1},
+            )
+        )
+        settings_by_vendor = {
+            row["vendor_id"]: (
+                ((row.get("profile") or {}).get(settings_key) or {})
+            )
+            for row in settings_docs
+            if isinstance(row.get("vendor_id"), ObjectId)
+        }
+
+        # During a partial projection migration, use explicitly published
+        # profile settings only when this service has no dedicated listing yet.
+        public_vendor_ids.update(
+            vendor_id
+            for vendor_id in settings_by_vendor
+            if vendor_id not in listings_by_vendor
+        )
+        if not public_vendor_ids:
             return []
-        return list(self.vendors.find({"_id": {"$in": vendor_ids}, "status": "approved"}).sort("created_at", DESCENDING))
+
+        vendors = list(
+            self.vendors.find(
+                {"_id": {"$in": list(public_vendor_ids)}, "status": "approved"}
+            ).sort("created_at", DESCENDING)
+        )
+        needle = str(search or "").strip().casefold()
+        if not needle:
+            return vendors
+
+        def matches_search(vendor: dict[str, Any]) -> bool:
+            vendor_id = vendor["_id"]
+            listing = listings_by_vendor.get(vendor_id, {})
+            settings = settings_by_vendor.get(vendor_id, {})
+            values = (
+                listing.get("name"),
+                listing.get("title"),
+                listing.get("city"),
+                listing.get("address"),
+                settings.get("name"),
+                settings.get("city"),
+                settings.get("address"),
+                vendor.get("business_name"),
+                vendor.get("owner_full_name"),
+                vendor.get("email"),
+            )
+            return any(needle in str(value or "").casefold() for value in values)
+
+        return [vendor for vendor in vendors if matches_search(vendor)]
 
     def _is_public_service(self, vendor_id: ObjectId, service_type: str) -> bool:
-        collection = self.public_service_collections[normalize_service_type(service_type)]
-        if collection.count_documents({}) == 0:
-            return True  # Backward-compatible behavior before projection migration.
-        return bool(collection.find_one({"vendor_id": vendor_id, "published": True}, {"_id": 1}))
+        normalized = normalize_service_type(service_type)
+        collection = self.public_service_collections[normalized]
+        listing = collection.find_one({"vendor_id": vendor_id}, {"published": 1})
+        if listing is not None:
+            return listing.get("published") is True
+        settings = self.vendor_portal_settings.find_one(
+            {"vendor_id": vendor_id},
+            {f"profile.{normalized}_settings.published": 1},
+        ) or {}
+        service_settings = (
+            (settings.get("profile") or {}).get(f"{normalized}_settings") or {}
+        )
+        return service_settings.get("published") is True
 
     def _vendor_notification_settings(self, vendor_id: ObjectId) -> dict[str, bool]:
         setting = self.vendor_notification_settings.find_one({"vendor_id": vendor_id}) or {}
@@ -519,16 +586,7 @@ class CustomerRepository:
         nearby: bool = False,
         max_distance_km: float = 50.0,
     ) -> dict[str, Any]:
-        query: dict[str, Any] = {"status": "approved"}
-        if search:
-            query["$or"] = [
-                {"business_name": {"$regex": search, "$options": "i"}},
-                {"owner_full_name": {"$regex": search, "$options": "i"}},
-                {"email": {"$regex": search, "$options": "i"}},
-            ]
         vendor_docs = self._published_vendor_docs("restaurant", search=search)
-        if vendor_docs is None:
-            vendor_docs = list(self.vendors.find(query).sort("created_at", DESCENDING))
         cards: list[dict[str, Any]] = []
         customer_lat, customer_lng = self._get_customer_coords(customer_id)
         customer_lat, customer_lng = self._get_customer_coords(customer_id)
@@ -615,14 +673,7 @@ class CustomerRepository:
         nearby: bool = False,
         max_distance_km: float = 50.0,
     ) -> dict[str, Any]:
-        query: dict[str, Any] = {"status": "approved"}
-        if search:
-            query["$or"] = [
-                {"business_name": {"$regex": search, "$options": "i"}},
-            ]
         vendor_docs = self._published_vendor_docs("hotel", search=search)
-        if vendor_docs is None:
-            vendor_docs = list(self.vendors.find(query).sort("created_at", DESCENDING))
         cards: list[dict[str, Any]] = []
         customer_lat, customer_lng = self._get_customer_coords(customer_id)
         for vendor in vendor_docs:
@@ -911,37 +962,17 @@ class CustomerRepository:
 
     def list_spas(self, customer_id: str, limit: int, skip: int, search: str | None = None, nearby: bool = False, max_distance_km: float = 50.0) -> dict[str, Any]:
         public_spas = self._published_vendor_docs("spa", search=search)
-        if public_spas is None:
-            items = []
-            customer_lat, customer_lng = self._get_customer_coords(customer_id)
-            for vendor in self.vendors.find({"status": "approved"}).sort("created_at", DESCENDING):
-                bundle = self._get_vendor_bundle(vendor["_id"], "spa")
-                settings = self._service_settings(bundle, "spa")
-                category = str(bundle.get("category") or "").strip().lower()
-                if category != "spa" and not settings.get("name"):
-                    continue
-                name = settings.get("name") or vendor.get("business_name") or "Unnamed Spa"
-                if search and search.lower() not in name.lower():
-                    continue
-                lat, lng = self._get_vendor_coords(bundle, "spa")
-                distance = self._distance_between_km(customer_lat, customer_lng, lat, lng)
-                if nearby and (distance is None or distance > max_distance_km):
-                    continue
-                items.append({"id": str(vendor["_id"]), "name": name, "title": name, "category": "spa", "service_type": "spa", "entity_type": "spa", "rating": bundle["rating"], "reviews_count": bundle["reviews_count"], "distance_km": distance, "location": settings.get("address") or settings.get("city"), "cover_image_url": bundle["cover_image"]})
-        else:
-            items = []
-            customer_lat, customer_lng = self._get_customer_coords(customer_id)
-            for vendor in public_spas:
-                bundle = self._get_vendor_bundle(vendor["_id"], "spa")
-                settings = self._service_settings(bundle, "spa")
-                name = settings.get("name") or vendor.get("business_name") or "Unnamed Spa"
-                if search and search.lower() not in name.lower():
-                    continue
-                lat, lng = self._get_vendor_coords(bundle, "spa")
-                distance = self._distance_between_km(customer_lat, customer_lng, lat, lng)
-                if nearby and (distance is None or distance > max_distance_km):
-                    continue
-                items.append({"id": str(vendor["_id"]), "name": name, "title": name, "category": "spa", "service_type": "spa", "entity_type": "spa", "rating": bundle["rating"], "reviews_count": bundle["reviews_count"], "distance_km": distance, "location": settings.get("address") or settings.get("city"), "cover_image_url": bundle["cover_image"]})
+        items = []
+        customer_lat, customer_lng = self._get_customer_coords(customer_id)
+        for vendor in public_spas:
+            bundle = self._get_vendor_bundle(vendor["_id"], "spa")
+            settings = self._service_settings(bundle, "spa")
+            name = settings.get("name") or vendor.get("business_name") or "Unnamed Spa"
+            lat, lng = self._get_vendor_coords(bundle, "spa")
+            distance = self._distance_between_km(customer_lat, customer_lng, lat, lng)
+            if nearby and (distance is None or distance > max_distance_km):
+                continue
+            items.append({"id": str(vendor["_id"]), "name": name, "title": name, "category": "spa", "service_type": "spa", "entity_type": "spa", "rating": bundle["rating"], "reviews_count": bundle["reviews_count"], "distance_km": distance, "location": settings.get("address") or settings.get("city"), "cover_image_url": bundle["cover_image"]})
         for item in items:
             item["title"] = item.get("name") or "Spa"
             item["type"] = item.get("category") or "Wellness"
