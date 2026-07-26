@@ -1525,10 +1525,20 @@ class VendorPortalRepository:
     def list_notifications(self, vendor_id: str, limit: int, skip: int) -> dict[str, Any]:
         query = {"vendor_id": ObjectId(vendor_id)}
         total = int(self.notifications.count_documents(query))
+        unread_count = int(
+            self.notifications.count_documents(
+                {
+                    **query,
+                    "read": {"$ne": True},
+                    "is_read": {"$ne": True},
+                }
+            )
+        )
         docs = self.notifications.find(query).sort("created_at", DESCENDING).skip(skip).limit(limit)
         return {
             "items": [self._serialize(doc) for doc in docs],
             "total": total,
+            "unread_count": unread_count,
             "settings": self.get_notification_settings(vendor_id),
         }
 
