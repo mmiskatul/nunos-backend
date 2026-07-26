@@ -357,11 +357,20 @@ class VendorPortalRepository:
         return max(int((amount / currency_unit) * points_per_currency), 0) if currency_unit > 0 else 0
 
     def reschedule_booking(self, vendor_id: str, booking_id: str, date: str, time: str, note: str | None = None) -> dict[str, Any] | None:
+        object_id = ObjectId(booking_id)
+        vendor_object_id = ObjectId(vendor_id)
+        booking = self.bookings.find_one({"_id": object_id, "vendor_id": vendor_object_id})
+        if not booking:
+            return None
+        booking_status = str(booking.get("status") or "").strip().lower().replace("_", " ")
+        if booking_status not in {"pending", "confirmed", "check in"}:
+            raise ValueError("Only active bookings can be rescheduled.")
+
         payload: dict[str, Any] = {"scheduled_date": date, "scheduled_time": time, "updated_at": datetime.now(UTC)}
         if note:
             payload["reschedule_note"] = note
         self.bookings.update_one(
-            {"_id": ObjectId(booking_id), "vendor_id": ObjectId(vendor_id)},
+            {"_id": object_id, "vendor_id": vendor_object_id},
             {"$set": payload},
         )
         return self.get_booking(vendor_id, booking_id)

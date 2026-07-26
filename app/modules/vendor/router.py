@@ -256,6 +256,8 @@ def reschedule_vendor_booking(
         row = portal_service.repo.reschedule_booking(vendor_id, booking_id, payload.date, payload.time, payload.note)
     except InvalidId as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found.")
     return row

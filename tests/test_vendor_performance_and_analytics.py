@@ -64,6 +64,36 @@ def test_occupancy_only_counts_bookings_for_requested_date():
     assert metrics["occupancy_rate"] == 10.0
 
 
+def test_completed_vendor_booking_cannot_be_rescheduled():
+    database = mongomock.MongoClient().nuno
+    vendor_id = ObjectId()
+    booking_id = database.vendor_bookings.insert_one(
+        {
+            "vendor_id": vendor_id,
+            "status": "complete",
+            "scheduled_date": "2026-07-26",
+            "scheduled_time": "18:00",
+        }
+    ).inserted_id
+    repository = VendorPortalRepository(database)
+
+    try:
+        repository.reschedule_booking(
+            str(vendor_id),
+            str(booking_id),
+            "2026-07-27",
+            "19:00",
+        )
+    except ValueError as exc:
+        assert str(exc) == "Only active bookings can be rescheduled."
+    else:
+        raise AssertionError("Completed booking was rescheduled")
+
+    booking = database.vendor_bookings.find_one({"_id": booking_id})
+    assert booking["scheduled_date"] == "2026-07-26"
+    assert booking["scheduled_time"] == "18:00"
+
+
 def test_analytics_uses_selected_range_and_returns_real_csv():
     database = mongomock.MongoClient().nuno
     vendor_id = ObjectId()
