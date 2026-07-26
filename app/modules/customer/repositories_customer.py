@@ -807,18 +807,31 @@ class CustomerRepository:
         result = self._serialize(booking) or {}
         vendor_id = booking.get("vendor_id")
         if not isinstance(vendor_id, ObjectId):
-            return result
+            try:
+                vendor_id = ObjectId(str(vendor_id))
+            except (InvalidId, TypeError):
+                return result
 
         bundle = self._get_vendor_bundle(vendor_id)
         provider_type = str(booking.get("provider_type") or "restaurant").lower()
-        if provider_type == "event" and isinstance(booking.get("event_id"), ObjectId):
-            event = self.vendor_events.find_one({"_id": booking["event_id"]}) or {}
+        event_id = booking.get("event_id")
+        if provider_type == "event" and not isinstance(event_id, ObjectId):
+            try:
+                event_id = ObjectId(str(event_id))
+            except (InvalidId, TypeError):
+                event_id = None
+        if provider_type == "event" and isinstance(event_id, ObjectId):
+            event = self.vendor_events.find_one({"_id": event_id}) or {}
+            provider_name = event.get("title") or result.get("service") or "Event"
+            provider_area = event.get("venue") or event.get("location") or "Location unavailable"
             result.update({
-                "provider_name": event.get("title") or result.get("service") or "Event",
-                "provider_area": event.get("venue") or event.get("location") or "Location unavailable",
-                "provider_address": event.get("venue") or event.get("location"),
+                "provider_name": provider_name,
+                "provider_area": provider_area,
+                "provider_address": provider_area,
                 "provider_phone": bundle.get("general", {}).get("front_desk_phone"),
                 "provider_image": event.get("banner_image_url") or bundle.get("cover_image"),
+                "name": provider_name,
+                "location": provider_area,
             })
             return result
 
@@ -831,12 +844,16 @@ class CustomerRepository:
             or bundle.get("business", {}).get("address")
             or bundle.get("business", {}).get("city")
         )
+        provider_name = settings.get("name") or bundle.get("vendor", {}).get("business_name") or result.get("service") or "Provider"
+        provider_area = address or "Location unavailable"
         result.update({
-            "provider_name": settings.get("name") or bundle.get("vendor", {}).get("business_name") or result.get("service") or "Provider",
-            "provider_area": address or "Location unavailable",
+            "provider_name": provider_name,
+            "provider_area": provider_area,
             "provider_address": address,
             "provider_phone": settings.get("phone") or bundle.get("general", {}).get("front_desk_phone"),
             "provider_image": bundle.get("cover_image"),
+            "name": provider_name,
+            "location": provider_area,
         })
         return result
 
