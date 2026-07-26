@@ -802,6 +802,44 @@ class CustomerRepository:
         docs = self.notifications.find(query).sort("created_at", DESCENDING).skip(skip).limit(limit)
         return {"items": [self._serialize(doc) for doc in docs], "total": total, "unread_count": int(self.notifications.count_documents({**query, "read": {"$ne": True}}))}
 
+    def _enrich_customer_booking(self, booking: dict[str, Any]) -> dict[str, Any]:
+        """Attach current provider/event details to a customer booking."""
+        result = self._serialize(booking) or {}
+        vendor_id = booking.get("vendor_id")
+        if not isinstance(vendor_id, ObjectId):
+            return result
+
+        bundle = self._get_vendor_bundle(vendor_id)
+        provider_type = str(booking.get("provider_type") or "restaurant").lower()
+        if provider_type == "event" and isinstance(booking.get("event_id"), ObjectId):
+            event = self.vendor_events.find_one({"_id": booking["event_id"]}) or {}
+            result.update({
+                "provider_name": event.get("title") or result.get("service") or "Event",
+                "provider_area": event.get("venue") or event.get("location") or "Location unavailable",
+                "provider_address": event.get("venue") or event.get("location"),
+                "provider_phone": bundle.get("general", {}).get("front_desk_phone"),
+                "provider_image": event.get("banner_image_url") or bundle.get("cover_image"),
+            })
+            return result
+
+        service_type = "hotel" if provider_type in {"hotel", "hotel_room"} else "spa" if provider_type == "spa" else "restaurant"
+        settings = self._service_settings(bundle, service_type)
+        address = (
+            settings.get("address")
+            or settings.get("city")
+            or bundle.get("general", {}).get("business_address")
+            or bundle.get("business", {}).get("address")
+            or bundle.get("business", {}).get("city")
+        )
+        result.update({
+            "provider_name": settings.get("name") or bundle.get("vendor", {}).get("business_name") or result.get("service") or "Provider",
+            "provider_area": address or "Location unavailable",
+            "provider_address": address,
+            "provider_phone": settings.get("phone") or bundle.get("general", {}).get("front_desk_phone"),
+            "provider_image": bundle.get("cover_image"),
+        })
+        return result
+
     def update_customer_notification_preferences(self, customer_id: str, data: dict[str, Any]) -> dict[str, Any]:
         current = self.users.find_one({"_id": self._oid(customer_id)}, {"notification_preferences": 1}) or {}
         existing = current.get("notification_preferences") if isinstance(current.get("notification_preferences"), dict) else {}
@@ -1575,12 +1613,11 @@ class CustomerRepository:
             ]
         total = int(self.vendor_bookings.count_documents(query))
         docs = self.vendor_bookings.find(query).sort("created_at", DESCENDING).skip(skip).limit(limit)
-        return {"items": [self._serialize(row) for row in docs], "total": total}
+        return {"items": [self._enrich_customer_booking(row) for row in docs], "total": total}
 
     def get_customer_booking(self, customer_id: str, booking_id: str) -> dict[str, Any] | None:
-        return self._serialize(
-            self.vendor_bookings.find_one({"_id": self._oid(booking_id), "customer_id": self._oid(customer_id)})
-        )
+        booking = self.vendor_bookings.find_one({"_id": self._oid(booking_id), "customer_id": self._oid(customer_id)})
+        return self._enrich_customer_booking(booking) if booking else None
 
     def confirm_booking(self, customer_id: str, booking_id: str) -> dict[str, Any] | None:
         now = datetime.now(UTC)
