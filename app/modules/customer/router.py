@@ -611,6 +611,7 @@ def create_hotel_room_booking(
 def list_my_bookings(
     limit: int = Query(default=20, ge=1, le=200),
     skip: int = Query(default=0, ge=0),
+    status: str | None = Query(default=None),
     current_user: dict = Depends(get_current_user),
     customer_service: CustomerService = Depends(get_customer_service),
 ) -> dict:
@@ -618,6 +619,7 @@ def list_my_bookings(
         customer_id=current_user["id"],
         limit=limit,
         skip=skip,
+        status=status,
     )
 
 

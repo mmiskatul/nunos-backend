@@ -803,7 +803,13 @@ class CustomerRepository:
         return {"items": [self._serialize(doc) for doc in docs], "total": total, "unread_count": int(self.notifications.count_documents({**query, "read": {"$ne": True}}))}
 
     def update_customer_notification_preferences(self, customer_id: str, data: dict[str, Any]) -> dict[str, Any]:
-        self.users.update_one({"_id": self._oid(customer_id)}, {"$set": {"notification_preferences": data, "updated_at": datetime.now(UTC)}})
+        current = self.users.find_one({"_id": self._oid(customer_id)}, {"notification_preferences": 1}) or {}
+        existing = current.get("notification_preferences") if isinstance(current.get("notification_preferences"), dict) else {}
+        preferences = {
+            "nearby_events": bool(data.get("nearby_events", existing.get("nearby_events", False))),
+            "booking_reminders": bool(data.get("booking_reminders", existing.get("booking_reminders", True))),
+        }
+        self.users.update_one({"_id": self._oid(customer_id)}, {"$set": {"notification_preferences": preferences, "updated_at": datetime.now(UTC)}})
         return self.get_customer_profile(customer_id)
 
     def get_customer_points_summary(self, customer_id: str) -> dict[str, Any]:
@@ -925,6 +931,7 @@ class CustomerRepository:
                 "available_times": service_settings.get("available_booking_times") or opening_slots,
             },
             "seating_preferences": service_settings.get("seating_preferences") or ["Indoor", "Outdoor", "No preference"],
+            "booking_policy": service_settings.get("policy") or "You can modify or cancel this booking later.",
             "amenities": ["Free WiFi", "Parking", "Outdoor", "Cards", "Accessible", "Bar"],
             "tabs": {
                 "overview": True,
@@ -1553,8 +1560,19 @@ class CustomerRepository:
         )
         return self._serialize(created) or {}
 
-    def list_customer_bookings(self, customer_id: str, limit: int, skip: int) -> dict[str, Any]:
+    def list_customer_bookings(self, customer_id: str, limit: int, skip: int, status: str | None = None) -> dict[str, Any]:
         query = {"customer_id": self._oid(customer_id)}
+        normalized_status = str(status or "").strip().lower()
+        if normalized_status in {"confirmed", "pending", "canceled", "cancelled", "complete", "completed"}:
+            query["status"] = "canceled" if normalized_status == "cancelled" else "complete" if normalized_status == "completed" else normalized_status
+        elif normalized_status == "upcoming":
+            query["status"] = {"$in": ["pending", "confirmed", "check_in"]}
+            query["scheduled_date"] = {"$gte": datetime.now(UTC).date().isoformat()}
+        elif normalized_status == "past":
+            query["$or"] = [
+                {"scheduled_date": {"$lt": datetime.now(UTC).date().isoformat()}},
+                {"status": {"$in": ["complete", "canceled"]}},
+            ]
         total = int(self.vendor_bookings.count_documents(query))
         docs = self.vendor_bookings.find(query).sort("created_at", DESCENDING).skip(skip).limit(limit)
         return {"items": [self._serialize(row) for row in docs], "total": total}

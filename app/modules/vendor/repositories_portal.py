@@ -235,6 +235,7 @@ class VendorPortalRepository:
         search: str | None = None,
         status: str | None = None,
         provider_type: str | None = None,
+        event_id: str | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
     ) -> dict[str, Any]:
@@ -268,6 +269,8 @@ class VendorPortalRepository:
                 query["provider_type"] = values[0]
             elif values:
                 query["provider_type"] = {"$in": values}
+        if event_id:
+            query["event_id"] = ObjectId(event_id)
         total = int(self.bookings.count_documents(query))
         docs = self.bookings.find(query).sort("created_at", DESCENDING).skip(skip).limit(limit)
         return {"items": [self._serialize(doc) for doc in docs], "total": total}
