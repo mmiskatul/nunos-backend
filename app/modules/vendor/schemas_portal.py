@@ -252,6 +252,8 @@ class VendorServiceSettings(BaseModel):
     about: str = ""
     opening_time: str = ""
     closing_time: str = ""
+    available_booking_times: list[str] = Field(default_factory=list)
+    seating_preferences: list[str] = Field(default_factory=list)
     policy: str = ""
     amenities: list[str] = Field(default_factory=list)
     published: bool | None = None
@@ -280,6 +282,28 @@ class VendorServiceSettings(BaseModel):
         if not re.fullmatch(r"(?:0[1-9]|1[0-2]):(?:00|15|30|45) (?:AM|PM)", text):
             raise ValueError("Time must use 12-hour format with 00, 15, 30, or 45 minutes (for example 09:15 AM).")
         return text
+
+    @field_validator("available_booking_times", mode="before")
+    @classmethod
+    def normalize_booking_times(cls, value):
+        values = value if isinstance(value, list) else str(value or "").split(",")
+        import re
+        from datetime import datetime as _datetime
+        normalized = []
+        for item in values:
+            text = str(item or "").strip().upper()
+            if not text:
+                continue
+            if not re.fullmatch(r"(?:0?[1-9]|1[0-2]):(?:00|15|30|45) (?:AM|PM)", text):
+                raise ValueError("Booking times must use 12-hour format with 00, 15, 30, or 45 minutes.")
+            normalized.append(_datetime.strptime(text, "%I:%M %p").strftime("%I:%M %p"))
+        return list(dict.fromkeys(normalized))
+
+    @field_validator("seating_preferences", mode="before")
+    @classmethod
+    def normalize_seating_preferences(cls, value):
+        values = value if isinstance(value, list) else str(value or "").split(",")
+        return list(dict.fromkeys(str(item).strip() for item in values if str(item).strip()))
 
     @field_validator("latitude", "longitude", mode="before")
     @classmethod

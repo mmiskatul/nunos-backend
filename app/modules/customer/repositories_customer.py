@@ -467,7 +467,7 @@ class CustomerRepository:
                     "entity_type": "hotel",
                     "rating": str(bundle["rating"]),
                     "reviews": str(bundle["reviews_count"]),
-                    "location": f"{service_settings.get('address') or service_settings.get('city') or bundle['general'].get('business_address') or bundle['business'].get('city') or 'Qatar'}",
+                    "location": f"{service_settings.get('address') or service_settings.get('city') or bundle['general'].get('business_address') or bundle['business'].get('city') or 'Location unavailable'}",
                     "distance_km": distance_km,
                     "price": str(int(min_price)),
                     "status": "Available" if has_rooms else "Limited",
@@ -897,7 +897,7 @@ class CustomerRepository:
             or bundle["general"].get("business_address")
             or bundle["business"].get("address")
             or bundle["business"].get("city")
-            or "Qatar"
+            or "Location unavailable"
         )
         return {
             "id": str(vendor_id),
@@ -922,7 +922,9 @@ class CustomerRepository:
                 "open_time": service_settings.get("opening_time"),
                 "close_time": service_settings.get("closing_time"),
                 "is_open_now": self._service_is_open(service_settings, bool(opening_slots)),
+                "available_times": service_settings.get("available_booking_times") or opening_slots,
             },
+            "seating_preferences": service_settings.get("seating_preferences") or ["Indoor", "Outdoor", "No preference"],
             "amenities": ["Free WiFi", "Parking", "Outdoor", "Cards", "Accessible", "Bar"],
             "tabs": {
                 "overview": True,
@@ -1017,7 +1019,7 @@ class CustomerRepository:
                 or str(bundle["general"].get("business_address") or "").strip()
                 or str(bundle["business"].get("address") or "").strip()
                 or str(bundle["business"].get("city") or "").strip()
-                or "Qatar"
+                or "Location unavailable"
             )
             event_type = str(event.get("event_type") or "Event").strip()
             capacity = int(event.get("capacity") or 0)
@@ -1090,7 +1092,7 @@ class CustomerRepository:
             or str(bundle["general"].get("business_address") or "").strip()
             or str(bundle["business"].get("address") or "").strip()
             or str(bundle["business"].get("city") or "").strip()
-            or "Qatar"
+                or "Location unavailable"
         )
         capacity = int(event.get("capacity") or 0)
         booking_mode = self._event_booking_mode(event)
@@ -1258,7 +1260,9 @@ class CustomerRepository:
         vendor_id = self._oid(provider_id)
         settings_doc = self.vendor_portal_settings.find_one({"vendor_id": vendor_id}) or {}
         general = settings_doc.get("general", {}) if isinstance(settings_doc.get("general"), dict) else {}
-        slots = general.get(
+        bundle = self._get_vendor_bundle(vendor_id)
+        restaurant_settings = self._service_settings(bundle, "restaurant")
+        slots = restaurant_settings.get("available_booking_times") or general.get(
             "booking_availability_slots",
             ["06:00 PM", "06:30 PM", "07:00 PM", "07:30 PM", "08:00 PM", "08:30 PM", "09:00 PM", "09:30 PM", "10:00 PM"],
         )
@@ -1342,6 +1346,10 @@ class CustomerRepository:
         vendor = self.vendors.find_one({"_id": self._oid(provider_id), "status": "approved"})
         if not vendor:
             raise ValueError("Provider not found.")
+        restaurant_settings = self._service_settings(self._get_vendor_bundle(vendor["_id"]), "restaurant")
+        allowed_seating = restaurant_settings.get("seating_preferences") or ["Indoor", "Outdoor", "No preference"]
+        if seating_preference and str(seating_preference).strip().lower() not in {str(item).strip().lower() for item in allowed_seating}:
+            raise ValueError("Selected seating preference is not available at this restaurant.")
         availability = self.get_booking_availability(provider_id, date)
         slot = next((row for row in availability["slots"] if row["time"] == time), None)
         if not slot or not slot["available"]:
