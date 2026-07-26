@@ -834,10 +834,22 @@ class CustomerRepository:
         return [self._serialize(doc) for doc in docs]
 
     def list_categories(self) -> dict[str, Any]:
-        counts = {"restaurant": 0, "hotel": 0, "spa": 0, "event": 0}
-        for vendor in self.vendors.find({"status": "approved"}, {"_id": 1}):
-            category = str(self._get_vendor_bundle(vendor["_id"]).get("category") or "restaurant").lower()
-            counts[category] = counts.get(category, 0) + 1
+        # Count each customer-visible service independently. A single provider
+        # may publish both a restaurant and a hotel, so its primary onboarding
+        # category cannot be used as the category total.
+        count_customer_id = str(ObjectId())
+        counts = {
+            "restaurant": int(
+                self.list_restaurants(count_customer_id, limit=1, skip=0).get("total", 0)
+            ),
+            "hotel": int(
+                self.list_hotels(count_customer_id, limit=1, skip=0).get("total", 0)
+            ),
+            "spa": int(
+                self.list_spas(count_customer_id, limit=1, skip=0).get("total", 0)
+            ),
+            "event": 0,
+        }
         counts["event"] = sum(
             1
             for event in self.vendor_events.find({"status": "published", "active": {"$ne": False}})

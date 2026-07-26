@@ -146,3 +146,56 @@ def test_hotel_cards_do_not_invent_static_amenities():
     )
 
     assert result["items"][0]["amenities"] == ["Free WiFi", "Coffee Maker"]
+
+
+def test_category_counts_include_each_published_service_for_multi_service_provider():
+    database = mongomock.MongoClient().nuno
+    vendor_id = ObjectId()
+    database.vendors.insert_one(
+        {"_id": vendor_id, "status": "approved", "business_name": "Harbour Group"}
+    )
+    database.vendor_profiles.insert_one(
+        {"vendor_id": vendor_id, "category": "Restaurant"}
+    )
+    database.vendor_portal_settings.insert_one(
+        {
+            "vendor_id": vendor_id,
+            "profile": {
+                "restaurant_settings": {
+                    "name": "Harbour Restaurant",
+                    "published": True,
+                },
+                "hotel_settings": {
+                    "name": "Harbour Hotel",
+                    "published": True,
+                },
+            },
+            "general": {},
+        }
+    )
+    database.vendor_rooms.insert_one(
+        {
+            "vendor_id": vendor_id,
+            "name": "Standard Room",
+            "available": True,
+            "base_price": 150,
+        }
+    )
+    portal = VendorPortalRepository(database)
+    portal.sync_service_listing(
+        str(vendor_id),
+        "restaurant",
+        {"name": "Harbour Restaurant", "published": True},
+    )
+    portal.sync_service_listing(
+        str(vendor_id),
+        "hotel",
+        {"name": "Harbour Hotel", "published": True},
+    )
+
+    categories = CustomerRepository(database).list_categories()["items"]
+    counts = {item["key"]: item["count"] for item in categories}
+
+    assert counts["restaurant"] == 1
+    assert counts["hotel"] == 1
+    assert counts["spa"] == 0
