@@ -791,8 +791,14 @@ class VendorPortalRepository:
         vendor_id: str,
         date_from: str | None = None,
         date_to: str | None = None,
+        provider_type: str | None = None,
     ) -> dict[str, Any]:
         query: dict[str, Any] = {"vendor_id": ObjectId(vendor_id)}
+        normalized_provider_type = str(provider_type or "").strip().lower()
+        if normalized_provider_type == "hotel":
+            query["provider_type"] = {"$in": ["hotel", "hotel_room"]}
+        elif normalized_provider_type in {"restaurant", "spa", "event"}:
+            query["provider_type"] = normalized_provider_type
         if date_from or date_to:
             created_range: dict[str, Any] = {}
             if date_from:
@@ -932,8 +938,14 @@ class VendorPortalRepository:
         search: str | None = None,
         star_rating: int | None = None,
         replied: bool | None = None,
+        provider_type: str | None = None,
     ) -> dict[str, Any]:
         query: dict[str, Any] = {"vendor_id": ObjectId(vendor_id)}
+        normalized_provider_type = str(provider_type or "").strip().lower()
+        if normalized_provider_type == "hotel":
+            query["provider_type"] = {"$in": ["hotel", "hotel_room"]}
+        elif normalized_provider_type in {"restaurant", "spa", "event"}:
+            query["provider_type"] = normalized_provider_type
         filters: list[dict[str, Any]] = []
         if search:
             filters.append(

@@ -207,7 +207,7 @@ def get_restaurant_offers(
 @router.get("/restaurants/{restaurant_id}/reviews", tags=["Customer - Restaurants"])
 def get_restaurant_reviews(restaurant_id: str, customer_service: CustomerService = Depends(get_customer_service)) -> dict:
     try:
-        return customer_service.repo.get_provider_reviews_payload(restaurant_id)
+        return customer_service.repo.get_provider_reviews_payload(restaurant_id, "restaurant")
     except InvalidId as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Restaurant not found.") from exc
 
@@ -215,7 +215,7 @@ def get_restaurant_reviews(restaurant_id: str, customer_service: CustomerService
 @router.get("/spas/{spa_id}/reviews", tags=["Customer - Spa"])
 def get_spa_reviews(spa_id: str, customer_service: CustomerService = Depends(get_customer_service)) -> dict:
     try:
-        return customer_service.repo.get_provider_reviews_payload(spa_id)
+        return customer_service.repo.get_provider_reviews_payload(spa_id, "spa")
     except InvalidId as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Spa not found.") from exc
 

@@ -80,6 +80,7 @@ def ensure_mongodb_indexes(db: Database) -> None:
     db["vendor_loyalty_settings"].create_index("vendor_id", unique=True)
     db["vendor_reviews"].create_index([("vendor_id", ASCENDING), ("created_at", DESCENDING)])
     db["vendor_reviews"].create_index([("vendor_id", ASCENDING), ("rating", DESCENDING)])
+    db["vendor_reviews"].create_index([("vendor_id", ASCENDING), ("provider_type", ASCENDING), ("created_at", DESCENDING)])
     db["vendor_portal_settings"].create_index("vendor_id", unique=True)
     db["vendor_support_tickets"].create_index([("vendor_id", ASCENDING), ("created_at", DESCENDING)])
     db["vendor_notifications"].create_index([("vendor_id", ASCENDING), ("created_at", DESCENDING)])

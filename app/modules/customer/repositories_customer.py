@@ -279,7 +279,61 @@ class CustomerRepository:
             "remaining_capacity": max(capacity - sold, 0) if capacity > 0 else None,
         }
 
-    def _get_vendor_bundle(self, vendor_id: ObjectId) -> dict[str, Any]:
+    @staticmethod
+    def _normalize_review_provider_type(value: Any) -> str:
+        normalized = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+        if normalized in {"hotel", "hotel_room", "room"}:
+            return "hotel"
+        if normalized in {"restaurant", "dining", "table", "table_booking"}:
+            return "restaurant"
+        if normalized in {"spa", "wellness"}:
+            return "spa"
+        if normalized in {"event", "ticket"}:
+            return "event"
+        return ""
+
+    def _review_provider_type(self, review: dict[str, Any]) -> str:
+        provider_type = self._normalize_review_provider_type(review.get("provider_type"))
+        if provider_type:
+            return provider_type
+
+        booking_id = review.get("booking_id")
+        if booking_id is not None:
+            booking = self.vendor_bookings.find_one({"_id": booking_id}, {"provider_type": 1, "service": 1}) or {}
+            provider_type = self._normalize_review_provider_type(booking.get("provider_type"))
+            if provider_type:
+                return provider_type
+            service_name = str(booking.get("service") or "").lower()
+        else:
+            service_name = str(review.get("service") or "").lower()
+
+        for keyword, resolved in (
+            ("hotel", "hotel"),
+            ("room", "hotel"),
+            ("spa", "spa"),
+            ("event", "event"),
+            ("ticket", "event"),
+            ("restaurant", "restaurant"),
+            ("table", "restaurant"),
+        ):
+            if keyword in service_name:
+                return resolved
+
+        vendor_id = review.get("vendor_id")
+        if isinstance(vendor_id, ObjectId):
+            verification = self.vendor_verification_details.find_one({"vendor_id": vendor_id}, {"category": 1}) or {}
+            profile = self.vendor_profiles.find_one({"vendor_id": vendor_id}, {"category": 1}) or {}
+            return self._normalize_review_provider_type(verification.get("category") or profile.get("category"))
+        return ""
+
+    def _provider_review_documents(self, vendor_id: ObjectId, provider_type: str | None = None) -> list[dict[str, Any]]:
+        docs = list(self.vendor_reviews.find({"vendor_id": vendor_id}).sort("created_at", DESCENDING))
+        normalized_type = self._normalize_review_provider_type(provider_type)
+        if not normalized_type:
+            return docs
+        return [doc for doc in docs if self._review_provider_type(doc) == normalized_type]
+
+    def _get_vendor_bundle(self, vendor_id: ObjectId, review_provider_type: str | None = None) -> dict[str, Any]:
         vendor = self.vendors.find_one({"_id": vendor_id}) or {}
         profile = self.vendor_profiles.find_one({"vendor_id": vendor_id}) or {}
         business = self.vendor_business_details.find_one({"vendor_id": vendor_id}) or {}
@@ -291,14 +345,8 @@ class CustomerRepository:
             {"vendor_id": vendor_id, "asset_type": "gallery"},
             sort=[("created_at", DESCENDING)],
         )
-        avg_row = list(
-            self.vendor_reviews.aggregate(
-                [
-                    {"$match": {"vendor_id": vendor_id}},
-                    {"$group": {"_id": "$vendor_id", "avg_rating": {"$avg": "$rating"}, "count": {"$sum": 1}}},
-                ]
-            )
-        )
+        review_docs = self._provider_review_documents(vendor_id, review_provider_type)
+        review_ratings = [float(doc.get("rating") or doc.get("star_rating") or 0) for doc in review_docs]
         active_offer = self.vendor_promotions.find_one({"vendor_id": vendor_id, "active": True})
         category = (
             verification.get("category")
@@ -314,8 +362,8 @@ class CustomerRepository:
             "general": general_settings,
             "cover_image": (first_gallery or {}).get("asset_url"),
             # Do not invent ratings for providers without reviews.
-            "rating": round(float(avg_row[0]["avg_rating"]), 1) if avg_row else 0.0,
-            "reviews_count": int(avg_row[0]["count"]) if avg_row else 0,
+            "rating": round(sum(review_ratings) / len(review_ratings), 1) if review_ratings else 0.0,
+            "reviews_count": len(review_ratings),
             "category": str(category),
             "active_offer": active_offer,
         }
@@ -347,7 +395,7 @@ class CustomerRepository:
         customer_lat, customer_lng = self._get_customer_coords(customer_id)
         for vendor in vendor_docs:
             vendor_id = vendor["_id"]
-            bundle = self._get_vendor_bundle(vendor_id)
+            bundle = self._get_vendor_bundle(vendor_id, "restaurant")
             primary_category = str(bundle.get("category") or "restaurant").strip().lower()
             restaurant_settings = self._service_settings(bundle, "restaurant")
             # A provider may offer both a hotel and a restaurant. Use the
@@ -440,7 +488,7 @@ class CustomerRepository:
         customer_lat, customer_lng = self._get_customer_coords(customer_id)
         for vendor in vendor_docs:
             vendor_id = vendor["_id"]
-            bundle = self._get_vendor_bundle(vendor_id)
+            bundle = self._get_vendor_bundle(vendor_id, "hotel")
             service_settings = self._service_settings(bundle, "hotel")
             if service_settings.get("published") is False:
                 continue
@@ -490,7 +538,7 @@ class CustomerRepository:
         vendor_id = vendor["_id"]
         if not self._is_public_service(vendor_id, "hotel"):
             return None
-        bundle = self._get_vendor_bundle(vendor_id)
+        bundle = self._get_vendor_bundle(vendor_id, "hotel")
         service_settings = self._service_settings(bundle, "hotel")
         if service_settings.get("published") is False:
             return None
@@ -611,38 +659,7 @@ class CustomerRepository:
         return [self._serialize(doc) for doc in docs]
 
     def get_hotel_reviews_payload(self, hotel_id: str) -> dict[str, Any]:
-        vendor_id = self._oid(hotel_id)
-        docs = list(self.vendor_reviews.find({"vendor_id": vendor_id}).sort("created_at", DESCENDING))
-        total = len(docs)
-        ratings = [float(doc.get("rating") or doc.get("star_rating") or 0) for doc in docs]
-        avg_rating = round(sum(ratings) / total, 1) if total else 0.0
-        
-        reviews = []
-        for doc in docs:
-            created_at = doc.get("created_at")
-            if isinstance(created_at, datetime):
-                date_str = created_at.strftime("%b %d, %Y")
-            elif isinstance(created_at, str):
-                try:
-                    date_str = datetime.fromisoformat(created_at).strftime("%b %d, %Y")
-                except ValueError:
-                    date_str = "Recently"
-            else:
-                date_str = "Recently"
-            reviews.append({
-                "id": str(doc["_id"]),
-                "user": doc.get("customer_name") or "Anonymous",
-                "date": date_str,
-                "rating": int(doc.get("rating") or doc.get("star_rating") or 0),
-                "comment": doc.get("review_text") or doc.get("comment") or "",
-                "avatar": doc.get("customer_avatar") or doc.get("avatar_url") or "",
-                "vendor_reply": doc.get("vendor_reply") or doc.get("reply"),
-            })
-        return {
-            "average_rating": str(avg_rating),
-            "total_reviews": total,
-            "items": reviews
-        }
+        return self.get_provider_reviews_payload(hotel_id, "hotel")
 
     def get_home_feed(self, customer_id: str) -> dict[str, Any]:
         restaurants = self.list_restaurants(customer_id=customer_id, limit=50, skip=0, nearby=True).get("items", [])
@@ -718,7 +735,7 @@ class CustomerRepository:
             items = []
             customer_lat, customer_lng = self._get_customer_coords(customer_id)
             for vendor in self.vendors.find({"status": "approved"}).sort("created_at", DESCENDING):
-                bundle = self._get_vendor_bundle(vendor["_id"])
+                bundle = self._get_vendor_bundle(vendor["_id"], "spa")
                 settings = self._service_settings(bundle, "spa")
                 category = str(bundle.get("category") or "").strip().lower()
                 if category != "spa" and not settings.get("name"):
@@ -735,7 +752,7 @@ class CustomerRepository:
             items = []
             customer_lat, customer_lng = self._get_customer_coords(customer_id)
             for vendor in public_spas:
-                bundle = self._get_vendor_bundle(vendor["_id"])
+                bundle = self._get_vendor_bundle(vendor["_id"], "spa")
                 settings = self._service_settings(bundle, "spa")
                 name = settings.get("name") or vendor.get("business_name") or "Unnamed Spa"
                 if search and search.lower() not in name.lower():
@@ -824,8 +841,8 @@ class CustomerRepository:
         else:
             result["has_review"] = False
 
-        bundle = self._get_vendor_bundle(vendor_id)
         provider_type = str(booking.get("provider_type") or "restaurant").lower()
+        bundle = self._get_vendor_bundle(vendor_id, provider_type)
         event_id = booking.get("event_id")
         if provider_type == "event" and not isinstance(event_id, ObjectId):
             try:
@@ -1004,7 +1021,7 @@ class CustomerRepository:
         vendor_id = vendor["_id"]
         if not self._is_public_service(vendor_id, service_type):
             return None
-        bundle = self._get_vendor_bundle(vendor_id)
+        bundle = self._get_vendor_bundle(vendor_id, service_type)
         menu_count = self.vendor_assets.count_documents({"vendor_id": vendor_id, "asset_type": "menu"})
         gallery_count = self.vendor_assets.count_documents({"vendor_id": vendor_id, "asset_type": "gallery"})
         offers_count = self.vendor_promotions.count_documents({"vendor_id": vendor_id, "active": True})
@@ -1079,8 +1096,8 @@ class CustomerRepository:
     def list_restaurant_services(self, restaurant_id: str) -> list[dict[str, Any]]:
         return self.list_provider_services(restaurant_id)
 
-    def get_provider_reviews_payload(self, provider_id: str) -> dict[str, Any]:
-        docs = list(self.vendor_reviews.find({"vendor_id": self._oid(provider_id)}).sort("created_at", DESCENDING))
+    def get_provider_reviews_payload(self, provider_id: str, provider_type: str = "restaurant") -> dict[str, Any]:
+        docs = self._provider_review_documents(self._oid(provider_id), provider_type)
         total = len(docs)
         ratings = [float(doc.get("rating") or doc.get("star_rating") or 0) for doc in docs]
         average = round(sum(ratings) / total, 1) if total else 0
@@ -1753,6 +1770,7 @@ class CustomerRepository:
         vendor_obj_id = booking.get("vendor_id")
         if not isinstance(vendor_obj_id, ObjectId):
             vendor_obj_id = self._oid(str(vendor_obj_id))
+        provider_type = self._normalize_review_provider_type(booking.get("provider_type")) or "restaurant"
         customer = self.users.find_one({"_id": customer_obj_id}) or {}
         now = datetime.now(UTC)
         review = {
@@ -1764,7 +1782,7 @@ class CustomerRepository:
             "rating": rating,
             "star_rating": rating,
             "review_text": review_text.strip(),
-            "provider_type": booking.get("provider_type"),
+            "provider_type": provider_type,
             "service": booking.get("service"),
             "created_at": now,
             "updated_at": now,

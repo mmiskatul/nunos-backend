@@ -806,12 +806,13 @@ def get_vendor_analytics_occupancy(
 
 @router.get("/analytics/reviews-summary", tags=["Vendor - Analytics"])
 def get_vendor_analytics_reviews_summary(
+    provider_type: str | None = Query(default=None, pattern="^(restaurant|hotel|spa|event)$"),
     current_vendor: dict = Depends(get_current_vendor),
     portal_service: VendorPortalService = Depends(get_vendor_portal_service),
 ) -> dict:
     vendor_id = _vendor_id(current_vendor)
     portal_service.initialize(vendor_id)
-    return portal_service.repo.get_reviews_summary(vendor_id)
+    return portal_service.repo.get_reviews_summary(vendor_id, provider_type=provider_type)
 
 
 @router.get("/analytics/export", tags=["Vendor - Analytics"])
@@ -866,13 +867,20 @@ def list_vendor_reviews(
     search: str | None = Query(default=None),
     star_rating: int | None = Query(default=None, ge=1, le=5),
     replied: bool | None = Query(default=None),
+    provider_type: str | None = Query(default=None, pattern="^(restaurant|hotel|spa|event)$"),
     current_vendor: dict = Depends(get_current_vendor),
     portal_service: VendorPortalService = Depends(get_vendor_portal_service),
 ) -> dict:
     vendor_id = _vendor_id(current_vendor)
     portal_service.initialize(vendor_id)
     return portal_service.repo.list_reviews(
-        vendor_id, limit=limit, skip=skip, search=search, star_rating=star_rating, replied=replied
+        vendor_id,
+        limit=limit,
+        skip=skip,
+        search=search,
+        star_rating=star_rating,
+        replied=replied,
+        provider_type=provider_type,
     )
 
 

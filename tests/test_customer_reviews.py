@@ -106,3 +106,63 @@ def test_vendor_review_contract_supports_legacy_review_fields():
     assert result["items"][0]["rating"] == 4
     assert result["items"][0]["review_text"] == "Legacy review."
     assert summary["average_rating"] == 4.0
+
+
+def test_hotel_and_restaurant_review_totals_are_calculated_separately():
+    database = mongomock.MongoClient().nuno
+    vendor_id = ObjectId()
+    now = datetime.now(UTC)
+    database.vendor_reviews.insert_many(
+        [
+            {
+                "vendor_id": vendor_id,
+                "provider_type": "restaurant",
+                "rating": 5,
+                "review_text": "Excellent restaurant.",
+                "created_at": now,
+            },
+            {
+                "vendor_id": vendor_id,
+                "provider_type": "hotel",
+                "rating": 2,
+                "review_text": "Hotel needs improvement.",
+                "created_at": now,
+            },
+            {
+                "vendor_id": vendor_id,
+                "provider_type": "hotel_room",
+                "rating": 4,
+                "review_text": "Comfortable room.",
+                "created_at": now,
+            },
+        ]
+    )
+    customer_repository = CustomerRepository(database)
+    vendor_repository = VendorPortalRepository(database)
+
+    restaurant_reviews = customer_repository.get_provider_reviews_payload(str(vendor_id), "restaurant")
+    hotel_reviews = customer_repository.get_hotel_reviews_payload(str(vendor_id))
+    restaurant_bundle = customer_repository._get_vendor_bundle(vendor_id, "restaurant")
+    hotel_bundle = customer_repository._get_vendor_bundle(vendor_id, "hotel")
+
+    assert restaurant_reviews["total_reviews"] == 1
+    assert restaurant_reviews["average_rating"] == 5.0
+    assert hotel_reviews["total_reviews"] == 2
+    assert hotel_reviews["average_rating"] == 3.0
+    assert restaurant_bundle["reviews_count"] == 1
+    assert restaurant_bundle["rating"] == 5.0
+    assert hotel_bundle["reviews_count"] == 2
+    assert hotel_bundle["rating"] == 3.0
+
+    vendor_restaurant_summary = vendor_repository.get_reviews_summary(
+        str(vendor_id),
+        provider_type="restaurant",
+    )
+    vendor_hotel_summary = vendor_repository.get_reviews_summary(
+        str(vendor_id),
+        provider_type="hotel",
+    )
+    assert vendor_restaurant_summary["total_reviews"] == 1
+    assert vendor_restaurant_summary["average_rating"] == 5.0
+    assert vendor_hotel_summary["total_reviews"] == 2
+    assert vendor_hotel_summary["average_rating"] == 3.0
