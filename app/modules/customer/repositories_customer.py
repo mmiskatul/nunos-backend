@@ -178,6 +178,97 @@ class CustomerRepository:
         settings = bundle.get("profile_settings", {}).get(key, {})
         return settings if isinstance(settings, dict) else {}
 
+    def _asset_query(
+        self, vendor_id: ObjectId, asset_type: str, service_type: str
+    ) -> dict[str, Any]:
+        normalized = normalize_service_type(service_type)
+        verification = self.vendor_verification_details.find_one(
+            {"vendor_id": vendor_id}, {"category": 1}
+        ) or {}
+        profile = self.vendor_profiles.find_one(
+            {"vendor_id": vendor_id}, {"category": 1}
+        ) or {}
+        try:
+            legacy_service_type = normalize_service_type(
+                verification.get("category") or profile.get("category") or "restaurant"
+            )
+        except ValueError:
+            legacy_service_type = "restaurant"
+        query: dict[str, Any] = {
+            "vendor_id": vendor_id,
+            "asset_type": asset_type,
+        }
+        if normalized == legacy_service_type:
+            query["$or"] = [
+                {"service_type": normalized},
+                {"service_type": {"$exists": False}},
+            ]
+        else:
+            query["service_type"] = normalized
+        return query
+
+    @staticmethod
+    def _promotion_applies_to_service(
+        promotion: dict[str, Any], service_type: str
+    ) -> bool:
+        applicable_to = str(promotion.get("applicable_to") or "All Services").strip().lower()
+        if not applicable_to or applicable_to == "all services":
+            return True
+        normalized = normalize_service_type(service_type)
+        aliases = {
+            "restaurant": ("restaurant", "dining", "food"),
+            "hotel": ("hotel", "room", "stay"),
+            "spa": ("spa", "wellness", "treatment"),
+        }
+        return any(alias in applicable_to for alias in aliases[normalized])
+
+    def _list_service_offers(
+        self,
+        vendor_id: ObjectId,
+        service_type: str,
+        service_settings: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        normalized = normalize_service_type(service_type)
+        if service_settings is None:
+            service_settings = self._service_settings(
+                self._get_vendor_bundle(vendor_id, normalized), normalized
+            )
+        settings_offers = [
+            {
+                "id": f"{normalized}-setting-offer-{index}",
+                "title": str(offer.get("title") or "").strip(),
+                "description": str(offer.get("description") or "").strip(),
+                "active": True,
+                "service_type": normalized,
+                "source": f"{normalized}_settings",
+            }
+            for index, offer in enumerate(service_settings.get("special_offers") or [])
+            if isinstance(offer, dict)
+            and str(offer.get("title") or "").strip()
+            and offer.get("active", True) is not False
+        ]
+        promotion_offers = []
+        for document in self.vendor_promotions.find(
+            {"vendor_id": vendor_id, "active": True}
+        ).sort("created_at", DESCENDING):
+            offer = self._serialize(document)
+            if not offer or not self._promotion_applies_to_service(offer, normalized):
+                continue
+            promotion_offers.append(
+                {
+                    **offer,
+                    "title": offer.get("promotion_name")
+                    or offer.get("title")
+                    or "Special offer",
+                    "description": offer.get("internal_description")
+                    or offer.get("description")
+                    or "",
+                    "service_type": normalized,
+                    "source": "promotion",
+                }
+            )
+        return [*settings_offers, *promotion_offers]
+
     @staticmethod
     def _service_is_open(settings: dict[str, Any], fallback: bool) -> bool:
         opening = str(settings.get("opening_time") or "").strip()
@@ -341,18 +432,66 @@ class CustomerRepository:
         settings_doc = self.vendor_portal_settings.find_one({"vendor_id": vendor_id}) or {}
         general_settings = settings_doc.get("general", {}) if isinstance(settings_doc.get("general"), dict) else {}
         profile_settings = settings_doc.get("profile", {}) if isinstance(settings_doc.get("profile"), dict) else {}
-        first_gallery = self.vendor_assets.find_one(
-            {"vendor_id": vendor_id, "asset_type": "gallery"},
-            sort=[("created_at", DESCENDING)],
-        )
-        review_docs = self._provider_review_documents(vendor_id, review_provider_type)
-        review_ratings = [float(doc.get("rating") or doc.get("star_rating") or 0) for doc in review_docs]
-        active_offer = self.vendor_promotions.find_one({"vendor_id": vendor_id, "active": True})
         category = (
             verification.get("category")
             or profile.get("category")
             or "Restaurant"
         )
+        gallery_service_type = review_provider_type or category
+        try:
+            gallery_query = self._asset_query(
+                vendor_id, "gallery", normalize_service_type(gallery_service_type)
+            )
+        except ValueError:
+            gallery_query = {"vendor_id": vendor_id, "asset_type": "gallery"}
+        first_gallery = self.vendor_assets.find_one(
+            gallery_query,
+            sort=[("created_at", DESCENDING)],
+        )
+        review_docs = self._provider_review_documents(vendor_id, review_provider_type)
+        review_ratings = [float(doc.get("rating") or doc.get("star_rating") or 0) for doc in review_docs]
+        offer_service_type = review_provider_type or category
+        try:
+            normalized_offer_service = normalize_service_type(offer_service_type)
+        except ValueError:
+            normalized_offer_service = "restaurant"
+        offer_settings = profile_settings.get(
+            f"{normalized_offer_service}_settings", {}
+        )
+        if not isinstance(offer_settings, dict):
+            offer_settings = {}
+        settings_offer = next(
+            (
+                offer
+                for offer in offer_settings.get("special_offers") or []
+                if isinstance(offer, dict)
+                and str(offer.get("title") or "").strip()
+                and offer.get("active", True) is not False
+            ),
+            None,
+        )
+        if settings_offer:
+            active_offer = {
+                "promotion_name": str(settings_offer.get("title") or "").strip(),
+                "internal_description": str(
+                    settings_offer.get("description") or ""
+                ).strip(),
+                "service_type": normalized_offer_service,
+                "source": f"{normalized_offer_service}_settings",
+            }
+        else:
+            active_offer = next(
+                (
+                    promotion
+                    for promotion in self.vendor_promotions.find(
+                        {"vendor_id": vendor_id, "active": True}
+                    ).sort("created_at", DESCENDING)
+                    if self._promotion_applies_to_service(
+                        promotion, normalized_offer_service
+                    )
+                ),
+                None,
+            )
         return {
             "vendor": vendor,
             "profile": profile,
@@ -560,34 +699,10 @@ class CustomerRepository:
         if bundle["category"].lower() != "hotel" and not rooms:
             return None
         rooms_count = self.vendor_rooms.count_documents({"vendor_id": vendor_id, "available": True})
-        gallery_count = self.vendor_assets.count_documents({"vendor_id": vendor_id, "asset_type": "gallery"})
-        active_offers = [self._serialize(doc) for doc in self.vendor_promotions.find(
-            {"vendor_id": vendor_id, "active": True}
-        ).sort("created_at", DESCENDING)]
-        property_offers = [
-            {
-                "id": f"hotel-setting-offer-{index}",
-                "title": str(offer.get("title") or "").strip(),
-                "description": str(offer.get("description") or "").strip(),
-                "active": bool(offer.get("active", True)),
-                "source": "hotel_settings",
-            }
-            for index, offer in enumerate(service_settings.get("special_offers") or [])
-            if isinstance(offer, dict)
-            and str(offer.get("title") or "").strip()
-            and offer.get("active", True) is not False
-        ]
-        promotion_offers = [
-            {
-                **offer,
-                "title": offer.get("promotion_name") or offer.get("title") or "Special offer",
-                "description": offer.get("internal_description") or offer.get("description") or "",
-                "source": "promotion",
-            }
-            for offer in active_offers
-            if offer is not None
-        ]
-        offers = [*property_offers, *promotion_offers]
+        gallery_count = self.vendor_assets.count_documents(
+            self._asset_query(vendor_id, "gallery", "hotel")
+        )
+        offers = self._list_service_offers(vendor_id, "hotel", service_settings)
         room_amenities = []
         for room in rooms:
             for amenity in room.get("amenities") or []:
@@ -650,6 +765,14 @@ class CustomerRepository:
                 "nights": "2 nights",
                 "image": images[0] if images else None,
                 "amenities": doc.get("amenities") or ["WiFi", "AC"],
+                "weekend_price": float(doc.get("weekend_price", base_price)),
+                "default_discount_percent": float(
+                    doc.get("default_discount_percent", 0)
+                ),
+                "tax_included": bool(doc.get("tax_included", True)),
+                "inventory_count": int(doc.get("inventory_count", 1)),
+                "min_stay_nights": int(doc.get("min_stay_nights", 1)),
+                "max_stay_nights": int(doc.get("max_stay_nights", 30)),
             })
         return rooms
 
@@ -658,6 +781,10 @@ class CustomerRepository:
         if not doc:
             return None
         base_price = float(doc.get("base_price", 298.0))
+        nights = 2
+        room_rate = base_price * nights
+        tax_included = bool(doc.get("tax_included", True))
+        taxes = 0.0 if tax_included else room_rate * 0.2
         raw_amenities = doc.get("amenities") or []
         amenities_with_icons = []
         for name in raw_amenities:
@@ -686,16 +813,28 @@ class CustomerRepository:
             "view": "City View",
             "images": doc.get("images") or [],
             "amenities": amenities_with_icons,
+            "description": doc.get("description") or "",
+            "number_of_beds": int(doc.get("number_of_beds", 1)),
+            "weekend_price": float(doc.get("weekend_price", base_price)),
+            "default_discount_percent": float(
+                doc.get("default_discount_percent", 0)
+            ),
+            "tax_included": tax_included,
+            "inventory_count": int(doc.get("inventory_count", 1)),
+            "min_stay_nights": int(doc.get("min_stay_nights", 1)),
+            "max_stay_nights": int(doc.get("max_stay_nights", 30)),
             "price": {
-                "rate": str(int(base_price * 2)),
-                "taxes": str(int(base_price * 0.2)),
-                "total": str(int(base_price * 2.2)),
+                "rate": str(int(room_rate)),
+                "taxes": str(int(taxes)),
+                "total": str(int(room_rate + taxes)),
+                "tax_included": tax_included,
             }
         }
 
     def list_hotel_assets(self, hotel_id: str, asset_type: str) -> list[dict[str, Any]]:
+        vendor_id = self._oid(hotel_id)
         docs = self.vendor_assets.find(
-            {"vendor_id": self._oid(hotel_id), "asset_type": asset_type}
+            self._asset_query(vendor_id, asset_type, "hotel")
         ).sort("created_at", DESCENDING)
         return [self._serialize(doc) for doc in docs]
 
@@ -819,18 +958,34 @@ class CustomerRepository:
         return row
 
     def list_spa_assets(self, spa_id: str, asset_type: str) -> list[dict[str, Any]]:
-        return self.list_restaurant_assets(spa_id, asset_type)
+        return self.list_restaurant_assets(spa_id, asset_type, "spa")
 
     def list_spa_offers(self, spa_id: str) -> list[dict[str, Any]]:
-        return self.list_restaurant_offers(spa_id)
+        return self.list_restaurant_offers(spa_id, "spa")
 
-    def list_provider_services(self, provider_id: str) -> list[dict[str, Any]]:
+    def list_provider_services(
+        self, provider_id: str, service_type: str = "hotel"
+    ) -> list[dict[str, Any]]:
         vendor_id = self._oid(provider_id)
         if not self.vendors.find_one({"_id": vendor_id, "status": "approved"}, {"_id": 1}):
             return []
-        docs = self.vendor_services.find(
-            {"vendor_id": vendor_id, "$or": [{"available": True}, {"active_status": True}]}
-        ).sort("created_at", DESCENDING)
+        normalized = normalize_service_type(service_type)
+        query: dict[str, Any] = {
+            "vendor_id": vendor_id,
+            "$and": [{"$or": [{"available": True}, {"active_status": True}]}],
+        }
+        if normalized == "hotel":
+            query["$and"].append(
+                {
+                    "$or": [
+                        {"service_type": "hotel"},
+                        {"service_type": {"$exists": False}},
+                    ]
+                }
+            )
+        else:
+            query["$and"].append({"service_type": normalized})
+        docs = self.vendor_services.find(query).sort("created_at", DESCENDING)
         return [self._serialize(doc) for doc in docs]
 
     def list_categories(self) -> dict[str, Any]:
@@ -1075,14 +1230,20 @@ class CustomerRepository:
         if not self._is_public_service(vendor_id, service_type):
             return None
         bundle = self._get_vendor_bundle(vendor_id, service_type)
-        menu_count = self.vendor_assets.count_documents({"vendor_id": vendor_id, "asset_type": "menu"})
-        gallery_count = self.vendor_assets.count_documents({"vendor_id": vendor_id, "asset_type": "gallery"})
-        offers_count = self.vendor_promotions.count_documents({"vendor_id": vendor_id, "active": True})
+        menu_count = self.vendor_assets.count_documents(
+            self._asset_query(vendor_id, "menu", service_type)
+        )
+        gallery_count = self.vendor_assets.count_documents(
+            self._asset_query(vendor_id, "gallery", service_type)
+        )
         opening_slots = bundle["general"].get("booking_availability_slots", [])
         customer_lat, customer_lng = self._get_customer_coords(customer_id)
         service_settings = self._service_settings(bundle, service_type)
         if service_settings.get("published") is False:
             return None
+        offers_count = len(
+            self._list_service_offers(vendor_id, service_type, service_settings)
+        )
         vendor_lat, vendor_lng = self._get_vendor_coords(bundle, service_type)
         display_label = service_type.title()
         location = (
@@ -1121,7 +1282,7 @@ class CustomerRepository:
             },
             "seating_preferences": service_settings.get("seating_preferences") or ["Indoor", "Outdoor", "No preference"],
             "booking_policy": service_settings.get("policy") or "You can modify or cancel this booking later.",
-            "amenities": ["Free WiFi", "Parking", "Outdoor", "Cards", "Accessible", "Bar"],
+            "amenities": service_settings.get("amenities") or [],
             "tabs": {
                 "overview": True,
                 "menu_count": int(menu_count),
@@ -1134,20 +1295,25 @@ class CustomerRepository:
             },
         }
 
-    def list_restaurant_assets(self, restaurant_id: str, asset_type: str) -> list[dict[str, Any]]:
+    def list_restaurant_assets(
+        self,
+        restaurant_id: str,
+        asset_type: str,
+        service_type: str = "restaurant",
+    ) -> list[dict[str, Any]]:
+        vendor_id = self._oid(restaurant_id)
         docs = self.vendor_assets.find(
-            {"vendor_id": self._oid(restaurant_id), "asset_type": asset_type}
+            self._asset_query(vendor_id, asset_type, service_type)
         ).sort("created_at", DESCENDING)
         return [self._serialize(doc) for doc in docs]
 
-    def list_restaurant_offers(self, restaurant_id: str) -> list[dict[str, Any]]:
-        docs = self.vendor_promotions.find(
-            {"vendor_id": self._oid(restaurant_id), "active": True}
-        ).sort("created_at", DESCENDING)
-        return [self._serialize(doc) for doc in docs]
+    def list_restaurant_offers(
+        self, restaurant_id: str, service_type: str = "restaurant"
+    ) -> list[dict[str, Any]]:
+        return self._list_service_offers(self._oid(restaurant_id), service_type)
 
     def list_restaurant_services(self, restaurant_id: str) -> list[dict[str, Any]]:
-        return self.list_provider_services(restaurant_id)
+        return self.list_provider_services(restaurant_id, "restaurant")
 
     def get_provider_reviews_payload(self, provider_id: str, provider_type: str = "restaurant") -> dict[str, Any]:
         docs = self._provider_review_documents(self._oid(provider_id), provider_type)
@@ -1966,6 +2132,7 @@ class CustomerRepository:
             details = self.get_restaurant_details(customer_id=customer_id, restaurant_id=restaurant_id)
             if not details:
                 return None
+            first_offer = (self.list_restaurant_offers(details["id"])[:1] or [{}])[0]
             return {
                 "id": details["id"],
                 "name": details["name"],
@@ -1973,7 +2140,8 @@ class CustomerRepository:
                 "distance_km": details["distance_km"],
                 "category": details["category"],
                 "cover_image_url": details["cover_image_url"],
-                "offer_text": (self.list_restaurant_offers(details["id"])[:1] or [{}])[0].get("promotion_name"),
+                "offer_text": first_offer.get("promotion_name")
+                or first_offer.get("title"),
             }
         rows = self.list_restaurants(customer_id=customer_id, limit=1, skip=0).get("items", [])
         return rows[0] if rows else None

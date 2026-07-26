@@ -287,12 +287,17 @@ def generate_vendor_booking_receipt(
 @router.get("/menu-services/assets", tags=["Vendor - Menu/Services"])
 def list_menu_assets(
     asset_type: str | None = Query(default=None),
+    service_type: str | None = Query(default=None, pattern="^(restaurant|hotel|spa)$"),
     current_vendor: dict = Depends(get_current_vendor),
     portal_service: VendorPortalService = Depends(get_vendor_portal_service),
 ) -> dict:
     vendor_id = _vendor_id(current_vendor)
     portal_service.initialize(vendor_id)
-    return {"items": portal_service.repo.list_assets(vendor_id, asset_type=asset_type)}
+    return {
+        "items": portal_service.repo.list_assets(
+            vendor_id, asset_type=asset_type, service_type=service_type
+        )
+    }
 
 
 @router.post("/menu-services/assets", tags=["Vendor - Menu/Services"])
@@ -315,14 +320,25 @@ def register_vendor_asset(
 
 @router.get("/menu-services/overview", tags=["Vendor - Menu/Services"])
 def get_menu_services_overview(
+    service_type: str = Query(default="restaurant", pattern="^(restaurant|hotel|spa)$"),
     current_vendor: dict = Depends(get_current_vendor),
     portal_service: VendorPortalService = Depends(get_vendor_portal_service),
 ) -> dict:
     vendor_id = _vendor_id(current_vendor)
     portal_service.initialize(vendor_id)
+    menu_assets = portal_service.repo.list_assets(
+        vendor_id, asset_type="menu", service_type=service_type
+    )
+    gallery_assets = portal_service.repo.list_assets(
+        vendor_id, asset_type="gallery", service_type=service_type
+    )
     return {
-        "menu_assets": portal_service.repo.list_assets(vendor_id, asset_type="menu"),
-        "gallery_assets": portal_service.repo.list_assets(vendor_id, asset_type="gallery"),
+        "menu_assets": menu_assets,
+        "gallery_assets": gallery_assets,
+        "menu_assets_count": len(menu_assets),
+        "gallery_assets_count": len(gallery_assets),
+        "total_assets": len(menu_assets) + len(gallery_assets),
+        "service_type": service_type,
         "upload_guidelines": "Use high-resolution images for gallery and high-contrast pages for menu OCR.",
     }
 
@@ -332,6 +348,7 @@ async def upload_vendor_menu_asset(
     file: UploadFile = File(..., description="Menu image or PDF to upload"),
     file_name: str | None = Form(default=None),
     mime_type: str | None = Form(default=None),
+    service_type: str = Form(default="restaurant"),
     current_vendor: dict = Depends(get_current_vendor),
     portal_service: VendorPortalService = Depends(get_vendor_portal_service),
     auth_service: VendorAuthService = Depends(get_vendor_auth_service),
@@ -345,6 +362,7 @@ async def upload_vendor_menu_asset(
     data = {
         "asset_url": result.url,
         "asset_type": "menu",
+        "service_type": normalize_service_type(service_type),
         "file_name": file_name or file.filename,
         "mime_type": mime_type or file.content_type,
     }
@@ -356,6 +374,7 @@ async def upload_vendor_gallery_asset(
     file: UploadFile = File(..., description="Gallery image to upload"),
     file_name: str | None = Form(default=None),
     mime_type: str | None = Form(default=None),
+    service_type: str = Form(default="restaurant"),
     current_vendor: dict = Depends(get_current_vendor),
     portal_service: VendorPortalService = Depends(get_vendor_portal_service),
     auth_service: VendorAuthService = Depends(get_vendor_auth_service),
@@ -369,6 +388,7 @@ async def upload_vendor_gallery_asset(
     data = {
         "asset_url": result.url,
         "asset_type": "gallery",
+        "service_type": normalize_service_type(service_type),
         "file_name": file_name or file.filename,
         "mime_type": mime_type or file.content_type,
     }
@@ -474,12 +494,17 @@ def delete_vendor_room(
 
 @router.get("/rooms-services/services", tags=["Vendor - Rooms/Services"])
 def list_vendor_services(
+    service_type: str | None = Query(default=None, pattern="^(restaurant|hotel|spa)$"),
     current_vendor: dict = Depends(get_current_vendor),
     portal_service: VendorPortalService = Depends(get_vendor_portal_service),
 ) -> dict:
     vendor_id = _vendor_id(current_vendor)
     portal_service.initialize(vendor_id)
-    return {"items": portal_service.repo.list_services(vendor_id)}
+    return {
+        "items": portal_service.repo.list_services(
+            vendor_id, service_type=service_type
+        )
+    }
 
 
 @router.post("/rooms-services/services", tags=["Vendor - Rooms/Services"])

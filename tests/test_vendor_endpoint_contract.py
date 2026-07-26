@@ -1,6 +1,11 @@
 import pytest
 
-from app.modules.vendor.schemas_portal import AssetUploadRequest, PromotionUpdateRequest
+from app.modules.vendor.schemas_portal import (
+    AssetUploadRequest,
+    PromotionUpdateRequest,
+    RoomUpsertRequest,
+    ServiceUpsertRequest,
+)
 from app.modules.platform_admin.deps_auth import get_current_platform_admin
 
 
@@ -147,8 +152,35 @@ def test_asset_registration_rejects_unsafe_url_schemes():
     payload = AssetUploadRequest(
         asset_url="https://res.cloudinary.com/example/image/upload/file.jpg",
         asset_type="gallery",
+        service_type="spa",
     )
     assert payload.asset_url.startswith("https://")
+    assert payload.service_type == "spa"
+
+
+def test_room_and_service_schemas_preserve_ui_specific_fields():
+    room = RoomUpsertRequest(
+        name="Deluxe Room",
+        size_sqm=35,
+        max_guests=2,
+        bed_type="King",
+        number_of_beds=1,
+        base_price=200,
+        weekend_price=250,
+        default_discount_percent=10,
+        tax_included=False,
+        min_stay_nights=2,
+        max_stay_nights=10,
+    )
+    service = ServiceUpsertRequest(
+        name="Breakfast delivery",
+        service_type="hotel",
+        category="Food",
+        price=25,
+    )
+
+    assert room.model_dump()["tax_included"] is False
+    assert service.model_dump()["service_type"] == "hotel"
 
 
 def test_mobile_service_alias_endpoints_exist(app):

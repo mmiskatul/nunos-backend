@@ -475,10 +475,32 @@ class VendorPortalRepository:
             counts[day] = counts.get(day, 0) + 1
         return {"month": month_key, "busy_days": [{"day": d, "count": c} for d, c in sorted(counts.items())]}
 
-    def list_assets(self, vendor_id: str, asset_type: str | None = None) -> list[dict[str, Any]]:
+    def list_assets(
+        self,
+        vendor_id: str,
+        asset_type: str | None = None,
+        service_type: str | None = None,
+    ) -> list[dict[str, Any]]:
         query: dict[str, Any] = {"vendor_id": ObjectId(vendor_id)}
         if asset_type:
             query["asset_type"] = asset_type
+        if service_type:
+            normalized = normalize_service_type(service_type)
+            _, profile, _, verification = self._get_vendor_records(vendor_id)
+            legacy_category = str(
+                verification.get("category") or profile.get("category") or "Restaurant"
+            )
+            try:
+                legacy_service_type = normalize_service_type(legacy_category)
+            except ValueError:
+                legacy_service_type = "restaurant"
+            if normalized == legacy_service_type:
+                query["$or"] = [
+                    {"service_type": normalized},
+                    {"service_type": {"$exists": False}},
+                ]
+            else:
+                query["service_type"] = normalized
         docs = self.assets.find(query).sort("created_at", DESCENDING)
         return [self._serialize(doc) for doc in docs]
 
@@ -525,6 +547,8 @@ class VendorPortalRepository:
 
     def update_room(self, vendor_id: str, room_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
         sanitized = self._sanitize_payload(payload)
+        if "active_status" in sanitized:
+            sanitized["available"] = bool(sanitized["active_status"])
         self.rooms.update_one(
             {"_id": ObjectId(room_id), "vendor_id": ObjectId(vendor_id)},
             {"$set": {**sanitized, "updated_at": datetime.now(UTC)}},
@@ -540,7 +564,14 @@ class VendorPortalRepository:
     ) -> dict[str, Any] | None:
         self.rooms.update_one(
             {"_id": ObjectId(room_id), "vendor_id": ObjectId(vendor_id)},
-            {"$set": {"available": available, "maintenance_note": maintenance_note, "updated_at": datetime.now(UTC)}},
+            {
+                "$set": {
+                    "available": available,
+                    "active_status": available,
+                    "maintenance_note": maintenance_note,
+                    "updated_at": datetime.now(UTC),
+                }
+            },
         )
         return self.get_room(vendor_id, room_id)
 
@@ -548,16 +579,34 @@ class VendorPortalRepository:
         result = self.rooms.delete_one({"_id": ObjectId(room_id), "vendor_id": ObjectId(vendor_id)})
         return result.deleted_count > 0
 
-    def list_services(self, vendor_id: str) -> list[dict[str, Any]]:
-        docs = self.services.find({"vendor_id": ObjectId(vendor_id)}).sort("created_at", DESCENDING)
+    def list_services(
+        self, vendor_id: str, service_type: str | None = None
+    ) -> list[dict[str, Any]]:
+        query: dict[str, Any] = {"vendor_id": ObjectId(vendor_id)}
+        if service_type:
+            normalized = normalize_service_type(service_type)
+            if normalized == "hotel":
+                query["$or"] = [
+                    {"service_type": "hotel"},
+                    {"service_type": {"$exists": False}},
+                ]
+            else:
+                query["service_type"] = normalized
+        docs = self.services.find(query).sort("created_at", DESCENDING)
         return [self._serialize(doc) for doc in docs]
 
     def create_service(self, vendor_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         now = datetime.now(UTC)
         sanitized = self._sanitize_payload(payload)
         profile = self.get_settings_profile(vendor_id)
-        category = str(sanitized.get("category") or "").strip().lower()
-        service_settings = profile.get(f"{category}_settings") if isinstance(profile.get(f"{category}_settings"), dict) else {}
+        service_type = normalize_service_type(
+            str(sanitized.get("service_type") or "hotel")
+        )
+        service_settings = (
+            profile.get(f"{service_type}_settings")
+            if isinstance(profile.get(f"{service_type}_settings"), dict)
+            else {}
+        )
         sanitized.setdefault("location_label", service_settings.get("address") or profile.get("location_label") or profile.get("office_address"))
         sanitized.setdefault("latitude", service_settings.get("latitude") or profile.get("latitude"))
         sanitized.setdefault("longitude", service_settings.get("longitude") or profile.get("longitude"))
@@ -651,6 +700,8 @@ class VendorPortalRepository:
 
     def update_service(self, vendor_id: str, service_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
         sanitized = self._sanitize_payload(payload)
+        if "active_status" in sanitized:
+            sanitized["available"] = bool(sanitized["active_status"])
         self.services.update_one(
             {"_id": ObjectId(service_id), "vendor_id": ObjectId(vendor_id)},
             {"$set": {**sanitized, "updated_at": datetime.now(UTC)}},
@@ -660,7 +711,13 @@ class VendorPortalRepository:
     def update_service_status(self, vendor_id: str, service_id: str, active: bool) -> dict[str, Any] | None:
         self.services.update_one(
             {"_id": ObjectId(service_id), "vendor_id": ObjectId(vendor_id)},
-            {"$set": {"available": active, "updated_at": datetime.now(UTC)}},
+            {
+                "$set": {
+                    "available": active,
+                    "active_status": active,
+                    "updated_at": datetime.now(UTC),
+                }
+            },
         )
         return self.get_service(vendor_id, service_id)
 

@@ -19,6 +19,7 @@ class BookingRescheduleRequest(BaseModel):
 class AssetUploadRequest(BaseModel):
     asset_url: str = Field(min_length=8, max_length=1000)
     asset_type: str | None = Field(default=None, pattern="^(menu|gallery)$")
+    service_type: str = Field(default="restaurant", pattern="^(restaurant|hotel|spa)$")
     file_name: str | None = None
     mime_type: str | None = None
 
@@ -41,12 +42,19 @@ class RoomUpsertRequest(BaseModel):
     base_price: float = Field(ge=0)
     weekend_price: float = Field(ge=0)
     default_discount_percent: float = Field(ge=0, le=100)
+    tax_included: bool = True
     amenities: list[str] = Field(default_factory=list)
     images: list[str] = Field(default_factory=list)
     inventory_count: int = Field(default=1, ge=0)
     min_stay_nights: int = Field(default=1, ge=1)
     max_stay_nights: int = Field(default=30, ge=1)
     active_status: bool = True
+
+    @model_validator(mode="after")
+    def validate_stay_range(self):
+        if self.max_stay_nights < self.min_stay_nights:
+            raise ValueError("Maximum stay must be greater than or equal to minimum stay.")
+        return self
 
 
 class RoomAvailabilityRequest(BaseModel):
@@ -56,6 +64,7 @@ class RoomAvailabilityRequest(BaseModel):
 
 class ServiceUpsertRequest(BaseModel):
     name: str
+    service_type: str = Field(default="hotel", pattern="^(restaurant|hotel|spa)$")
     category: str
     price: float = Field(ge=0)
     delivery_time: str = ""
