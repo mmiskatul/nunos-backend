@@ -1,8 +1,14 @@
 from bson import ObjectId
 import mongomock
+import pytest
+from pydantic import ValidationError
 
 from app.modules.customer.repositories_customer import CustomerRepository
 from app.modules.vendor.repositories_portal import VendorPortalRepository
+from app.modules.vendor.schemas_portal import (
+    VendorAmenityCreateRequest,
+    VendorServiceSettings,
+)
 
 
 class _StrictMongoUpdateCollection:
@@ -19,6 +25,17 @@ class _StrictMongoUpdateCollection:
 
     def find_one(self, *args, **kwargs):
         return self.collection.find_one(*args, **kwargs)
+
+
+def test_custom_amenity_schema_normalizes_and_limits_input():
+    assert VendorAmenityCreateRequest(name="  Rooftop Lounge  ").name == "Rooftop Lounge"
+
+    with pytest.raises(ValidationError):
+        VendorAmenityCreateRequest(name="   ")
+    with pytest.raises(ValidationError):
+        VendorAmenityCreateRequest(name="x" * 81)
+    with pytest.raises(ValidationError):
+        VendorServiceSettings(amenities=[f"Amenity {index}" for index in range(51)])
 
 
 def test_profile_amenities_save_does_not_write_created_at_twice():
@@ -43,11 +60,53 @@ def test_profile_amenities_save_does_not_write_created_at_twice():
         },
     )
 
-    listing = database.vendor_restaurants.find_one({"vendor_id": vendor_id})
+    listing = portal.service_collections["restaurant"].find_one(
+        {"vendor_id": vendor_id}
+    )
     assert profile["restaurant_settings"]["amenities"] == ["Free WiFi"]
     assert listing is not None
     assert listing["amenities"] == ["Free WiFi"]
     assert listing["created_at"]
+
+
+def test_add_service_amenity_preserves_settings_and_avoids_case_duplicates():
+    database = mongomock.MongoClient().nuno
+    vendor_id = ObjectId()
+    database.vendors.insert_one(
+        {"_id": vendor_id, "status": "approved", "business_name": "Garden Venue"}
+    )
+    database.vendor_portal_settings.insert_one(
+        {
+            "vendor_id": vendor_id,
+            "profile": {
+                "restaurant_settings": {
+                    "name": "Garden Restaurant",
+                    "policy": "Cancel two hours before arrival.",
+                    "amenities": ["Free WiFi"],
+                    "published": True,
+                }
+            },
+        }
+    )
+    portal = VendorPortalRepository(database)
+
+    added = portal.add_service_amenity(
+        str(vendor_id), "restaurant", "Private Dining"
+    )
+    duplicate = portal.add_service_amenity(
+        str(vendor_id), "restaurant", "private dining"
+    )
+
+    assert added["created"] is True
+    assert duplicate["created"] is False
+    assert duplicate["amenity"] == "Private Dining"
+    assert duplicate["amenities"] == ["Free WiFi", "Private Dining"]
+    assert duplicate["settings"]["policy"] == "Cancel two hours before arrival."
+    listing = portal.service_collections["restaurant"].find_one(
+        {"vendor_id": vendor_id}
+    )
+    assert listing is not None
+    assert listing["amenities"] == ["Free WiFi", "Private Dining"]
 
 
 def test_published_service_types_use_independent_collections():

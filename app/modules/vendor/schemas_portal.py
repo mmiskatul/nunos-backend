@@ -275,7 +275,7 @@ class VendorServiceSettings(BaseModel):
     available_booking_times: list[str] = Field(default_factory=list)
     seating_preferences: list[str] = Field(default_factory=list)
     policy: str = ""
-    amenities: list[str] = Field(default_factory=list)
+    amenities: list[str] = Field(default_factory=list, max_length=50)
     special_offers: list[VendorServiceOffer] = Field(default_factory=list, max_length=20)
     published: bool | None = None
     model_config = ConfigDict(extra="allow")
@@ -387,6 +387,22 @@ class VendorServiceSettingsRequest(BaseModel):
         if isinstance(value, dict) and "data" not in value:
             return {"data": value}
         return value
+
+
+class VendorAmenityCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def normalize_name(cls, value):
+        return str(value or "").strip()
+
+
+class VendorAmenityCreateResponse(BaseModel):
+    service_type: str
+    amenity: str
+    created: bool
+    amenities: list[str] = Field(max_length=50)
 
 
 class VendorLegalDocRequest(BaseModel):

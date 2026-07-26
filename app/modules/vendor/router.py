@@ -30,6 +30,8 @@ from app.modules.vendor.schemas_portal import (
     ServiceUpsertRequest,
     VendorEventStatusRequest,
     VendorEventUpsertRequest,
+    VendorAmenityCreateRequest,
+    VendorAmenityCreateResponse,
     VendorLegalDocRequest,
     VendorPasswordChangeRequest,
     VendorSettingsGeneralRequest,
@@ -1032,6 +1034,28 @@ def update_vendor_service_settings(service_type: str, payload: VendorServiceSett
     settings = updated.get(f"{normalized}_settings", merged)
     listing = portal_service.repo.sync_service_listing(_vendor_id(current_vendor), normalized, settings)
     return {"service_type": normalized, "settings": settings, "listing": listing}
+
+
+@router.post(
+    "/settings/services/{service_type}/amenities",
+    tags=["Vendor - Settings"],
+    response_model=VendorAmenityCreateResponse,
+)
+def add_vendor_service_amenity(
+    service_type: str,
+    payload: VendorAmenityCreateRequest,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    try:
+        normalized = normalize_service_type(service_type)
+        return portal_service.repo.add_service_amenity(
+            _vendor_id(current_vendor),
+            normalized,
+            payload.name,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------

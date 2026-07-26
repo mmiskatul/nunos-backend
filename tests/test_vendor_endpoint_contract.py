@@ -84,6 +84,7 @@ FRONTEND_VENDOR_ENDPOINTS = {
     ("PATCH", "/api/v1/vendor/settings/legal/{doc_type}"),
     ("GET", "/api/v1/vendor/settings/profile"),
     ("PATCH", "/api/v1/vendor/settings/profile"),
+    ("POST", "/api/v1/vendor/settings/services/{service_type}/amenities"),
     ("POST", "/api/v1/vendor/settings/profile/avatar"),
     ("PATCH", "/api/v1/vendor/settings/password"),
     ("GET", "/api/v1/vendor/support/tickets"),

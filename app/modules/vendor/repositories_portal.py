@@ -1075,6 +1075,53 @@ class VendorPortalRepository:
         )
         return self._serialize(collection.find_one({"vendor_id": ObjectId(vendor_id)})) or {}
 
+    def add_service_amenity(
+        self,
+        vendor_id: str,
+        service_type: str,
+        amenity_name: str,
+    ) -> dict[str, Any]:
+        """Append one amenity without overwriting the service's other settings."""
+        normalized = normalize_service_type(service_type)
+        profile = self.get_settings_profile(vendor_id)
+        settings_key = f"{normalized}_settings"
+        service_settings = dict(profile.get(settings_key, {}) or {})
+        amenities = list(
+            dict.fromkeys(
+                str(item).strip()
+                for item in service_settings.get("amenities", [])
+                if str(item).strip()
+            )
+        )
+        existing = next(
+            (
+                item
+                for item in amenities
+                if item.casefold() == amenity_name.casefold()
+            ),
+            None,
+        )
+        created = existing is None
+        amenity = existing or amenity_name
+        if created:
+            if len(amenities) >= 50:
+                raise ValueError("A service can have at most 50 amenities.")
+            amenities.append(amenity)
+
+        service_settings["amenities"] = amenities
+        updated = self.update_settings_profile(
+            vendor_id,
+            {settings_key: service_settings},
+        )
+        saved_settings = updated.get(settings_key, service_settings)
+        return {
+            "service_type": normalized,
+            "amenity": amenity,
+            "created": created,
+            "amenities": saved_settings.get("amenities", amenities),
+            "settings": saved_settings,
+        }
+
     def get_settings_general(self, vendor_id: str) -> dict[str, Any]:
         settings_general = self.get_settings(vendor_id).get("general", {})
         vendor, profile, business, _ = self._get_vendor_records(vendor_id)
