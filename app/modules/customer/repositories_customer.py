@@ -812,6 +812,15 @@ class CustomerRepository:
             except (InvalidId, TypeError):
                 return result
 
+        review = self.vendor_reviews.find_one(
+            {"booking_id": booking.get("_id"), "customer_id": booking.get("customer_id")}
+        )
+        if review:
+            result["review"] = self._serialize(review)
+            result["has_review"] = True
+        else:
+            result["has_review"] = False
+
         bundle = self._get_vendor_bundle(vendor_id)
         provider_type = str(booking.get("provider_type") or "restaurant").lower()
         event_id = booking.get("event_id")
@@ -1659,6 +1668,56 @@ class CustomerRepository:
             {"$set": {"status": "canceled", "updated_at": now}},
         )
         return self.get_customer_booking(customer_id, booking_id)
+
+    def create_booking_review(
+        self,
+        customer_id: str,
+        booking_id: str,
+        rating: int,
+        review_text: str,
+    ) -> dict[str, Any]:
+        customer_obj_id = self._oid(customer_id)
+        booking_obj_id = self._oid(booking_id)
+        booking = self.vendor_bookings.find_one(
+            {"_id": booking_obj_id, "customer_id": customer_obj_id}
+        )
+        if not booking:
+            raise ValueError("Booking not found.")
+        if str(booking.get("status") or "").lower() not in {"complete", "completed"}:
+            raise ValueError("You can review a booking after it is completed.")
+        if self.vendor_reviews.find_one(
+            {"booking_id": booking_obj_id, "customer_id": customer_obj_id}
+        ):
+            raise ValueError("You have already reviewed this booking.")
+
+        customer = self.users.find_one({"_id": customer_obj_id}) or {}
+        now = datetime.now(UTC)
+        review = {
+            "vendor_id": booking["vendor_id"],
+            "booking_id": booking_obj_id,
+            "customer_id": customer_obj_id,
+            "customer_name": customer.get("full_name") or booking.get("customer_name") or "Customer",
+            "customer_avatar": customer.get("profile_image_url") or customer.get("profile_image") or customer.get("avatar_url") or "",
+            "rating": rating,
+            "star_rating": rating,
+            "review_text": review_text.strip(),
+            "provider_type": booking.get("provider_type"),
+            "service": booking.get("service"),
+            "created_at": now,
+            "updated_at": now,
+        }
+        review_id = self.vendor_reviews.insert_one(review).inserted_id
+        self._create_vendor_notification(
+            booking["vendor_id"],
+            "new_review",
+            "New Customer Review",
+            f"{review['customer_name']} left a {rating}-star review.",
+            action_type="reply_review",
+            action_label="View Review",
+            metadata={"review_id": str(review_id), "booking_id": booking_id, "rating": rating},
+            settings_key="new_review",
+        )
+        return self._serialize(self.vendor_reviews.find_one({"_id": review_id})) or {}
 
     def reschedule_booking(
         self,

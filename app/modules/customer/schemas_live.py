@@ -49,6 +49,11 @@ class CustomerBookingCancelRequest(BaseModel):
     reason: str | None = Field(default=None, max_length=1000)
 
 
+class CustomerBookingReviewRequest(BaseModel):
+    rating: int = Field(ge=1, le=5)
+    review_text: str = Field(min_length=2, max_length=1000)
+
+
 class CustomerAvailabilityRequest(BaseModel):
     provider_id: str = Field(min_length=24, max_length=24)
     date: str = Field(min_length=10, max_length=10)

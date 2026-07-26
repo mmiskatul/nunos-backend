@@ -7,6 +7,7 @@ from app.modules.customer.schemas_live import (
     CustomerAvailabilityRequest,
     CustomerBookingCancelRequest,
     CustomerBookingCreateRequest,
+    CustomerBookingReviewRequest,
     CustomerHotelBookingCreateRequest,
     CustomerBookingQuoteRequest,
     CustomerBookingRescheduleRequest,
@@ -659,6 +660,26 @@ def cancel_booking(
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found.")
     return updated
+
+
+@router.post("/bookings/{booking_id}/review", tags=["Customer - Bookings"])
+def create_booking_review(
+    booking_id: str,
+    payload: CustomerBookingReviewRequest,
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    try:
+        return customer_service.repo.create_booking_review(
+            customer_id=current_user["id"],
+            booking_id=booking_id,
+            rating=payload.rating,
+            review_text=payload.review_text,
+        )
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.patch("/bookings/{booking_id}/reschedule", tags=["Customer - Bookings"])
