@@ -7,6 +7,7 @@ from app.modules.customer.repositories_customer import CustomerRepository
 from app.modules.vendor.repositories_portal import VendorPortalRepository
 from app.modules.vendor.schemas_portal import (
     VendorAmenityCreateRequest,
+    VendorSettingsProfileRequest,
     VendorServiceSettings,
 )
 
@@ -36,6 +37,52 @@ def test_custom_amenity_schema_normalizes_and_limits_input():
         VendorAmenityCreateRequest(name="x" * 81)
     with pytest.raises(ValidationError):
         VendorServiceSettings(amenities=[f"Amenity {index}" for index in range(51)])
+
+
+def test_partial_profile_patch_contains_only_explicit_fields():
+    payload = VendorSettingsProfileRequest(
+        owner_full_name="Updated Owner",
+    ).model_dump(exclude_unset=True)
+
+    assert payload == {"owner_full_name": "Updated Owner"}
+
+
+def test_partial_profile_update_preserves_service_settings_without_resync():
+    database = mongomock.MongoClient().nuno
+    vendor_id = ObjectId()
+    database.vendors.insert_one(
+        {
+            "_id": vendor_id,
+            "status": "approved",
+            "business_name": "Garden Venue",
+            "owner_full_name": "Original Owner",
+        }
+    )
+    database.vendor_portal_settings.insert_one(
+        {
+            "vendor_id": vendor_id,
+            "profile": {
+                "business_name": "Garden Venue",
+                "restaurant_settings": {
+                    "name": "Garden Restaurant",
+                    "amenities": ["Free WiFi"],
+                    "published": True,
+                },
+            },
+        }
+    )
+    portal = VendorPortalRepository(database)
+    synchronized: list[str] = []
+    portal.sync_service_listing = lambda _vendor_id, service_type, _settings: synchronized.append(service_type)  # type: ignore[method-assign]
+
+    profile = portal.update_settings_profile(
+        str(vendor_id),
+        {"owner_full_name": "Updated Owner"},
+    )
+
+    assert profile["owner_full_name"] == "Updated Owner"
+    assert profile["restaurant_settings"]["amenities"] == ["Free WiFi"]
+    assert synchronized == []
 
 
 def test_profile_amenities_save_does_not_write_created_at_twice():

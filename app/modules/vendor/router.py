@@ -1008,7 +1008,10 @@ def update_vendor_profile_settings(
     current_vendor: dict = Depends(get_current_vendor),
     portal_service: VendorPortalService = Depends(get_vendor_portal_service),
 ) -> dict:
-    return portal_service.repo.update_settings_profile(_vendor_id(current_vendor), payload.model_dump())
+    return portal_service.repo.update_settings_profile(
+        _vendor_id(current_vendor),
+        payload.model_dump(exclude_unset=True),
+    )
 
 
 @router.get("/settings/services/{service_type}", tags=["Vendor - Settings"])

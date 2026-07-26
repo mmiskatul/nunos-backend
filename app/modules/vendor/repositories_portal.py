@@ -1444,8 +1444,9 @@ class VendorPortalRepository:
             upsert=True,
         )
         for service_type in ("restaurant", "hotel", "spa"):
-            service_settings = next_profile.get(f"{service_type}_settings")
-            if isinstance(service_settings, dict):
+            settings_key = f"{service_type}_settings"
+            service_settings = next_profile.get(settings_key)
+            if settings_key in sanitized and isinstance(service_settings, dict):
                 self.sync_service_listing(vendor_id, service_type, service_settings)
         return self.get_settings_profile(vendor_id)
 
