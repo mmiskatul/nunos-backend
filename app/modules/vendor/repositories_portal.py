@@ -5,6 +5,7 @@ from io import StringIO
 from typing import Any
 
 from bson import ObjectId
+from bson.errors import InvalidId
 from pymongo import DESCENDING
 from pymongo.collection import Collection
 from pymongo.database import Database
@@ -15,6 +16,7 @@ from app.domain.service_listings import SERVICE_TYPES, collection_name_for, norm
 class VendorPortalRepository:
     def __init__(self, db: Database):
         self.bookings: Collection = db["vendor_bookings"]
+        self.users: Collection = db["users"]
         self.assets: Collection = db["vendor_assets"]
         self.rooms: Collection = db["vendor_rooms"]
         self.services: Collection = db["vendor_services"]
@@ -273,12 +275,34 @@ class VendorPortalRepository:
             query["event_id"] = ObjectId(event_id)
         total = int(self.bookings.count_documents(query))
         docs = self.bookings.find(query).sort("created_at", DESCENDING).skip(skip).limit(limit)
-        return {"items": [self._serialize(doc) for doc in docs], "total": total}
+        return {"items": [self._enrich_booking_customer(doc) for doc in docs], "total": total}
+
+    def _enrich_booking_customer(self, booking: dict[str, Any]) -> dict[str, Any]:
+        result = self._serialize(booking) or {}
+        customer_id = booking.get("customer_id")
+        if not isinstance(customer_id, ObjectId):
+            try:
+                customer_id = ObjectId(str(customer_id))
+            except (InvalidId, TypeError, ValueError):
+                return result
+        customer = self.users.find_one(
+            {"_id": customer_id},
+            {"profile_image_url": 1, "profile_image": 1, "avatar_url": 1, "created_at": 1},
+        ) or {}
+        result["customer_avatar"] = (
+            customer.get("profile_image_url")
+            or customer.get("profile_image")
+            or customer.get("avatar_url")
+            or ""
+        )
+        if customer.get("created_at"):
+            created_at = customer["created_at"]
+            result["customer_since"] = created_at.strftime("%Y") if isinstance(created_at, datetime) else str(created_at)[:4]
+        return result
 
     def get_booking(self, vendor_id: str, booking_id: str) -> dict[str, Any] | None:
-        return self._serialize(
-            self.bookings.find_one({"_id": ObjectId(booking_id), "vendor_id": ObjectId(vendor_id)})
-        )
+        booking = self.bookings.find_one({"_id": ObjectId(booking_id), "vendor_id": ObjectId(vendor_id)})
+        return self._enrich_booking_customer(booking) if booking else None
 
     def update_booking_status(self, vendor_id: str, booking_id: str, status: str, note: str | None = None) -> dict[str, Any] | None:
         status_normalized = status.lower().strip()
