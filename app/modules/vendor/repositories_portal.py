@@ -800,12 +800,13 @@ class VendorPortalRepository:
             if date_to:
                 created_range["$lt"] = datetime.fromisoformat(date_to).replace(tzinfo=UTC) + timedelta(days=1)
             query["created_at"] = created_range
-        rows = list(self.reviews.find(query, {"rating": 1}))
+        rows = list(self.reviews.find(query, {"rating": 1, "star_rating": 1}))
         total = len(rows)
-        average = round(sum(float(r.get("rating", 0)) for r in rows) / total, 1) if total else 0.0
+        ratings = [float(row.get("rating") or row.get("star_rating") or 0) for row in rows]
+        average = round(sum(ratings) / total, 1) if total else 0.0
         breakdown = {str(star): 0 for star in [5, 4, 3, 2, 1]}
-        for row in rows:
-            star = str(int(row.get("rating", 0)))
+        for rating in ratings:
+            star = str(int(rating))
             if star in breakdown:
                 breakdown[star] += 1
         return {"average_rating": average, "total_reviews": total, "breakdown": breakdown}
@@ -944,7 +945,7 @@ class VendorPortalRepository:
                 }
             )
         if star_rating:
-            filters.append({"rating": star_rating})
+            filters.append({"$or": [{"rating": star_rating}, {"star_rating": star_rating}]})
         if replied is True:
             filters.append({"vendor_reply": {"$exists": True, "$ne": ""}})
         if replied is False:
@@ -953,7 +954,21 @@ class VendorPortalRepository:
             query["$and"] = filters
         total = int(self.reviews.count_documents(query))
         docs = self.reviews.find(query).sort("created_at", DESCENDING).skip(skip).limit(limit)
-        return {"items": [self._serialize(doc) for doc in docs], "total": total}
+        items: list[dict[str, Any]] = []
+        for doc in docs:
+            serialized = self._serialize(doc) or {}
+            rating = int(doc.get("rating") or doc.get("star_rating") or 0)
+            items.append(
+                {
+                    **serialized,
+                    "rating": rating,
+                    "star_rating": rating,
+                    "review_text": doc.get("review_text") or doc.get("comment") or "",
+                    "avatar_url": doc.get("customer_avatar") or doc.get("avatar_url") or "",
+                    "vendor_reply": doc.get("vendor_reply") or doc.get("reply"),
+                }
+            )
+        return {"items": items, "total": total}
 
     def reply_review(self, vendor_id: str, review_id: str, reply_text: str) -> dict[str, Any] | None:
         self.reviews.update_one(

@@ -614,7 +614,8 @@ class CustomerRepository:
         vendor_id = self._oid(hotel_id)
         docs = list(self.vendor_reviews.find({"vendor_id": vendor_id}).sort("created_at", DESCENDING))
         total = len(docs)
-        avg_rating = round(sum(float(doc.get("rating", 5)) for doc in docs) / total, 1) if total else 4.8
+        ratings = [float(doc.get("rating") or doc.get("star_rating") or 0) for doc in docs]
+        avg_rating = round(sum(ratings) / total, 1) if total else 0.0
         
         reviews = []
         for doc in docs:
@@ -632,8 +633,10 @@ class CustomerRepository:
                 "id": str(doc["_id"]),
                 "user": doc.get("customer_name") or "Anonymous",
                 "date": date_str,
-                "rating": int(doc.get("rating", 5)),
+                "rating": int(doc.get("rating") or doc.get("star_rating") or 0),
                 "comment": doc.get("review_text") or doc.get("comment") or "",
+                "avatar": doc.get("customer_avatar") or doc.get("avatar_url") or "",
+                "vendor_reply": doc.get("vendor_reply") or doc.get("reply"),
             })
         return {
             "average_rating": str(avg_rating),
@@ -882,6 +885,58 @@ class CustomerRepository:
         tier = "gold" if points >= 500 else "silver" if points >= 200 else "bronze"
         return {"points_balance": points, "tier": tier}
 
+    def list_customer_reviews(self, customer_id: str, limit: int, skip: int) -> dict[str, Any]:
+        customer_obj_id = self._oid(customer_id)
+        query = {"customer_id": customer_obj_id}
+        total = int(self.vendor_reviews.count_documents(query))
+        docs = self.vendor_reviews.find(query).sort("created_at", DESCENDING).skip(skip).limit(limit)
+        items: list[dict[str, Any]] = []
+
+        for doc in docs:
+            serialized = self._serialize(doc) or {}
+            rating = int(doc.get("rating") or doc.get("star_rating") or 0)
+            vendor_id = doc.get("vendor_id")
+            if not isinstance(vendor_id, ObjectId):
+                try:
+                    vendor_id = ObjectId(str(vendor_id))
+                except (InvalidId, TypeError):
+                    vendor_id = None
+
+            provider_name = str(doc.get("provider_name") or doc.get("service") or "Service provider")
+            provider_image = ""
+            if isinstance(vendor_id, ObjectId):
+                bundle = self._get_vendor_bundle(vendor_id)
+                service_type = str(doc.get("provider_type") or "restaurant").lower()
+                if service_type in {"hotel", "hotel_room"}:
+                    service_type = "hotel"
+                settings = self._service_settings(bundle, service_type)
+                provider_name = str(
+                    settings.get("name")
+                    or bundle.get("vendor", {}).get("business_name")
+                    or bundle.get("business", {}).get("business_name")
+                    or provider_name
+                )
+                provider_image = str(bundle.get("cover_image") or "")
+
+            booking = self.vendor_bookings.find_one(
+                {"_id": doc.get("booking_id"), "customer_id": customer_obj_id},
+                {"booking_code": 1},
+            ) or {}
+            items.append(
+                {
+                    **serialized,
+                    "rating": rating,
+                    "star_rating": rating,
+                    "review_text": doc.get("review_text") or doc.get("comment") or "",
+                    "provider_name": provider_name,
+                    "provider_image": provider_image,
+                    "booking_code": booking.get("booking_code"),
+                    "vendor_reply": doc.get("vendor_reply") or doc.get("reply"),
+                }
+            )
+
+        return {"items": items, "total": total}
+
     def list_saved_items(self, customer_id: str) -> dict[str, Any]:
         docs = self.customer_saved_items.find({"customer_id": self._oid(customer_id)}).sort("created_at", DESCENDING)
         items: list[dict[str, Any]] = []
@@ -1027,19 +1082,24 @@ class CustomerRepository:
     def get_provider_reviews_payload(self, provider_id: str) -> dict[str, Any]:
         docs = list(self.vendor_reviews.find({"vendor_id": self._oid(provider_id)}).sort("created_at", DESCENDING))
         total = len(docs)
-        ratings = [float(doc.get("rating", 0)) for doc in docs]
+        ratings = [float(doc.get("rating") or doc.get("star_rating") or 0) for doc in docs]
         average = round(sum(ratings) / total, 1) if total else 0
         breakdown = {str(star): sum(1 for rating in ratings if int(rating) == star) for star in range(1, 6)}
         items = []
         for doc in docs:
             created_at = doc.get("created_at")
+            if isinstance(created_at, datetime):
+                date_label = created_at.strftime("%b %d, %Y")
+            else:
+                date_label = str(created_at or "")
             items.append({
                 "id": str(doc["_id"]),
                 "user": doc.get("customer_name") or "Anonymous",
-                "date": created_at.isoformat() if isinstance(created_at, datetime) else str(created_at or ""),
-                "rating": int(doc.get("rating", 0)),
+                "date": date_label,
+                "rating": int(doc.get("rating") or doc.get("star_rating") or 0),
                 "comment": doc.get("review_text") or doc.get("comment") or "",
-                "avatar": doc.get("customer_avatar") or "",
+                "avatar": doc.get("customer_avatar") or doc.get("avatar_url") or "",
+                "vendor_reply": doc.get("vendor_reply") or doc.get("reply"),
             })
         return {"average_rating": average, "total_reviews": total, "breakdown": breakdown, "items": items}
 
@@ -1690,10 +1750,13 @@ class CustomerRepository:
         ):
             raise ValueError("You have already reviewed this booking.")
 
+        vendor_obj_id = booking.get("vendor_id")
+        if not isinstance(vendor_obj_id, ObjectId):
+            vendor_obj_id = self._oid(str(vendor_obj_id))
         customer = self.users.find_one({"_id": customer_obj_id}) or {}
         now = datetime.now(UTC)
         review = {
-            "vendor_id": booking["vendor_id"],
+            "vendor_id": vendor_obj_id,
             "booking_id": booking_obj_id,
             "customer_id": customer_obj_id,
             "customer_name": customer.get("full_name") or booking.get("customer_name") or "Customer",
@@ -1708,7 +1771,7 @@ class CustomerRepository:
         }
         review_id = self.vendor_reviews.insert_one(review).inserted_id
         self._create_vendor_notification(
-            booking["vendor_id"],
+            vendor_obj_id,
             "new_review",
             "New Customer Review",
             f"{review['customer_name']} left a {rating}-star review.",

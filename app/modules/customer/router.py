@@ -633,6 +633,20 @@ def get_booking(
     return customer_service.get_booking_or_404(current_user["id"], booking_id)
 
 
+@router.get("/reviews", tags=["Customer - Reviews"])
+def list_my_reviews(
+    limit: int = Query(default=20, ge=1, le=100),
+    skip: int = Query(default=0, ge=0),
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    return customer_service.repo.list_customer_reviews(
+        customer_id=current_user["id"],
+        limit=limit,
+        skip=skip,
+    )
+
+
 @router.post("/bookings/{booking_id}/confirm", tags=["Customer - Bookings"])
 def confirm_booking(
     booking_id: str,
