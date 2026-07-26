@@ -317,14 +317,42 @@ class VendorPortalRepository:
         status_normalized = status.lower().strip()
         if status_normalized == "cancelled":
             status_normalized = "canceled"
+        booking = self.bookings.find_one({"_id": ObjectId(booking_id), "vendor_id": ObjectId(vendor_id)})
+        if not booking:
+            return None
         payload: dict[str, Any] = {"status": status_normalized, "updated_at": datetime.now(UTC)}
         if note:
             payload["status_note"] = note
-        self.bookings.update_one(
+        points_awarded = int(booking.get("points_awarded") or 0)
+        if status_normalized == "complete" and booking.get("status") != "complete":
+            points_awarded = self._calculate_booking_points(vendor_id, booking)
+            payload["points_awarded"] = points_awarded
+            if points_awarded > 0 and booking.get("customer_id"):
+                self.users.update_one(
+                    {"_id": booking["customer_id"]},
+                    {"$inc": {"points_balance": points_awarded}, "$set": {"updated_at": datetime.now(UTC)}},
+                )
+        updated = self.bookings.update_one(
             {"_id": ObjectId(booking_id), "vendor_id": ObjectId(vendor_id)},
             {"$set": payload},
         )
+        self.bookings.database["bookings"].update_many(
+            {"booking_id": ObjectId(booking_id)},
+            {"$set": {"status": status_normalized, "updated_at": payload["updated_at"], "points_awarded": points_awarded}},
+        )
         return self.get_booking(vendor_id, booking_id)
+
+    def _calculate_booking_points(self, vendor_id: str, booking: dict[str, Any]) -> int:
+        settings = self.loyalty_settings.find_one({"vendor_id": ObjectId(vendor_id)}) or {}
+        if settings and settings.get("enable_loyalty_program") is False:
+            return 0
+        amount = max(float(booking.get("total_amount") or 0), 0)
+        rule = str(settings.get("points_rule_type") or "points_per_currency")
+        if rule == "percentage_based":
+            return max(int(amount * float(settings.get("percentage_value") or 0) / 100), 0)
+        points_per_currency = float(settings.get("points_earned") if settings.get("points_earned") is not None else 50)
+        currency_unit = float(settings.get("currency_unit") or 1)
+        return max(int((amount / currency_unit) * points_per_currency), 0) if currency_unit > 0 else 0
 
     def reschedule_booking(self, vendor_id: str, booking_id: str, date: str, time: str, note: str | None = None) -> dict[str, Any] | None:
         payload: dict[str, Any] = {"scheduled_date": date, "scheduled_time": time, "updated_at": datetime.now(UTC)}
