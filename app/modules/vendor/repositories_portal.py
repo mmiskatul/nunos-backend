@@ -1068,7 +1068,6 @@ class VendorPortalRepository:
             "published": bool(payload.get("published") is True),
             "updated_at": now,
         })
-        payload.setdefault("created_at", now)
         collection.update_one(
             {"vendor_id": ObjectId(vendor_id)},
             {"$set": payload, "$setOnInsert": {"created_at": now}},

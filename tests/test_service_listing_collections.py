@@ -5,6 +5,51 @@ from app.modules.customer.repositories_customer import CustomerRepository
 from app.modules.vendor.repositories_portal import VendorPortalRepository
 
 
+class _StrictMongoUpdateCollection:
+    """Make mongomock reject update-path conflicts like production MongoDB."""
+
+    def __init__(self, collection):
+        self.collection = collection
+
+    def update_one(self, query, update, **kwargs):
+        set_fields = set(update.get("$set", {}))
+        insert_fields = set(update.get("$setOnInsert", {}))
+        assert not set_fields.intersection(insert_fields)
+        return self.collection.update_one(query, update, **kwargs)
+
+    def find_one(self, *args, **kwargs):
+        return self.collection.find_one(*args, **kwargs)
+
+
+def test_profile_amenities_save_does_not_write_created_at_twice():
+    database = mongomock.MongoClient().nuno
+    vendor_id = ObjectId()
+    database.vendors.insert_one(
+        {"_id": vendor_id, "status": "approved", "business_name": "Garden Venue"}
+    )
+    portal = VendorPortalRepository(database)
+    portal.service_collections["restaurant"] = _StrictMongoUpdateCollection(
+        database.vendor_restaurants
+    )
+
+    profile = portal.update_settings_profile(
+        str(vendor_id),
+        {
+            "restaurant_settings": {
+                "name": "Garden Restaurant",
+                "amenities": ["Free WiFi"],
+                "published": True,
+            }
+        },
+    )
+
+    listing = database.vendor_restaurants.find_one({"vendor_id": vendor_id})
+    assert profile["restaurant_settings"]["amenities"] == ["Free WiFi"]
+    assert listing is not None
+    assert listing["amenities"] == ["Free WiFi"]
+    assert listing["created_at"]
+
+
 def test_published_service_types_use_independent_collections():
     database = mongomock.MongoClient().nuno
     vendor_id = ObjectId()
