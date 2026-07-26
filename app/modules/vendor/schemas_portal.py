@@ -4,6 +4,8 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.domain.vendor_categories import normalize_account_categories
+
 
 class BookingStatusUpdateRequest(BaseModel):
     status: str = Field(pattern="^(confirmed|pending|canceled|cancelled|complete|check_in)$")
@@ -370,12 +372,13 @@ class VendorSettingsProfileRequest(BaseModel):
     def validate_categories(cls, value: list[str] | None) -> list[str] | None:
         if value is None:
             return None
-        normalized: list[str] = []
-        for item in value:
-            label = str(item or "").strip()
-            if label and label not in normalized:
-                normalized.append(label)
-        return normalized or None
+        return normalize_account_categories(value)
+
+    @model_validator(mode="after")
+    def remove_legacy_event_venue_category(self) -> "VendorSettingsProfileRequest":
+        if self.category.strip().casefold() == "event venue":
+            self.category = (self.categories or ["Restaurant"])[0]
+        return self
 
 
 class VendorServiceSettingsRequest(BaseModel):

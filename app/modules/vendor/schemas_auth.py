@@ -1,6 +1,7 @@
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.core.contact import parse_email_or_phone
+from app.domain.vendor_categories import normalize_account_categories
 
 
 class VendorSignupCodeRequest(BaseModel):
@@ -82,10 +83,10 @@ class VendorRegisterRequest(BaseModel):
             raise ValueError("Password and confirm_password must match.")
         if not self.terms_accepted:
             raise ValueError("terms_accepted must be true.")
-        if self.categories:
-            self.category = self.categories[0]
-        else:
-            self.categories = [self.category]
+        self.categories = normalize_account_categories(
+            self.categories or [self.category]
+        )
+        self.category = self.categories[0]
         return self
 
 

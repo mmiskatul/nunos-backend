@@ -11,6 +11,7 @@ from pymongo.collection import Collection
 from pymongo.database import Database
 
 from app.domain.service_listings import SERVICE_TYPES, collection_name_for, normalize_service_type
+from app.domain.vendor_categories import normalize_account_categories
 
 
 class VendorPortalRepository:
@@ -77,13 +78,11 @@ class VendorPortalRepository:
         for source in (profile, verification, vendor, business):
             categories = source.get("categories")
             if isinstance(categories, list):
-                normalized = [str(item).strip() for item in categories if str(item).strip()]
-                if normalized:
-                    return list(dict.fromkeys(normalized))
+                return normalize_account_categories(categories)
         for source in (profile, verification, vendor, business):
             category = str(source.get("category") or "").strip()
             if category:
-                return [category]
+                return normalize_account_categories([category])
         return ["Restaurant"]
 
     def _validate_vendor_category_access(self, vendor_id: str, category: str) -> None:
@@ -1295,11 +1294,24 @@ class VendorPortalRepository:
         profile_settings = settings_doc.get("profile", {})
         general_settings = settings_doc.get("general", {})
         vendor, profile, business, verification = self._get_vendor_records(vendor_id)
-        category = (
+        raw_category = (
             profile_settings.get("category")
             or verification.get("category")
             or vendor.get("category")
             or "Restaurant"
+        )
+        categories = normalize_account_categories(
+            profile_settings.get("categories")
+            or verification.get("categories")
+            or vendor.get("categories")
+            or ([profile_settings.get("category")] if profile_settings.get("category") else None)
+            or ([verification.get("category")] if verification.get("category") else None)
+            or ([vendor.get("category")] if vendor.get("category") else ["Restaurant"])
+        )
+        category = (
+            categories[0]
+            if str(raw_category).strip().casefold() == "event venue"
+            else raw_category
         )
 
         business_name = (
@@ -1336,14 +1348,7 @@ class VendorPortalRepository:
             **profile_settings,
             "business_name": business_name,
             "category": category,
-            "categories": (
-                profile_settings.get("categories")
-                or verification.get("categories")
-                or vendor.get("categories")
-                or ([profile_settings.get("category")] if profile_settings.get("category") else None)
-                or ([verification.get("category")] if verification.get("category") else None)
-                or ([vendor.get("category")] if vendor.get("category") else ["Restaurant"])
-            ),
+            "categories": categories,
             "email_address": email,
             "phone_number": phone,
             "about_business": description,
@@ -1385,6 +1390,13 @@ class VendorPortalRepository:
             or vendor.get("category")
             or "Restaurant"
         )
+        next_categories = normalize_account_categories(
+            next_profile.get("categories") or [next_category]
+        )
+        if str(next_category).strip().casefold() == "event venue":
+            next_category = next_categories[0]
+        next_profile["category"] = next_category
+        next_profile["categories"] = next_categories
         next_profile["location_label"] = self._normalize_location_label(
             next_profile.get("location_label"),
             str(next_category),

@@ -47,6 +47,44 @@ def test_partial_profile_patch_contains_only_explicit_fields():
     assert payload == {"owner_full_name": "Updated Owner"}
 
 
+def test_profile_categories_remove_legacy_event_venue_module():
+    payload = VendorSettingsProfileRequest(
+        category="Event Venue",
+        categories=["Event Venue", "Hotel"],
+    )
+
+    assert payload.category == "Hotel"
+    assert payload.categories == ["Hotel"]
+
+
+def test_profile_response_hides_legacy_event_venue_module():
+    database = mongomock.MongoClient().nuno
+    vendor_id = ObjectId()
+    database.vendors.insert_one(
+        {
+            "_id": vendor_id,
+            "status": "approved",
+            "business_name": "Legacy Event Account",
+            "category": "Event Venue",
+            "categories": ["Event Venue"],
+        }
+    )
+    database.vendor_portal_settings.insert_one(
+        {
+            "vendor_id": vendor_id,
+            "profile": {
+                "category": "Event Venue",
+                "categories": ["Event Venue"],
+            },
+        }
+    )
+
+    profile = VendorPortalRepository(database).get_settings_profile(str(vendor_id))
+
+    assert profile["category"] == "Restaurant"
+    assert profile["categories"] == ["Restaurant"]
+
+
 def test_partial_profile_update_preserves_service_settings_without_resync():
     database = mongomock.MongoClient().nuno
     vendor_id = ObjectId()

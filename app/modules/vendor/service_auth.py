@@ -6,6 +6,7 @@ from fastapi import HTTPException, UploadFile, status
 from pymongo.errors import DuplicateKeyError
 
 from app.core.account_lookup import find_existing_email_sync
+from app.domain.vendor_categories import normalize_account_categories
 from app.core.config import Settings, get_settings
 from app.core.contact import parse_email_or_phone
 from app.core.mongo_errors import duplicate_contact_conflict_detail
@@ -117,8 +118,14 @@ class VendorAuthService:
             ],
         }
         document = self.registration_config_collection.find_one({"key": "default_vendor_registration"}) or {}
+        configured_categories = document.get("categories") or fallback["categories"]
+        account_categories = [
+            category
+            for category in configured_categories
+            if str(category.get("id") or "").strip().casefold() != "event venue"
+        ]
         payload = {
-            "categories": document.get("categories") or fallback["categories"],
+            "categories": account_categories or fallback["categories"],
             "event_type_options": document.get("event_type_options") or fallback["event_type_options"],
             "equipment_options": document.get("equipment_options") or fallback["equipment_options"],
         }
@@ -205,7 +212,9 @@ class VendorAuthService:
 
         phone = explicit_phone or phone_from_contact
 
-        categories = payload.categories or [payload.category]
+        categories = normalize_account_categories(
+            payload.categories or [payload.category]
+        )
         primary_category = categories[0]
 
         try:

@@ -879,7 +879,7 @@ async def test_vendor_request_code_reports_pending_vendor_status(client, test_db
 
 
 @pytest.mark.asyncio
-async def test_vendor_event_crud_respects_vendor_categories(client, test_db):
+async def test_every_vendor_can_manage_events_without_event_venue_category(client, test_db):
     request_code_res = await client.post(
         "/api/v1/vendor/auth/register/request-code",
         json={"email_or_phone": "events-vendor@example.com"},
@@ -915,7 +915,7 @@ async def test_vendor_event_crud_respects_vendor_categories(client, test_db):
             "confirm_password": "VendorPass123!",
             "signup_token": signup_token,
             "category": "Restaurant",
-            "categories": ["Restaurant", "Event Venue"],
+            "categories": ["Restaurant"],
         },
     )
     assert register_res.status_code == 201
@@ -936,7 +936,7 @@ async def test_vendor_event_crud_respects_vendor_categories(client, test_db):
         headers=headers,
         json={
             "title": "Sunset Networking Dinner",
-            "category": "Event Venue",
+            "category": "Restaurant",
             "event_type": "Corporate Gala",
             "booking_mode": "detailed",
             "event_date": "2026-07-20",
@@ -955,7 +955,7 @@ async def test_vendor_event_crud_respects_vendor_categories(client, test_db):
     )
     assert create_res.status_code == 200
     created = create_res.json()
-    assert created["category"] == "Event Venue"
+    assert created["category"] == "Restaurant"
     assert created["status"] == "draft"
     assert created["booking_mode"] == "detailed"
     assert created["registration_deadline"] == "2026-07-19T23:59:00+06:00"
@@ -1162,5 +1162,6 @@ async def test_vendor_registration_form_config_endpoint(client):
     assert response.status_code == 200
     payload = response.json()
     assert any(item["id"] == "Cafe" for item in payload["categories"])
+    assert all(item["id"] != "Event Venue" for item in payload["categories"])
     assert "Corporate Gala" in payload["event_type_options"]
     assert "equipment_options" in payload
