@@ -344,6 +344,8 @@ class VendorPortalRepository:
 
     def _calculate_booking_points(self, vendor_id: str, booking: dict[str, Any]) -> int:
         settings = self.loyalty_settings.find_one({"vendor_id": ObjectId(vendor_id)}) or {}
+        if not settings:
+            return 50
         if settings and settings.get("enable_loyalty_program") is False:
             return 0
         amount = max(float(booking.get("total_amount") or 0), 0)
