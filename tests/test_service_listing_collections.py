@@ -42,3 +42,107 @@ def test_spa_detail_checks_spa_publication_instead_of_restaurant_publication():
     assert detail is not None
     assert detail["category"] == "spa"
     assert detail["name"] == "Wellness Spa"
+
+
+def test_hotel_detail_uses_saved_overview_settings_and_merges_room_amenities():
+    database = mongomock.MongoClient().nuno
+    vendor_id = ObjectId()
+    customer_id = ObjectId()
+    database.vendors.insert_one(
+        {"_id": vendor_id, "status": "approved", "business_name": "Harbour Hotel"}
+    )
+    database.vendor_profiles.insert_one({"vendor_id": vendor_id, "category": "Hotel"})
+    database.vendor_rooms.insert_one(
+        {
+            "vendor_id": vendor_id,
+            "name": "Deluxe Room",
+            "available": True,
+            "base_price": 220,
+            "amenities": ["Air Conditioning", "Smart TV"],
+        }
+    )
+
+    settings = {
+        "name": "Harbour Hotel",
+        "address": "12 Lake Road, Dhaka",
+        "about": "A quiet city stay close to the lake.",
+        "amenities": ["Free WiFi", "Air Conditioning"],
+        "special_offers": [
+            {
+                "title": "Weekend escape",
+                "description": "Stay two nights and save 15%.",
+                "active": True,
+            },
+            {
+                "title": "Expired internal offer",
+                "description": "Not visible",
+                "active": False,
+            },
+        ],
+        "published": True,
+    }
+    database.vendor_portal_settings.insert_one(
+        {
+            "vendor_id": vendor_id,
+            "profile": {"hotel_settings": settings},
+            "general": {},
+        }
+    )
+    VendorPortalRepository(database).sync_service_listing(str(vendor_id), "hotel", settings)
+
+    detail = CustomerRepository(database).get_hotel_details(
+        str(customer_id), str(vendor_id)
+    )
+
+    assert detail is not None
+    assert detail["about"] == "A quiet city stay close to the lake."
+    assert detail["address"] == "12 Lake Road, Dhaka"
+    assert detail["amenities"] == ["Free WiFi", "Air Conditioning", "Smart TV"]
+    assert detail["offers"] == [
+        {
+            "id": "hotel-setting-offer-0",
+            "title": "Weekend escape",
+            "description": "Stay two nights and save 15%.",
+            "active": True,
+            "source": "hotel_settings",
+        }
+    ]
+    assert detail["tabs"]["offers_count"] == 1
+
+
+def test_hotel_cards_do_not_invent_static_amenities():
+    database = mongomock.MongoClient().nuno
+    vendor_id = ObjectId()
+    customer_id = ObjectId()
+    database.vendors.insert_one(
+        {"_id": vendor_id, "status": "approved", "business_name": "Harbour Hotel"}
+    )
+    database.vendor_profiles.insert_one({"vendor_id": vendor_id, "category": "Hotel"})
+    database.vendor_rooms.insert_one(
+        {
+            "vendor_id": vendor_id,
+            "name": "Standard Room",
+            "available": True,
+            "base_price": 150,
+            "amenities": ["Coffee Maker"],
+        }
+    )
+    settings = {
+        "name": "Harbour Hotel",
+        "amenities": ["Free WiFi"],
+        "published": True,
+    }
+    database.vendor_portal_settings.insert_one(
+        {
+            "vendor_id": vendor_id,
+            "profile": {"hotel_settings": settings},
+            "general": {},
+        }
+    )
+    VendorPortalRepository(database).sync_service_listing(str(vendor_id), "hotel", settings)
+
+    result = CustomerRepository(database).list_hotels(
+        str(customer_id), limit=10, skip=0
+    )
+
+    assert result["items"][0]["amenities"] == ["Free WiFi", "Coffee Maker"]

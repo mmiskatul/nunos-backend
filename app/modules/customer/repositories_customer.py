@@ -502,6 +502,18 @@ class CustomerRepository:
             if rooms:
                 min_price = min(float(r.get("base_price", 150.0)) for r in rooms)
             has_rooms = len(rooms) > 0
+            property_amenities = [
+                str(amenity).strip()
+                for amenity in service_settings.get("amenities") or []
+                if str(amenity).strip()
+            ]
+            room_amenities = [
+                str(amenity).strip()
+                for room in rooms
+                for amenity in room.get("amenities") or []
+                if str(amenity).strip()
+            ]
+            amenities = list(dict.fromkeys([*property_amenities, *room_amenities]))
             room_image = next((image for room in rooms for image in (room.get("images") or []) if image), None)
             vendor_lat, vendor_lng = self._get_vendor_coords(bundle, "hotel")
             distance_km = self._distance_between_km(customer_lat, customer_lng, vendor_lat, vendor_lng)
@@ -524,7 +536,7 @@ class CustomerRepository:
                     "closing_time": service_settings.get("closing_time"),
                     "badge": (bundle["active_offer"] or {}).get("promotion_name"),
                     "badgeColor": "#3b82f6",
-                    "amenities": ["WiFi", "Pool", "Breakfast"] if has_rooms else ["WiFi"],
+                    "amenities": amenities,
                     "image": room_image or bundle["cover_image"],
                 }
             )
@@ -549,15 +561,45 @@ class CustomerRepository:
             return None
         rooms_count = self.vendor_rooms.count_documents({"vendor_id": vendor_id, "available": True})
         gallery_count = self.vendor_assets.count_documents({"vendor_id": vendor_id, "asset_type": "gallery"})
-        offers_count = self.vendor_promotions.count_documents({"vendor_id": vendor_id, "active": True})
         active_offers = [self._serialize(doc) for doc in self.vendor_promotions.find(
             {"vendor_id": vendor_id, "active": True}
         ).sort("created_at", DESCENDING)]
-        amenities = []
+        property_offers = [
+            {
+                "id": f"hotel-setting-offer-{index}",
+                "title": str(offer.get("title") or "").strip(),
+                "description": str(offer.get("description") or "").strip(),
+                "active": bool(offer.get("active", True)),
+                "source": "hotel_settings",
+            }
+            for index, offer in enumerate(service_settings.get("special_offers") or [])
+            if isinstance(offer, dict)
+            and str(offer.get("title") or "").strip()
+            and offer.get("active", True) is not False
+        ]
+        promotion_offers = [
+            {
+                **offer,
+                "title": offer.get("promotion_name") or offer.get("title") or "Special offer",
+                "description": offer.get("internal_description") or offer.get("description") or "",
+                "source": "promotion",
+            }
+            for offer in active_offers
+            if offer is not None
+        ]
+        offers = [*property_offers, *promotion_offers]
+        room_amenities = []
         for room in rooms:
             for amenity in room.get("amenities") or []:
-                if amenity and amenity not in amenities:
-                    amenities.append(amenity)
+                normalized_amenity = str(amenity).strip()
+                if normalized_amenity and normalized_amenity not in room_amenities:
+                    room_amenities.append(normalized_amenity)
+        property_amenities = [
+            str(amenity).strip()
+            for amenity in service_settings.get("amenities") or []
+            if str(amenity).strip()
+        ]
+        amenities = list(dict.fromkeys([*property_amenities, *room_amenities]))
         min_price = 0.0
         if rooms:
             min_price = min(float(r.get("base_price", 150.0)) for r in rooms)
@@ -571,7 +613,6 @@ class CustomerRepository:
             "distance_km": self._distance_between_km(customer_lat, customer_lng, vendor_lat, vendor_lng),
             "address": service_settings.get("address") or bundle["general"].get("business_address") or bundle["business"].get("address") or "",
             "about": service_settings.get("about") or bundle["business"].get("business_description") or bundle["profile"].get("about_business") or "",
-            "amenities": service_settings.get("amenities") or amenities,
             "image": next((image for room in rooms for image in (room.get("images") or []) if image), None)
             or bundle["cover_image"],
             "price": str(int(min_price)),
@@ -580,12 +621,12 @@ class CustomerRepository:
             "opening_time": service_settings.get("opening_time"),
             "closing_time": service_settings.get("closing_time"),
             "amenities": amenities,
-            "offers": active_offers,
+            "offers": offers,
             "tabs": {
                 "overview": True,
                 "rooms_count": int(rooms_count),
                 "gallery_count": int(gallery_count),
-                "offers_count": int(offers_count),
+                "offers_count": len(offers),
             },
             "contact": {
                 "phone": bundle["general"].get("front_desk_phone"),

@@ -240,6 +240,17 @@ class VendorSettingsGeneralRequest(BaseModel):
     emergency_contact: str | None = None
 
 
+class VendorServiceOffer(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=500)
+    active: bool = True
+
+    @field_validator("title", "description", mode="before")
+    @classmethod
+    def strip_offer_text(cls, value):
+        return str(value or "").strip()
+
+
 class VendorServiceSettings(BaseModel):
     """Common editable settings shared by restaurant, hotel and spa services."""
     name: str = ""
@@ -256,6 +267,7 @@ class VendorServiceSettings(BaseModel):
     seating_preferences: list[str] = Field(default_factory=list)
     policy: str = ""
     amenities: list[str] = Field(default_factory=list)
+    special_offers: list[VendorServiceOffer] = Field(default_factory=list, max_length=20)
     published: bool | None = None
     model_config = ConfigDict(extra="allow")
 
