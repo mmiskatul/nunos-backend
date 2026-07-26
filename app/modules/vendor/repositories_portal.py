@@ -297,7 +297,16 @@ class VendorPortalRepository:
         )
         if customer.get("created_at"):
             created_at = customer["created_at"]
-            result["customer_since"] = created_at.strftime("%Y") if isinstance(created_at, datetime) else str(created_at)[:4]
+            if isinstance(created_at, datetime):
+                result["customer_since"] = created_at.strftime("%B %Y")
+            else:
+                created_at_text = str(created_at)
+                try:
+                    result["customer_since"] = datetime.fromisoformat(
+                        created_at_text.replace("Z", "+00:00")
+                    ).strftime("%B %Y")
+                except ValueError:
+                    result["customer_since"] = created_at_text[:4]
         return result
 
     def get_booking(self, vendor_id: str, booking_id: str) -> dict[str, Any] | None:
