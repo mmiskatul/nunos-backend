@@ -638,13 +638,11 @@ def confirm_booking(
     current_user: dict = Depends(get_current_user),
     customer_service: CustomerService = Depends(get_customer_service),
 ) -> dict:
-    try:
-        updated = customer_service.repo.confirm_booking(current_user["id"], booking_id)
-    except InvalidId as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found.") from exc
-    if not updated:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found.")
-    return updated
+    _ = current_user, customer_service, booking_id
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Only the service provider can confirm a booking.",
+    )
 
 
 @router.patch("/bookings/{booking_id}/cancel", tags=["Customer - Bookings"])

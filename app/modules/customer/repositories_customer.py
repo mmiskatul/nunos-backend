@@ -1244,7 +1244,7 @@ class CustomerRepository:
         total = subtotal
         now = datetime.now(UTC)
         booking_code = f"#EV{now.strftime('%Y%m')}-{str(ObjectId())[-4:].upper()}"
-        status = "confirmed" if auto_confirm else "pending"
+        status = "pending"
         scheduled_date = str(event.get("event_date") or "")
         scheduled_time = str(event.get("start_time") or "")
 
@@ -1426,7 +1426,7 @@ class CustomerRepository:
         )
         now = datetime.now(UTC)
         booking_code = f"#BK{now.strftime('%Y%m')}-{str(ObjectId())[-4:].upper()}"
-        status = "confirmed" if auto_confirm else "pending"
+        status = "pending"
         vendor_booking_payload = {
             "vendor_id": vendor["_id"],
             "customer_id": customer["_id"],
@@ -1536,7 +1536,7 @@ class CustomerRepository:
         total = round(subtotal + service_fee + taxes, 2)
         now = datetime.now(UTC)
         booking_code = f"#HT{now.strftime('%Y%m')}-{str(ObjectId())[-4:].upper()}"
-        status = "confirmed" if auto_confirm else "pending"
+        status = "pending"
         room_name = str(room.get("name") or "Hotel Room")
         provider_type = "hotel_room" if room_id else "hotel"
 
