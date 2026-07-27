@@ -124,14 +124,48 @@ def _location_value(user: dict) -> str:
     return "Location unavailable"
 
 
-def _serialize_booking_for_admin(booking: dict, listing_name: str | None) -> dict:
+def _first_text(*values: object) -> str:
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _serialize_booking_for_admin(
+    booking: dict,
+    listing_name: str | None,
+    vendor_booking: dict | None = None,
+    image_url: str | None = None,
+) -> dict:
+    details = booking.get("details") if isinstance(booking.get("details"), dict) else {}
+    source = vendor_booking or booking
+    check_in = _first_text(source.get("check_in_date"), details.get("check_in"))
+    check_out = _first_text(source.get("check_out_date"), details.get("check_out"))
+    service = _first_text(source.get("service"), source.get("room_type"), listing_name, source.get("booking_type"), "Booking")
+    booking_date = _first_text(source.get("scheduled_date"), source.get("date"), details.get("date"))
+    booking_time = _first_text(source.get("scheduled_time"), source.get("time"), details.get("time"))
     return {
         "id": str(booking.get("_id", "")),
-        "title": _booking_title(booking, listing_name),
+        "title": listing_name or service,
+        "service": service,
         "range": _booking_range(booking),
+        "date": booking_date,
+        "time": booking_time,
+        "booking_code": _first_text(source.get("booking_code"), booking.get("booking_code")),
         "amount": _extract_booking_amount(booking),
-        "status": str(booking.get("status") or "pending").upper(),
-        "image": f"https://picsum.photos/seed/{booking.get('_id', 'booking')}/80/80",
+        "status": str(source.get("status") or "pending").upper(),
+        "payment_status": _first_text(source.get("payment_status"), "Unknown").upper(),
+        "guests": source.get("guests") or source.get("quantity") or details.get("guests"),
+        "staff": _first_text(source.get("staff_name"), source.get("assigned_staff"), source.get("staff"), "Not assigned"),
+        "notes": _first_text(source.get("special_requests"), source.get("notes"), "None"),
+        "seating": _first_text(source.get("seating_preference"), "Not specified"),
+        "check_in": check_in,
+        "check_out": check_out,
+        "created_at": source.get("created_at") or booking.get("created_at"),
+        "image": _first_text(
+            source.get("image"), source.get("image_url"), source.get("cover_image_url"), image_url,
+            f"https://picsum.photos/seed/{booking.get('_id', 'booking')}/320/180",
+        ),
     }
 
 
@@ -171,8 +205,28 @@ def _recent_bookings_for_user_sync(db: Database, user_id: str, limit: int = 5) -
         for listing in db.listings.find({"_id": {"$in": listing_ids}}, {"name": 1}):
             listings_by_id[listing["_id"]] = str(listing.get("name") or "")
 
+    booking_ids = [booking.get("booking_id") for booking in bookings if isinstance(booking.get("booking_id"), ObjectId)]
+    vendor_bookings_by_id = {}
+    if booking_ids and hasattr(db, "vendor_bookings"):
+        vendor_bookings_by_id = {
+            row.get("_id"): row for row in db.vendor_bookings.find({"_id": {"$in": booking_ids}})
+        }
+
+    vendor_ids = [row.get("vendor_id") for row in vendor_bookings_by_id.values() if isinstance(row.get("vendor_id"), ObjectId)]
+    vendor_images: dict[ObjectId, str] = {}
+    if vendor_ids and hasattr(db, "vendor_portal_settings"):
+        for settings in db.vendor_portal_settings.find({"vendor_id": {"$in": vendor_ids}}, {"vendor_id": 1, "general.cover_image_url": 1}):
+            image = ((settings.get("general") or {}).get("cover_image_url") if isinstance(settings.get("general"), dict) else "")
+            if image:
+                vendor_images[settings["vendor_id"]] = str(image)
+
     return [
-        _serialize_booking_for_admin(booking, listings_by_id.get(booking.get("listing_id")))
+        _serialize_booking_for_admin(
+            booking,
+            listings_by_id.get(booking.get("listing_id")),
+            vendor_bookings_by_id.get(booking.get("booking_id")),
+            vendor_images.get((vendor_bookings_by_id.get(booking.get("booking_id")) or {}).get("vendor_id")),
+        )
         for booking in bookings
     ]
 

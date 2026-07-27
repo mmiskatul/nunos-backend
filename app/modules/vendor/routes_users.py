@@ -17,6 +17,11 @@ class VendorUserListResponse(BaseModel):
     total: int
 
 
+def _customer_bookings(portal_repo: VendorPortalRepository, query: dict) -> list[dict]:
+    rows = portal_repo.bookings.find(query).sort("created_at", -1)
+    return [portal_repo._enrich_booking_customer(row) for row in rows]
+
+
 @router.get("", response_model=VendorUserListResponse)
 def list_all_users(
     limit: int = Query(default=50, ge=1, le=200),
@@ -126,6 +131,7 @@ async def get_user_details(
                 "phone": latest_booking.get("customer_phone") or synthetic_phone or None,
                 "latest_booking_at": latest_booking.get("created_at"),
                 "total_bookings": portal_repo.bookings.count_documents(booking_query),
+                "bookings": _customer_bookings(portal_repo, booking_query),
                 "source": "vendor_booking",
             }
         )
@@ -156,6 +162,7 @@ async def get_user_details(
             "profile_image_url": user.get("profile_image_url"),
             "latest_booking_at": latest_booking.get("created_at"),
             "total_bookings": portal_repo.bookings.count_documents(booking_query),
+            "bookings": _customer_bookings(portal_repo, booking_query),
             "source": "customer_account",
         }
     )
