@@ -19,6 +19,7 @@ class UserCreateRequest(BaseModel):
     })
 
     full_name: str = Field(min_length=2, max_length=120)
+    gender: str | None = Field(default=None, pattern="^(female|male|other|prefer_not_to_say)$")
     email: EmailStr | None = None
     phone: str | None = Field(default=None, min_length=8, max_length=20)
     password: str = Field(min_length=8, max_length=128)

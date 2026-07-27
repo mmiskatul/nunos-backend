@@ -76,6 +76,7 @@ class AuthService:
         await self.pending_signup_repo.upsert_signup(
             email=normalized_email,
             full_name=payload.full_name,
+            gender=payload.gender,
             phone=normalized_phone,
             password_hash=password_hash,
             location_enabled=payload.location_enabled,
@@ -125,6 +126,7 @@ class AuthService:
 
         user_doc = {
             "full_name": signup_doc["full_name"],
+            "gender": signup_doc.get("gender"),
             "email": payload.email,
             "phone": signup_doc.get("phone"),
             "password_hash": signup_doc["password_hash"],

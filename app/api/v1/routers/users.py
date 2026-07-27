@@ -31,6 +31,7 @@ def serialize_personal_details(user: dict) -> PersonalDetailsResponse:
     return PersonalDetailsResponse(
         id=str(user["_id"]),
         full_name=user.get("full_name", ""),
+        gender=user.get("gender"),
         email=user.get("email"),
         phone=user.get("phone"),
         date_of_birth=user.get("date_of_birth"),

@@ -9,6 +9,7 @@ class LocationPreferenceUpdate(BaseModel):
 
 class PersonalDetailsUpdate(BaseModel):
     full_name: str = Field(min_length=2, max_length=120)
+    gender: str | None = Field(default=None, pattern="^(female|male|other|prefer_not_to_say)$")
     email: EmailStr | None = None
     phone: str | None = Field(default=None, min_length=8, max_length=20)
     date_of_birth: date | None = None
@@ -48,6 +49,7 @@ class PersonalDetailsUpdate(BaseModel):
 class PersonalDetailsResponse(BaseModel):
     id: str
     full_name: str
+    gender: str | None = None
     email: EmailStr | None = None
     phone: str | None = None
     date_of_birth: date | None = None

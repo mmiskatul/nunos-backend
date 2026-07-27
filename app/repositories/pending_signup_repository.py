@@ -14,6 +14,7 @@ class PendingSignupRepository:
         *,
         email: str,
         full_name: str,
+        gender: str | None,
         phone: str | None,
         password_hash: str,
         location_enabled: bool,
@@ -28,6 +29,7 @@ class PendingSignupRepository:
             {
                 "$set": {
                     "full_name": full_name,
+                    "gender": gender,
                     "phone": phone,
                     "password_hash": password_hash,
                     "location_enabled": location_enabled,

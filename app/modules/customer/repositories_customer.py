@@ -1050,7 +1050,7 @@ class CustomerRepository:
         return profile
 
     def update_customer_profile(self, customer_id: str, data: dict[str, Any]) -> dict[str, Any]:
-        allowed = {key: value for key, value in data.items() if key in {"full_name", "email", "phone", "date_of_birth", "location_enabled", "latitude", "longitude", "location_accuracy_meters"}}
+        allowed = {key: value for key, value in data.items() if key in {"full_name", "gender", "email", "phone", "date_of_birth", "location_enabled", "latitude", "longitude", "location_accuracy_meters"}}
         allowed["updated_at"] = datetime.now(UTC)
         self.users.update_one({"_id": self._oid(customer_id)}, {"$set": allowed})
         return self.get_customer_profile(customer_id)
@@ -1590,6 +1590,7 @@ class CustomerRepository:
             "event_id": self._oid(event_id),
             "booking_code": booking_code,
             "customer_name": customer.get("full_name"),
+            "customer_gender": customer.get("gender"),
             "customer_phone": customer.get("phone"),
             "customer_email": customer.get("email"),
             "scheduled_date": scheduled_date,
@@ -1768,6 +1769,7 @@ class CustomerRepository:
             "customer_id": customer["_id"],
             "booking_code": booking_code,
             "customer_name": customer.get("full_name"),
+            "customer_gender": customer.get("gender"),
             "customer_phone": customer.get("phone"),
             "customer_email": customer.get("email"),
             "scheduled_date": date,
@@ -1881,6 +1883,7 @@ class CustomerRepository:
             "customer_id": customer["_id"],
             "booking_code": booking_code,
             "customer_name": guest_name or customer.get("full_name"),
+            "customer_gender": customer.get("gender"),
             "customer_phone": guest_phone or customer.get("phone"),
             "customer_email": guest_email or customer.get("email"),
             "scheduled_date": check_in_date,

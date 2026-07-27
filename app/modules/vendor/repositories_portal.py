@@ -929,9 +929,14 @@ class VendorPortalRepository:
         end = date_to or now.date().isoformat()
         if start > end:
             raise ValueError("date_from must be on or before date_to.")
+        start_dt = datetime.fromisoformat(start).replace(tzinfo=UTC)
+        end_dt = datetime.fromisoformat(end).replace(hour=23, minute=59, second=59, microsecond=999999, tzinfo=UTC)
         query = {
             "vendor_id": ObjectId(vendor_id),
-            "scheduled_date": {"$gte": start, "$lte": end},
+            "$or": [
+                {"scheduled_date": {"$gte": start, "$lte": end}},
+                {"scheduled_date": {"$in": [None, ""]}, "created_at": {"$gte": start_dt, "$lte": end_dt}},
+            ],
         }
         total_bookings = int(self.bookings.count_documents(query))
         revenue = sum(
