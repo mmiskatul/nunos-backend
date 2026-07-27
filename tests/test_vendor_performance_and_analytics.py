@@ -104,7 +104,7 @@ def test_analytics_uses_selected_range_and_returns_real_csv():
             {
                 "vendor_id": vendor_id,
                 "scheduled_date": "2026-07-10",
-                "status": "confirmed",
+                "status": "completed",
                 "total_amount": "120.50",
                 "customer_gender": "female",
                 "customer_age": 31,

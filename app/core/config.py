@@ -1,7 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,6 +19,19 @@ class Settings(BaseSettings):
     environment: str = "development"
     api_v1_prefix: str = "/api/v1"
     debug: bool = True
+
+    @field_validator("debug", mode="before")
+    @classmethod
+    def parse_debug_value(cls, value: object) -> object:
+        """Accept deployment labels commonly used by hosting providers."""
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"release", "production", "prod", "staging", "false", "0", "no", "off"}:
+                return False
+            if normalized in {"development", "dev", "debug", "true", "1", "yes", "on"}:
+                return True
+        return value
+
     cors_origins: list[str] = Field(default_factory=lambda: [
         "http://localhost:3000",
         "http://localhost:3001",
