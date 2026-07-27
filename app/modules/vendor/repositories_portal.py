@@ -929,29 +929,51 @@ class VendorPortalRepository:
         end = date_to or now.date().isoformat()
         if start > end:
             raise ValueError("date_from must be on or before date_to.")
-        start_dt = datetime.fromisoformat(start).replace(tzinfo=UTC)
-        end_dt = datetime.fromisoformat(end).replace(hour=23, minute=59, second=59, microsecond=999999, tzinfo=UTC)
-        query = {
-            "vendor_id": ObjectId(vendor_id),
-            "$or": [
-                {"scheduled_date": {"$gte": start, "$lte": end}},
-                {"scheduled_date": {"$in": [None, ""]}, "created_at": {"$gte": start_dt, "$lte": end_dt}},
-            ],
-        }
-        total_bookings = int(self.bookings.count_documents(query))
-        revenue = sum(
-            self._to_float(row.get("total_amount"))
-            for row in self.bookings.find(query, {"total_amount": 1})
-        )
+        all_bookings = list(self.bookings.find({"vendor_id": ObjectId(vendor_id)}))
+
+        def is_in_range(value: Any) -> bool:
+            if isinstance(value, datetime):
+                value = value.date().isoformat()
+            else:
+                value = str(value or "")[:10]
+            return bool(value) and start <= value <= end
+
+        bookings = [
+            row for row in all_bookings
+            if is_in_range(row.get("scheduled_date")) or is_in_range(row.get("created_at"))
+        ]
+        total_bookings = len(bookings)
+        revenue = sum(self._to_float(row.get("total_amount")) for row in bookings)
+        status_counts = {"completed": 0, "cancelled": 0, "pending": 0, "confirmed": 0}
+        service_counts: dict[str, int] = {}
+        for row in bookings:
+            raw_status = str(row.get("status") or "pending").strip().lower()
+            status_key = "cancelled" if raw_status in {"cancelled", "canceled"} else "completed" if raw_status in {"complete", "completed"} else raw_status
+            if status_key in status_counts:
+                status_counts[status_key] += 1
+            provider_type = str(row.get("provider_type") or row.get("booking_type") or row.get("service") or "other").strip().lower()
+            if any(token in provider_type for token in ("restaurant", "dining", "table")):
+                provider_type = "restaurant"
+            elif any(token in provider_type for token in ("hotel", "room")):
+                provider_type = "hotel"
+            elif "spa" in provider_type:
+                provider_type = "spa"
+            elif "event" in provider_type:
+                provider_type = "event"
+            else:
+                provider_type = provider_type.replace("_room", "")
+            service_counts[provider_type] = service_counts.get(provider_type, 0) + 1
         review_summary = self.get_reviews_summary(vendor_id, start, end)
         return {
             "date_from": start,
             "date_to": end,
             "total_bookings": total_bookings,
             "total_bookings_month": total_bookings,
-            "todays_bookings": int(
-                self.bookings.count_documents({"vendor_id": ObjectId(vendor_id), "scheduled_date": end})
-            ),
+            "booking_breakdown": {
+                **status_counts,
+                "by_service": service_counts,
+            },
+            "todays_bookings": sum(1 for row in bookings if str(row.get("scheduled_date") or "")[:10] == end),
             "monthly_revenue": round(revenue, 2),
             "occupancy_rate": self.get_occupancy_metrics(vendor_id, end)["occupancy_rate"],
             "average_rating": review_summary["average_rating"],
