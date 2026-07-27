@@ -226,6 +226,21 @@ class VendorPortalRepository:
                 out[key] = value.isoformat()
             if isinstance(value, ObjectId):
                 out[key] = str(value)
+        if not out.get("status_history"):
+            history = [{
+                "status": "pending",
+                "at": out.get("created_at"),
+                "actor": "customer",
+                "label": "Booking request sent by customer",
+            }]
+            if out.get("accepted_at"):
+                history.append({
+                    "status": "confirmed",
+                    "at": out["accepted_at"],
+                    "actor": "service_provider",
+                    "label": "Booking approved by service provider",
+                })
+            out["status_history"] = history
         return out
 
     def list_bookings(
@@ -319,9 +334,16 @@ class VendorPortalRepository:
         booking = self.bookings.find_one({"_id": ObjectId(booking_id), "vendor_id": ObjectId(vendor_id)})
         if not booking:
             return None
-        payload: dict[str, Any] = {"status": status_normalized, "updated_at": datetime.now(UTC)}
+        now = datetime.now(UTC)
+        payload: dict[str, Any] = {"status": status_normalized, "updated_at": now}
         if note:
             payload["status_note"] = note
+        if status_normalized == "confirmed" and not booking.get("accepted_at"):
+            payload["accepted_at"] = now
+        if status_normalized == "complete" and not booking.get("completed_at"):
+            payload["completed_at"] = now
+        if status_normalized == "canceled" and not booking.get("canceled_at"):
+            payload["canceled_at"] = now
         points_awarded = int(booking.get("points_awarded") or 0)
         if status_normalized == "complete" and booking.get("status") != "complete":
             points_awarded = self._calculate_booking_points(vendor_id, booking)
@@ -333,7 +355,17 @@ class VendorPortalRepository:
                 )
         updated = self.bookings.update_one(
             {"_id": ObjectId(booking_id), "vendor_id": ObjectId(vendor_id)},
-            {"$set": payload},
+            {
+                "$set": payload,
+                "$push": {
+                    "status_history": {
+                        "status": status_normalized,
+                        "at": now,
+                        "note": note or "",
+                        "actor": "service_provider",
+                    }
+                },
+            },
         )
         self.bookings.database["bookings"].update_many(
             {"booking_id": ObjectId(booking_id)},

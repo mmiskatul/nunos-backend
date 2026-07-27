@@ -162,6 +162,16 @@ def _serialize_booking_for_admin(
         "check_in": check_in,
         "check_out": check_out,
         "created_at": source.get("created_at") or booking.get("created_at"),
+        "requested_at": source.get("requested_at") or source.get("created_at") or booking.get("created_at"),
+        "accepted_at": source.get("accepted_at"),
+        "completed_at": source.get("completed_at"),
+        "canceled_at": source.get("canceled_at"),
+        "status_history": source.get("status_history") or [{
+            "status": "pending",
+            "at": source.get("created_at") or booking.get("created_at"),
+            "actor": "customer",
+            "label": "Booking request sent by customer",
+        }],
         "image": _first_text(
             source.get("image"), source.get("image_url"), source.get("cover_image_url"), image_url,
             f"https://picsum.photos/seed/{booking.get('_id', 'booking')}/320/180",
