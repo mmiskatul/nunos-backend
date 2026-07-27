@@ -455,12 +455,30 @@ class VendorPortalRepository:
         }
         monthly_revenue = 0.0
         todays_bookings = 0
-        for booking in self.bookings.find(month_query, {"scheduled_date": 1, "status": 1, "total_amount": 1}):
+        service_counts: dict[str, int] = {}
+        for booking in self.bookings.find(
+            month_query,
+            {"scheduled_date": 1, "status": 1, "total_amount": 1, "provider_type": 1, "booking_type": 1, "service": 1},
+        ):
             booking_status = str(booking.get("status") or "").strip().lower()
             if booking_status in {"complete", "completed"}:
                 monthly_revenue += self._to_float(booking.get("total_amount"))
             if booking.get("scheduled_date") == today:
                 todays_bookings += 1
+            provider_type = str(
+                booking.get("provider_type") or booking.get("booking_type") or booking.get("service") or "other"
+            ).strip().lower()
+            if any(token in provider_type for token in ("restaurant", "dining", "table")):
+                provider_type = "restaurant"
+            elif any(token in provider_type for token in ("hotel", "room")):
+                provider_type = "hotel"
+            elif "spa" in provider_type:
+                provider_type = "spa"
+            elif "event" in provider_type:
+                provider_type = "event"
+            else:
+                provider_type = provider_type.replace("_room", "")
+            service_counts[provider_type] = service_counts.get(provider_type, 0) + 1
         total_bookings_month = int(self.bookings.count_documents(month_query))
         review_summary = self.get_reviews_summary(vendor_id)
         kpis = {
@@ -473,6 +491,7 @@ class VendorPortalRepository:
         }
         return {
             "kpis": kpis,
+            "booking_breakdown": {"by_service": service_counts},
             "booking_trends": self.get_booking_trends(vendor_id),
             "calendar_preview": self.get_calendar_preview(vendor_id),
             "upcoming_bookings": self.list_bookings(vendor_id, limit=10, skip=0, status="upcoming").get("items", []),
