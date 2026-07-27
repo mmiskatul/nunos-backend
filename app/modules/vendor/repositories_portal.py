@@ -1037,7 +1037,7 @@ class VendorPortalRepository:
             if is_in_range(booking.get("scheduled_date")) or is_in_range(booking.get("created_at"))
         ]
         gender_counts = {"female": 0, "male": 0, "other": 0}
-        age_counts = {"18-25": 0, "26-40": 0, "41-60": 0, "60+": 0}
+        age_counts = {"under_18": 0, "18-25": 0, "26-40": 0, "41-60": 0, "60+": 0}
         known_gender = 0
         known_age = 0
         today = datetime.now(UTC).date()
@@ -1065,8 +1065,8 @@ class VendorPortalRepository:
                     age = today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
                 except (TypeError, ValueError):
                     age = -1
-            if age >= 18:
-                bucket = "18-25" if age <= 25 else "26-40" if age <= 40 else "41-60" if age <= 60 else "60+"
+            if age >= 0:
+                bucket = "under_18" if age < 18 else "18-25" if age <= 25 else "26-40" if age <= 40 else "41-60" if age <= 60 else "60+"
                 age_counts[bucket] += 1
                 known_age += 1
 
