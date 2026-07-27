@@ -836,7 +836,7 @@ class CustomerRepository:
         room_rate = base_price * nights
         tax_included = bool(doc.get("tax_included", True))
         taxes = 0.0 if tax_included else room_rate * 0.2
-        raw_amenities = doc.get("amenities") or []
+        raw_amenities = doc.get("amenities") if isinstance(doc.get("amenities"), list) else []
         amenities_with_icons = []
         for name in raw_amenities:
             lower_name = name.lower()
@@ -856,13 +856,13 @@ class CustomerRepository:
             "id": str(doc["_id"]),
             "hotel_id": str(doc.get("vendor_id")),
             "vendor_id": str(doc.get("vendor_id")),
-            "title": doc.get("name") or "Standard Room",
+            "title": doc.get("name") or "Room",
             "status": "Available" if doc.get("available", True) else "Unavailable",
-            "size": f"{doc.get('size_sqm', 45)} m²",
-            "guests": f"{doc.get('max_guests', 2)} Guests",
-            "bed": doc.get("bed_type") or "King Bed",
-            "view": "City View",
-            "images": doc.get("images") or [],
+            "size": f"{doc['size_sqm']} m²" if doc.get("size_sqm") is not None else "",
+            "guests": f"{doc['max_guests']} Guests" if doc.get("max_guests") is not None else "",
+            "bed": doc.get("bed_type") or "",
+            "view": doc.get("view") or doc.get("room_view") or "",
+            "images": doc.get("images") if isinstance(doc.get("images"), list) else [],
             "amenities": amenities_with_icons,
             "description": doc.get("description") or "",
             "number_of_beds": int(doc.get("number_of_beds", 1)),
