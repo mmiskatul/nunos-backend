@@ -482,10 +482,23 @@ class VendorPortalRepository:
         earliest = (now.replace(day=1) - timedelta(days=32 * 11)).replace(day=1).strftime("%Y-%m-01")
         buckets: dict[str, int] = {}
         for b in self.bookings.find(
-            {"vendor_id": ObjectId(vendor_id), "scheduled_date": {"$gte": earliest}},
-            {"scheduled_date": 1},
+            {
+                "vendor_id": ObjectId(vendor_id),
+                "$or": [
+                    {"scheduled_date": {"$gte": earliest}},
+                    {"created_at": {"$gte": now.replace(day=1) - timedelta(days=32 * 11)}},
+                ],
+            },
+            {"scheduled_date": 1, "created_at": 1},
         ):
-            month = str(b.get("scheduled_date", ""))[:7]
+            scheduled_date = b.get("scheduled_date")
+            created_at = b.get("created_at")
+            if scheduled_date:
+                month = str(scheduled_date)[:7]
+            elif isinstance(created_at, datetime):
+                month = created_at.strftime("%Y-%m")
+            else:
+                month = str(created_at or "")[:7]
             if month:
                 buckets[month] = buckets.get(month, 0) + 1
         points: list[dict[str, Any]] = []
