@@ -455,8 +455,10 @@ class VendorPortalRepository:
         }
         monthly_revenue = 0.0
         todays_bookings = 0
-        for booking in self.bookings.find(month_query, {"scheduled_date": 1, "total_amount": 1}):
-            monthly_revenue += self._to_float(booking.get("total_amount"))
+        for booking in self.bookings.find(month_query, {"scheduled_date": 1, "status": 1, "total_amount": 1}):
+            booking_status = str(booking.get("status") or "").strip().lower()
+            if booking_status in {"complete", "completed"}:
+                monthly_revenue += self._to_float(booking.get("total_amount"))
             if booking.get("scheduled_date") == today:
                 todays_bookings += 1
         total_bookings_month = int(self.bookings.count_documents(month_query))
@@ -943,7 +945,11 @@ class VendorPortalRepository:
             if is_in_range(row.get("scheduled_date")) or is_in_range(row.get("created_at"))
         ]
         total_bookings = len(bookings)
-        revenue = sum(self._to_float(row.get("total_amount")) for row in bookings)
+        revenue = sum(
+            self._to_float(row.get("total_amount"))
+            for row in bookings
+            if str(row.get("status") or "").strip().lower() in {"complete", "completed"}
+        )
         status_counts = {"completed": 0, "cancelled": 0, "pending": 0, "confirmed": 0}
         service_counts: dict[str, int] = {}
         for row in bookings:
