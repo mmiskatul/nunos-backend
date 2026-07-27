@@ -1021,22 +1021,50 @@ class VendorPortalRepository:
         date_from: str | None = None,
         date_to: str | None = None,
     ) -> dict[str, Any]:
-        query: dict[str, Any] = {"vendor_id": ObjectId(vendor_id)}
-        if date_from or date_to:
-            query["scheduled_date"] = {
-                **({"$gte": date_from} if date_from else {}),
-                **({"$lte": date_to} if date_to else {}),
-            }
+        all_bookings = list(self.bookings.find({"vendor_id": ObjectId(vendor_id)}))
+
+        def is_in_range(value: Any) -> bool:
+            if not (date_from or date_to):
+                return True
+            if isinstance(value, datetime):
+                value = value.date().isoformat()
+            else:
+                value = str(value or "")[:10]
+            return bool(value) and (not date_from or value >= date_from) and (not date_to or value <= date_to)
+
+        bookings = [
+            booking for booking in all_bookings
+            if is_in_range(booking.get("scheduled_date")) or is_in_range(booking.get("created_at"))
+        ]
         gender_counts = {"female": 0, "male": 0, "other": 0}
         age_counts = {"18-25": 0, "26-40": 0, "41-60": 0, "60+": 0}
         known_gender = 0
         known_age = 0
-        for booking in self.bookings.find(query, {"customer_gender": 1, "customer_age": 1}):
-            gender = str(booking.get("customer_gender") or "").strip().lower()
+        today = datetime.now(UTC).date()
+        for booking in bookings:
+            customer = {}
+            customer_id = booking.get("customer_id")
+            if customer_id:
+                try:
+                    customer = self.users.find_one(
+                        {"_id": customer_id if isinstance(customer_id, ObjectId) else ObjectId(str(customer_id))},
+                        {"gender": 1, "date_of_birth": 1},
+                    ) or {}
+                except (InvalidId, TypeError, ValueError):
+                    customer = {}
+
+            gender = str(booking.get("customer_gender") or customer.get("gender") or "").strip().lower()
             if gender:
                 gender_counts[gender if gender in {"female", "male"} else "other"] += 1
                 known_gender += 1
             age = self._to_int(booking.get("customer_age"), -1)
+            date_of_birth = customer.get("date_of_birth")
+            if age < 0 and date_of_birth:
+                try:
+                    birth_date = date_of_birth if hasattr(date_of_birth, "year") else datetime.fromisoformat(str(date_of_birth)[:10]).date()
+                    age = today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
+                except (TypeError, ValueError):
+                    age = -1
             if age >= 18:
                 bucket = "18-25" if age <= 25 else "26-40" if age <= 40 else "41-60" if age <= 60 else "60+"
                 age_counts[bucket] += 1
