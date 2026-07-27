@@ -145,6 +145,7 @@ async def update_personal_details(
         user_id,
         {
             "full_name": payload.full_name.strip(),
+            "gender": payload.gender,
             "email": normalized_email,
             "phone": normalized_phone,
             "date_of_birth": payload.date_of_birth.isoformat() if payload.date_of_birth else None,
