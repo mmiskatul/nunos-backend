@@ -480,6 +480,7 @@ class VendorPortalRepository:
                 provider_type = provider_type.replace("_room", "")
             service_counts[provider_type] = service_counts.get(provider_type, 0) + 1
         total_bookings_month = int(self.bookings.count_documents(month_query))
+        month_last_day = (datetime.fromisoformat(month_end) - timedelta(days=1)).date().isoformat()
         review_summary = self.get_reviews_summary(vendor_id)
         kpis = {
             "total_bookings": total_bookings_month,
@@ -492,6 +493,13 @@ class VendorPortalRepository:
         return {
             "kpis": kpis,
             "booking_breakdown": {"by_service": service_counts},
+            "booking_rows": self.list_bookings(
+                vendor_id,
+                limit=50,
+                skip=0,
+                date_from=month_start,
+                date_to=month_last_day,
+            ).get("items", []),
             "booking_trends": self.get_booking_trends(vendor_id),
             "calendar_preview": self.get_calendar_preview(vendor_id),
             "upcoming_bookings": self.list_bookings(vendor_id, limit=10, skip=0, status="upcoming").get("items", []),
