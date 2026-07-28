@@ -16,10 +16,17 @@ class MongoManager:
         self._client: AsyncIOMotorClient | None = None
 
     async def connect(self) -> AsyncIOMotorDatabase:
-        self._client = AsyncIOMotorClient(self._settings.mongodb_uri)
+        self._client = AsyncIOMotorClient(
+            self._settings.mongodb_uri,
+            connectTimeoutMS=self._settings.mongodb_connect_timeout_ms,
+            serverSelectionTimeoutMS=self._settings.mongodb_server_selection_timeout_ms,
+            socketTimeoutMS=self._settings.mongodb_socket_timeout_ms,
+            maxIdleTimeMS=60_000,
+        )
         db = self._client[self._settings.mongodb_db_name]
-        await ensure_indexes(db)
-        await ensure_platform_admin(db, self._settings)
+        if self._settings.run_startup_db_setup:
+            await ensure_indexes(db)
+            await ensure_platform_admin(db, self._settings)
         return db
 
     async def close(self) -> None:

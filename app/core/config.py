@@ -48,6 +48,13 @@ class Settings(BaseSettings):
 
     mongodb_uri: str = "mongodb://localhost:27017"
     mongodb_db_name: str = "nuno"
+    # Index creation and admin bootstrapping are deployment tasks. Keeping
+    # them opt-in prevents serverless cold starts from spending several
+    # seconds on database writes before the first request can run.
+    run_startup_db_setup: bool = False
+    mongodb_connect_timeout_ms: int = Field(5_000, ge=1_000, le=30_000)
+    mongodb_server_selection_timeout_ms: int = Field(8_000, ge=1_000, le=30_000)
+    mongodb_socket_timeout_ms: int = Field(10_000, ge=1_000, le=60_000)
 
     jwt_secret_key: str = Field("change-me-please", min_length=16)
     jwt_algorithm: str = "HS256"

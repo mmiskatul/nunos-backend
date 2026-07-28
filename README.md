@@ -46,7 +46,10 @@ OPENAI_MODEL=gpt-4.1-mini
 ```
 
 If `OPENAI_API_KEY` is empty, `/ai/plan` automatically uses a local stub LLM client.
-If `PLATFORM_ADMIN_EMAIL` and `PLATFORM_ADMIN_PASSWORD` are set, the backend bootstraps the platform admin account from `.env` on startup.
+Database index creation and platform-admin bootstrapping are disabled during
+normal startup so serverless cold starts remain fast. Run the deployment
+migrations below, or explicitly set `RUN_STARTUP_DB_SETUP=true` for a one-off
+local bootstrap.
 
 ## Run
 ```bash
@@ -136,10 +139,18 @@ pytest -q
 ```
 # Vendor index migration
 
-Vendor indexes are intentionally not managed inside request-scoped repositories. Run the idempotent migration once during every deployment before serving traffic:
+Indexes are intentionally not managed during startup or inside request-scoped
+repositories. Run the idempotent migration once during every deployment before
+serving traffic:
 
 ```bash
-python scripts/ensure_vendor_indexes.py
+python -m scripts.ensure_database_indexes
 ```
 
 This keeps normal API reads free of index-management round trips while ensuring the dashboard, analytics, booking, review, promotion, and notification query paths are indexed.
+
+For a new database, create or update the platform administrator separately:
+
+```bash
+python scripts/create_platform_admin.py --email admin@example.com --password "..." --full-name "Platform Admin"
+```
