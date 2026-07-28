@@ -9,9 +9,7 @@ class CustomerBookingQuoteRequest(BaseModel):
     date: str = Field(min_length=10, max_length=10)
     time: str = Field(min_length=3, max_length=20)
     guests: int = Field(ge=1, le=20)
-    seating_preference: str | None = Field(
-        default=None, pattern="^(indoor|outdoor|no_preference)$"
-    )
+    seating_preference: str | None = Field(default=None, max_length=50)
     special_notes: str | None = Field(default=None, max_length=2000)
     promo_code: str | None = Field(default=None, max_length=80)
 
@@ -39,6 +37,24 @@ class CustomerHotelBookingCreateRequest(BaseModel):
     guest_name: str | None = Field(default=None, max_length=200)
     guest_email: str | None = Field(default=None, max_length=200)
     guest_phone: str | None = Field(default=None, max_length=40)
+    promo_code: str | None = Field(default=None, max_length=80)
+
+
+class CustomerHotelBookingQuoteRequest(BaseModel):
+    check_in_date: str = Field(min_length=10, max_length=10)
+    check_out_date: str = Field(min_length=10, max_length=10)
+    guests: int = Field(ge=1, le=10)
+    room_id: str | None = Field(default=None, min_length=24, max_length=24)
+    promo_code: str | None = Field(default=None, max_length=80)
+
+
+class CustomerSpaBookingCreateRequest(BaseModel):
+    date: str = Field(min_length=10, max_length=10)
+    time: str = Field(min_length=3, max_length=20)
+    guests: int = Field(default=1, ge=1, le=10)
+    service_id: str | None = Field(default=None, min_length=24, max_length=24)
+    special_notes: str | None = Field(default=None, max_length=2000)
+    auto_confirm: bool = False
     promo_code: str | None = Field(default=None, max_length=80)
 
 

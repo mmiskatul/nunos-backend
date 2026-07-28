@@ -1,6 +1,6 @@
 import hashlib
 import math
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -361,6 +361,31 @@ class CustomerRepository:
             "promotion_name": promotion.get("promotion_name") or "Promotion",
             "promo_code": normalized_code or promotion.get("promo_code"),
         }
+
+    def _estimate_loyalty_points(
+        self,
+        vendor_id: ObjectId,
+        customer_id: ObjectId | None,
+        total: float,
+    ) -> int:
+        loyalty = self.vendor_loyalty_settings.find_one({"vendor_id": vendor_id}) or {}
+        if loyalty.get("enable_loyalty_program") is not True:
+            return 0
+        if loyalty.get("points_rule_type") == "percentage_based":
+            points = int(total * float(loyalty.get("percentage_value") or 0) / 100)
+        else:
+            currency_unit = float(loyalty.get("currency_unit") or 1)
+            points = int((total / currency_unit) * float(loyalty.get("points_earned") or 0))
+        if customer_id and not self.vendor_bookings.find_one(
+            {
+                "vendor_id": vendor_id,
+                "customer_id": customer_id,
+                "status": {"$in": ["complete", "completed"]},
+            },
+            {"_id": 1},
+        ):
+            points += max(int(loyalty.get("first_booking_bonus") or 0), 0)
+        return max(points, 0)
 
     def _list_service_offers(
         self,
@@ -1142,6 +1167,33 @@ class CustomerRepository:
     def _enrich_customer_booking(self, booking: dict[str, Any]) -> dict[str, Any]:
         """Attach current provider/event details to a customer booking."""
         result = self._serialize(booking) or {}
+        history = list(result.get("status_history") or [])
+        if not any(
+            str(entry.get("status") or "").lower() in {"pending", "requested"}
+            for entry in history
+        ):
+            history.insert(
+                0,
+                {
+                    "status": "pending",
+                    "at": result.get("requested_at") or result.get("created_at"),
+                    "actor": "customer",
+                    "label": "Booking request sent by customer",
+                },
+            )
+        if result.get("accepted_at") and not any(
+            str(entry.get("status") or "").lower() in {"confirmed", "accepted"}
+            for entry in history
+        ):
+            history.append(
+                {
+                    "status": "confirmed",
+                    "at": result["accepted_at"],
+                    "actor": "service_provider",
+                    "label": "Booking approved by service provider",
+                }
+            )
+        result["status_history"] = history
         vendor_id = booking.get("vendor_id")
         if not isinstance(vendor_id, ObjectId):
             try:
@@ -1631,6 +1683,74 @@ class CustomerRepository:
             "detail_route": f"/home/events/{event['_id']}",
         }
 
+    def get_event_booking_quote(
+        self,
+        customer_id: str,
+        event_id: str,
+        quantity: int,
+        promo_code: str | None = None,
+    ) -> dict[str, Any]:
+        event = self.vendor_events.find_one(
+            {"_id": self._oid(event_id), "status": "published", "active": {"$ne": False}}
+        )
+        if not event:
+            raise ValueError("Event not found.")
+        vendor_id = event.get("vendor_id")
+        if not isinstance(vendor_id, ObjectId):
+            raise ValueError("Event vendor is invalid.")
+        vendor = self.vendors.find_one({"_id": vendor_id, "status": "approved"})
+        if not vendor:
+            raise ValueError("Provider not found.")
+        capacity = int(event.get("capacity") or 0)
+        sold = sum(
+            int(row.get("quantity") or 0)
+            for row in self.vendor_bookings.find(
+                {
+                    "event_id": event["_id"],
+                    "status": {"$in": ["pending", "confirmed", "check_in"]},
+                },
+                {"quantity": 1},
+            )
+        )
+        if capacity > 0 and sold + quantity > capacity:
+            remaining = max(capacity - sold, 0)
+            raise ValueError(
+                f"Only {remaining} ticket{'s' if remaining != 1 else ''} remaining for this event."
+            )
+        unit_price = round(float(event.get("ticket_price") or 0), 2)
+        original_subtotal = round(unit_price * quantity, 2)
+        promotion = self._promotion_discount(
+            vendor_id,
+            "event",
+            original_subtotal,
+            self._oid(customer_id),
+            str(event.get("event_date") or ""),
+            promo_code,
+        )
+        subtotal = round(original_subtotal - promotion["discount_amount"], 2)
+        return {
+            "provider_id": str(vendor_id),
+            "provider_name": vendor.get("business_name") or "Event provider",
+            "provider_type": "event",
+            "event_id": str(event["_id"]),
+            "event_name": event.get("title") or "Event",
+            "quantity": quantity,
+            "available_seats": max(capacity - sold, 0) if capacity > 0 else None,
+            "unit_price": unit_price,
+            "original_subtotal": original_subtotal,
+            "discount_amount": promotion["discount_amount"],
+            "promotion_id": str(promotion["promotion_id"]) if promotion["promotion_id"] else None,
+            "promotion_name": promotion["promotion_name"],
+            "promo_code": promotion["promo_code"],
+            "subtotal": subtotal,
+            "service_fee": 0.0,
+            "taxes": 0.0,
+            "total": subtotal,
+            "estimated_points": self._estimate_loyalty_points(
+                vendor_id, self._oid(customer_id), subtotal
+            ),
+        }
+
     def create_event_ticket_booking(
         self,
         customer_id: str,
@@ -1657,34 +1777,8 @@ class CustomerRepository:
         vendor = self.vendors.find_one({"_id": vendor_id, "status": "approved"})
         if not vendor:
             raise ValueError("Provider not found.")
-
-        capacity = int(event.get("capacity") or 0)
-        sold = 0
-        for row in self.vendor_bookings.find(
-            {
-                "event_id": self._oid(event_id),
-                "status": {"$in": ["pending", "confirmed", "check_in"]},
-            },
-            {"quantity": 1},
-        ):
-            sold += int(row.get("quantity") or 0)
-
-        if capacity > 0 and sold + quantity > capacity:
-            remaining = max(capacity - sold, 0)
-            raise ValueError(
-                "Only "
-                f"{remaining} ticket{'s' if remaining != 1 else ''} remaining for this event."
-            )
-
-        unit_price = round(float(event.get("ticket_price") or 0), 2)
-        original_subtotal = round(unit_price * quantity, 2)
-        promotion = self._promotion_discount(
-            vendor["_id"], "event", original_subtotal, customer["_id"], str(event.get("event_date") or ""), promo_code
-        )
-        subtotal = round(original_subtotal - promotion["discount_amount"], 2)
-        service_fee = 0.0
-        taxes = 0.0
-        total = subtotal
+        quote = self.get_event_booking_quote(customer_id, event_id, quantity, promo_code)
+        promotion_id = self._oid(quote["promotion_id"]) if quote["promotion_id"] else None
         now = datetime.now(UTC)
         booking_code = f"#EV{now.strftime('%Y%m')}-{str(ObjectId())[-4:].upper()}"
         status = "pending"
@@ -1709,17 +1803,27 @@ class CustomerRepository:
             "status": status,
             "payment_status": "unpaid",
             "special_requests": notes,
-            "total_amount": total,
-            "original_subtotal": original_subtotal,
-            "discount_amount": promotion["discount_amount"],
-            "promotion_id": promotion["promotion_id"],
-            "promotion_name": promotion["promotion_name"],
-            "promo_code": promotion["promo_code"],
-            "subtotal": subtotal,
-            "service_fee": service_fee,
-            "taxes": taxes,
-            "unit_price": unit_price,
+            "total_amount": quote["total"],
+            "original_subtotal": quote["original_subtotal"],
+            "discount_amount": quote["discount_amount"],
+            "promotion_id": promotion_id,
+            "promotion_name": quote["promotion_name"],
+            "promo_code": quote["promo_code"],
+            "subtotal": quote["subtotal"],
+            "service_fee": quote["service_fee"],
+            "taxes": quote["taxes"],
+            "unit_price": quote["unit_price"],
+            "estimated_points": quote["estimated_points"],
             "source": "customer_app",
+            "requested_at": now,
+            "status_history": [
+                {
+                    "status": "pending",
+                    "at": now,
+                    "actor": "customer",
+                    "label": "Booking request sent by customer",
+                }
+            ],
             "created_at": now,
             "updated_at": now,
         }
@@ -1738,9 +1842,9 @@ class CustomerRepository:
                 "guests": quantity,
                 "quantity": quantity,
                 "status": status,
-                "total_amount": total,
-                "promotion_id": promotion["promotion_id"],
-                "discount_amount": promotion["discount_amount"],
+                "total_amount": quote["total"],
+                "promotion_id": promotion_id,
+                "discount_amount": quote["discount_amount"],
                 "created_at": now,
                 "updated_at": now,
             }
@@ -1769,26 +1873,45 @@ class CustomerRepository:
         )
         return self._serialize(created) or {}
 
-    def get_booking_availability(self, provider_id: str, date: str) -> dict[str, Any]:
+    def get_booking_availability(
+        self, provider_id: str, date: str, provider_type: str = "restaurant"
+    ) -> dict[str, Any]:
         vendor_id = self._oid(provider_id)
         settings_doc = self.vendor_portal_settings.find_one({"vendor_id": vendor_id}) or {}
         general = settings_doc.get("general", {}) if isinstance(settings_doc.get("general"), dict) else {}
         bundle = self._get_vendor_bundle(vendor_id)
-        restaurant_settings = self._service_settings(bundle, "restaurant")
-        slots = restaurant_settings.get("available_booking_times") or general.get(
+        normalized_type = (
+            provider_type if provider_type in {"restaurant", "hotel", "spa"} else "restaurant"
+        )
+        service_settings = self._service_settings(bundle, normalized_type)
+        slots = service_settings.get("available_booking_times") or general.get(
             "booking_availability_slots",
             ["06:00 PM", "06:30 PM", "07:00 PM", "07:30 PM", "08:00 PM", "08:30 PM", "09:00 PM", "09:30 PM", "10:00 PM"],
         )
-        capacity = sum(
-            int(row.get("inventory_count", 0))
-            for row in self.vendor_rooms.find({"vendor_id": vendor_id}, {"inventory_count": 1})
-        )
-        if capacity <= 0:
-            capacity = 10
+        if normalized_type == "hotel":
+            capacity = sum(
+                int(row.get("inventory_count", 0))
+                for row in self.vendor_rooms.find(
+                    {"vendor_id": vendor_id}, {"inventory_count": 1}
+                )
+            )
+        else:
+            capacity = int(
+                service_settings.get("booking_capacity")
+                or service_settings.get("capacity_per_slot")
+                or 10
+            )
+        capacity = max(capacity, 1)
         booked_counts: dict[str, int] = {}
+        booking_type_query: Any = (
+            {"$in": ["hotel", "hotel_room"]}
+            if normalized_type == "hotel"
+            else normalized_type
+        )
         for row in self.vendor_bookings.find(
             {
                 "vendor_id": vendor_id,
+                "provider_type": booking_type_query,
                 "scheduled_date": date,
                 "status": {"$in": ["pending", "confirmed", "check_in"]},
             },
@@ -1798,6 +1921,7 @@ class CustomerRepository:
             booked_counts[key] = booked_counts.get(key, 0) + 1
         return {
             "provider_id": provider_id,
+            "provider_type": normalized_type,
             "date": date,
             "slots": [
                 {"time": slot, "available": booked_counts.get(slot, 0) < capacity, "booked": booked_counts.get(slot, 0)}
@@ -1819,8 +1943,22 @@ class CustomerRepository:
         vendor = self.vendors.find_one({"_id": self._oid(provider_id), "status": "approved"})
         if not vendor:
             raise ValueError("Provider not found.")
-        room = self.vendor_rooms.find_one({"vendor_id": vendor["_id"], "available": True}, sort=[("base_price", ASCENDING)])
-        unit_price = float((room or {}).get("base_price", 60))
+        if provider_type == "spa":
+            service = self.vendor_services.find_one(
+                {
+                    "vendor_id": vendor["_id"],
+                    "service_type": "spa",
+                    "$or": [{"available": True}, {"active_status": True}],
+                },
+                sort=[("price", ASCENDING)],
+            )
+            unit_price = float((service or {}).get("price", 0))
+        else:
+            room = self.vendor_rooms.find_one(
+                {"vendor_id": vendor["_id"], "available": True},
+                sort=[("base_price", ASCENDING)],
+            )
+            unit_price = float((room or {}).get("base_price", 60))
         original_subtotal = round(unit_price * guests, 2)
         promotion = self._promotion_discount(
             vendor["_id"],
@@ -1834,14 +1972,9 @@ class CustomerRepository:
         service_fee = round(subtotal * 0.08, 2)
         taxes = round(subtotal * 0.05, 2)
         total = round(subtotal + service_fee + taxes, 2)
-        loyalty = self.vendor_loyalty_settings.find_one({"vendor_id": vendor["_id"]}) or {}
-        points = 0
-        if loyalty.get("enable_loyalty_program", False):
-            if loyalty.get("points_rule_type") == "percentage_based":
-                points = int(total * float(loyalty.get("percentage_value") or 0) / 100)
-            else:
-                currency_unit = float(loyalty.get("currency_unit") or 1)
-                points = int((total / currency_unit) * float(loyalty.get("points_earned") or 0))
+        points = self._estimate_loyalty_points(
+            vendor["_id"], self._oid(customer_id) if customer_id else None, total
+        )
         return {
             "provider_id": provider_id,
             "provider_name": vendor.get("business_name", "Provider"),
@@ -1928,7 +2061,17 @@ class CustomerRepository:
             "subtotal": quote["subtotal"],
             "service_fee": quote["service_fee"],
             "taxes": quote["taxes"],
+            "estimated_points": quote["estimated_points"],
             "source": "customer_app",
+            "requested_at": now,
+            "status_history": [
+                {
+                    "status": "pending",
+                    "at": now,
+                    "actor": "customer",
+                    "label": "Booking request sent by customer",
+                }
+            ],
             "created_at": now,
             "updated_at": now,
         }
@@ -1974,6 +2117,270 @@ class CustomerRepository:
         )
         return self._serialize(created) or {}
 
+    def get_spa_booking_quote(
+        self,
+        customer_id: str,
+        spa_id: str,
+        date: str,
+        time: str,
+        guests: int,
+        service_id: str | None = None,
+        promo_code: str | None = None,
+    ) -> dict[str, Any]:
+        vendor = self.vendors.find_one({"_id": self._oid(spa_id), "status": "approved"})
+        if not vendor:
+            raise ValueError("Spa not found.")
+        service_query: dict[str, Any] = {
+            "vendor_id": vendor["_id"],
+            "service_type": "spa",
+            "$or": [{"available": True}, {"active_status": True}],
+        }
+        if service_id:
+            service_query["_id"] = self._oid(service_id)
+        service = self.vendor_services.find_one(service_query, sort=[("price", ASCENDING)])
+        if not service:
+            raise ValueError("No available spa service found.")
+        availability = self.get_booking_availability(spa_id, date, "spa")
+        slot = next((row for row in availability["slots"] if row["time"] == time), None)
+        if not slot or not slot["available"]:
+            raise ValueError("Selected slot is not available.")
+        unit_price = round(float(service.get("price") or 0), 2)
+        original_subtotal = round(unit_price * guests, 2)
+        customer_obj_id = self._oid(customer_id)
+        promotion = self._promotion_discount(
+            vendor["_id"], "spa", original_subtotal, customer_obj_id, date, promo_code
+        )
+        subtotal = round(original_subtotal - promotion["discount_amount"], 2)
+        service_fee = round(subtotal * 0.08, 2)
+        taxes = round(subtotal * 0.05, 2)
+        total = round(subtotal + service_fee + taxes, 2)
+        return {
+            "provider_id": spa_id,
+            "provider_name": vendor.get("business_name") or "Spa",
+            "provider_type": "spa",
+            "service_id": str(service["_id"]),
+            "service_name": service.get("name") or "Spa Service",
+            "date": date,
+            "time": time,
+            "guests": guests,
+            "unit_price": unit_price,
+            "original_subtotal": original_subtotal,
+            "discount_amount": promotion["discount_amount"],
+            "promotion_id": str(promotion["promotion_id"]) if promotion["promotion_id"] else None,
+            "promotion_name": promotion["promotion_name"],
+            "promo_code": promotion["promo_code"],
+            "subtotal": subtotal,
+            "service_fee": service_fee,
+            "taxes": taxes,
+            "total": total,
+            "estimated_points": self._estimate_loyalty_points(
+                vendor["_id"], customer_obj_id, total
+            ),
+        }
+
+    def create_spa_booking(
+        self,
+        customer_id: str,
+        spa_id: str,
+        date: str,
+        time: str,
+        guests: int,
+        service_id: str | None,
+        special_notes: str | None,
+        promo_code: str | None = None,
+    ) -> dict[str, Any]:
+        customer = self.users.find_one({"_id": self._oid(customer_id)})
+        if not customer:
+            raise ValueError("Customer not found.")
+        vendor = self.vendors.find_one({"_id": self._oid(spa_id), "status": "approved"})
+        if not vendor:
+            raise ValueError("Spa not found.")
+        quote = self.get_spa_booking_quote(
+            customer_id, spa_id, date, time, guests, service_id, promo_code
+        )
+        now = datetime.now(UTC)
+        booking_code = f"#SP{now.strftime('%Y%m')}-{str(ObjectId())[-4:].upper()}"
+        promotion_id = self._oid(quote["promotion_id"]) if quote["promotion_id"] else None
+        payload = {
+            "vendor_id": vendor["_id"],
+            "customer_id": customer["_id"],
+            "booking_code": booking_code,
+            "customer_name": customer.get("full_name"),
+            "customer_gender": customer.get("gender"),
+            "customer_phone": customer.get("phone"),
+            "customer_email": customer.get("email"),
+            "scheduled_date": date,
+            "scheduled_time": time,
+            "service": quote["service_name"],
+            "service_id": self._oid(quote["service_id"]),
+            "provider_type": "spa",
+            "guests": guests,
+            "status": "pending",
+            "payment_status": "unpaid",
+            "special_requests": special_notes,
+            "total_amount": quote["total"],
+            "original_subtotal": quote["original_subtotal"],
+            "discount_amount": quote["discount_amount"],
+            "promotion_id": promotion_id,
+            "promotion_name": quote["promotion_name"],
+            "promo_code": quote["promo_code"],
+            "subtotal": quote["subtotal"],
+            "service_fee": quote["service_fee"],
+            "taxes": quote["taxes"],
+            "unit_price": quote["unit_price"],
+            "estimated_points": quote["estimated_points"],
+            "source": "customer_app",
+            "requested_at": now,
+            "status_history": [
+                {
+                    "status": "pending",
+                    "at": now,
+                    "actor": "customer",
+                    "label": "Booking request sent by customer",
+                }
+            ],
+            "created_at": now,
+            "updated_at": now,
+        }
+        booking_id = self.vendor_bookings.insert_one(payload).inserted_id
+        self.bookings.insert_one(
+            {
+                "customer_id": customer["_id"],
+                "vendor_id": vendor["_id"],
+                "provider_type": "spa",
+                "booking_id": booking_id,
+                "booking_code": booking_code,
+                "date": date,
+                "time": time,
+                "guests": guests,
+                "status": "pending",
+                "service_id": payload["service_id"],
+                "total_amount": quote["total"],
+                "promotion_id": promotion_id,
+                "discount_amount": quote["discount_amount"],
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+        self._create_vendor_notification(
+            vendor["_id"],
+            "new_booking",
+            "New Spa Booking Received",
+            (
+                f"{customer.get('full_name') or 'A customer'} requested {quote['service_name']} "
+                f"for {date} {time}. Reference: {booking_code}."
+            ),
+            action_type="view_details",
+            action_label="View Booking",
+            metadata={
+                "booking_id": str(booking_id),
+                "booking_code": booking_code,
+                "customer_id": str(customer["_id"]),
+                "status": "pending",
+                "provider_type": "spa",
+                "service_id": quote["service_id"],
+            },
+            settings_key="new_booking",
+        )
+        return self._serialize(self.vendor_bookings.find_one({"_id": booking_id})) or {}
+
+    def get_hotel_booking_quote(
+        self,
+        customer_id: str,
+        hotel_id: str,
+        check_in_date: str,
+        check_out_date: str,
+        guests: int,
+        room_id: str | None = None,
+        promo_code: str | None = None,
+    ) -> dict[str, Any]:
+        vendor = self.vendors.find_one({"_id": self._oid(hotel_id), "status": "approved"})
+        if not vendor:
+            raise ValueError("Provider not found.")
+        room_query: dict[str, Any] = {"vendor_id": vendor["_id"], "available": True}
+        if room_id:
+            room_query["_id"] = self._oid(room_id)
+        room = self.vendor_rooms.find_one(room_query, sort=[("base_price", ASCENDING)])
+        if not room:
+            raise ValueError("No available room found for this hotel.")
+        try:
+            check_in = datetime.fromisoformat(check_in_date).date()
+            check_out = datetime.fromisoformat(check_out_date).date()
+        except ValueError as exc:
+            raise ValueError("Invalid check-in or check-out date.") from exc
+        nights = (check_out - check_in).days
+        if nights <= 0:
+            raise ValueError("check_out_date must be after check_in_date.")
+        if guests > int(room.get("max_guests") or 20):
+            raise ValueError("Guest count exceeds this room's capacity.")
+        if nights < int(room.get("min_stay_nights") or 1):
+            raise ValueError("Stay is shorter than this room's minimum stay.")
+        if nights > int(room.get("max_stay_nights") or 30):
+            raise ValueError("Stay exceeds this room's maximum stay.")
+        reserved = self.vendor_bookings.count_documents(
+            {
+                "vendor_id": vendor["_id"],
+                "room_id": room["_id"],
+                "status": {"$in": ["pending", "confirmed", "check_in"]},
+                "check_in_date": {"$lt": check_out_date},
+                "check_out_date": {"$gt": check_in_date},
+            }
+        )
+        if reserved >= int(room.get("inventory_count") or 1):
+            raise ValueError("This room is not available for the selected dates.")
+        base_price = round(float(room.get("base_price") or 150), 2)
+        weekend_price = round(float(room.get("weekend_price") or base_price), 2)
+        original_subtotal = 0.0
+        cursor = check_in
+        while cursor < check_out:
+            original_subtotal += weekend_price if cursor.weekday() >= 5 else base_price
+            cursor += timedelta(days=1)
+        original_subtotal = round(original_subtotal, 2)
+        room_discount = round(
+            original_subtotal * min(max(float(room.get("default_discount_percent") or 0), 0), 100) / 100,
+            2,
+        )
+        discounted_room_subtotal = round(original_subtotal - room_discount, 2)
+        promotion = self._promotion_discount(
+            vendor["_id"],
+            "hotel",
+            discounted_room_subtotal,
+            self._oid(customer_id),
+            check_in_date,
+            promo_code,
+        )
+        subtotal = round(discounted_room_subtotal - promotion["discount_amount"], 2)
+        service_fee = round(subtotal * 0.08, 2)
+        taxes = 0.0 if room.get("tax_included", True) else round(subtotal * 0.05, 2)
+        total = round(subtotal + service_fee + taxes, 2)
+        return {
+            "provider_id": hotel_id,
+            "provider_name": vendor.get("business_name") or "Hotel",
+            "provider_type": "hotel_room" if room_id else "hotel",
+            "room_id": str(room["_id"]),
+            "room_name": room.get("name") or "Hotel Room",
+            "check_in_date": check_in_date,
+            "check_out_date": check_out_date,
+            "nights": nights,
+            "guests": guests,
+            "rate_per_night": base_price,
+            "weekend_rate": weekend_price,
+            "original_subtotal": original_subtotal,
+            "room_discount_amount": room_discount,
+            "discount_amount": promotion["discount_amount"],
+            "promotion_id": str(promotion["promotion_id"]) if promotion["promotion_id"] else None,
+            "promotion_name": promotion["promotion_name"],
+            "promo_code": promotion["promo_code"],
+            "subtotal": subtotal,
+            "service_fee": service_fee,
+            "taxes": taxes,
+            "tax_included": bool(room.get("tax_included", True)),
+            "total": total,
+            "estimated_points": self._estimate_loyalty_points(
+                vendor["_id"], self._oid(customer_id), total
+            ),
+        }
+
     def create_hotel_booking(
         self,
         customer_id: str,
@@ -1996,37 +2403,24 @@ class CustomerRepository:
         if not vendor:
             raise ValueError("Provider not found.")
 
-        room_query: dict[str, Any] = {"vendor_id": vendor["_id"], "available": True}
-        if room_id:
-            room_query["_id"] = self._oid(room_id)
-        room = self.vendor_rooms.find_one(room_query, sort=[("base_price", ASCENDING)])
+        quote = self.get_hotel_booking_quote(
+            customer_id,
+            hotel_id,
+            check_in_date,
+            check_out_date,
+            guests,
+            room_id,
+            promo_code,
+        )
+        room = self.vendor_rooms.find_one({"_id": self._oid(quote["room_id"])})
         if not room:
             raise ValueError("No available room found for this hotel.")
-
-        try:
-            check_in = datetime.fromisoformat(check_in_date).date()
-            check_out = datetime.fromisoformat(check_out_date).date()
-        except ValueError as exc:
-            raise ValueError("Invalid check-in or check-out date.") from exc
-
-        nights = (check_out - check_in).days
-        if nights <= 0:
-            raise ValueError("check_out_date must be after check_in_date.")
-
-        base_price = round(float(room.get("base_price") or 150), 2)
-        original_subtotal = round(base_price * nights, 2)
-        promotion = self._promotion_discount(
-            vendor["_id"], "hotel", original_subtotal, customer["_id"], check_in_date, promo_code
-        )
-        subtotal = round(original_subtotal - promotion["discount_amount"], 2)
-        service_fee = round(subtotal * 0.08, 2)
-        taxes = round(subtotal * 0.05, 2)
-        total = round(subtotal + service_fee + taxes, 2)
         now = datetime.now(UTC)
         booking_code = f"#HT{now.strftime('%Y%m')}-{str(ObjectId())[-4:].upper()}"
         status = "pending"
-        room_name = str(room.get("name") or "Hotel Room")
-        provider_type = "hotel_room" if room_id else "hotel"
+        room_name = str(quote["room_name"])
+        provider_type = str(quote["provider_type"])
+        promotion_id = self._oid(quote["promotion_id"]) if quote["promotion_id"] else None
 
         vendor_booking_payload = {
             "vendor_id": vendor["_id"],
@@ -2040,7 +2434,7 @@ class CustomerRepository:
             "scheduled_time": "15:00",
             "check_in_date": check_in_date,
             "check_out_date": check_out_date,
-            "nights": nights,
+            "nights": quote["nights"],
             "service": room_name,
             "room_id": room["_id"],
             "room_type": room_name,
@@ -2049,17 +2443,29 @@ class CustomerRepository:
             "status": status,
             "payment_status": "unpaid",
             "special_requests": special_notes,
-            "total_amount": total,
-            "original_subtotal": original_subtotal,
-            "discount_amount": promotion["discount_amount"],
-            "promotion_id": promotion["promotion_id"],
-            "promotion_name": promotion["promotion_name"],
-            "promo_code": promotion["promo_code"],
-            "subtotal": subtotal,
-            "service_fee": service_fee,
-            "taxes": taxes,
-            "rate_per_night": base_price,
+            "total_amount": quote["total"],
+            "original_subtotal": quote["original_subtotal"],
+            "room_discount_amount": quote["room_discount_amount"],
+            "discount_amount": quote["discount_amount"],
+            "promotion_id": promotion_id,
+            "promotion_name": quote["promotion_name"],
+            "promo_code": quote["promo_code"],
+            "subtotal": quote["subtotal"],
+            "service_fee": quote["service_fee"],
+            "taxes": quote["taxes"],
+            "tax_included": quote["tax_included"],
+            "rate_per_night": quote["rate_per_night"],
+            "estimated_points": quote["estimated_points"],
             "source": "customer_app",
+            "requested_at": now,
+            "status_history": [
+                {
+                    "status": "pending",
+                    "at": now,
+                    "actor": "customer",
+                    "label": "Booking request sent by customer",
+                }
+            ],
             "created_at": now,
             "updated_at": now,
         }
@@ -2080,10 +2486,10 @@ class CustomerRepository:
                 "room_type": room_name,
                 "check_in_date": check_in_date,
                 "check_out_date": check_out_date,
-                "nights": nights,
-                "total_amount": total,
-                "promotion_id": promotion["promotion_id"],
-                "discount_amount": promotion["discount_amount"],
+                "nights": quote["nights"],
+                "total_amount": quote["total"],
+                "promotion_id": promotion_id,
+                "discount_amount": quote["discount_amount"],
                 "created_at": now,
                 "updated_at": now,
             }

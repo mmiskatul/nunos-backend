@@ -9,10 +9,12 @@ from app.modules.customer.schemas_live import (
     CustomerBookingCreateRequest,
     CustomerBookingReviewRequest,
     CustomerHotelBookingCreateRequest,
+    CustomerHotelBookingQuoteRequest,
     CustomerBookingQuoteRequest,
     CustomerBookingRescheduleRequest,
     CustomerEventTicketBookingRequest,
     CustomerRestaurantBookingCreateRequest,
+    CustomerSpaBookingCreateRequest,
 )
 from app.modules.customer.service_customer import CustomerService
 from app.modules.schemas import (
@@ -255,6 +257,53 @@ def get_spa_services(spa_id: str, customer_service: CustomerService = Depends(ge
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Spa not found.") from exc
 
 
+@router.post("/spas/{spa_id}/booking-quote", tags=["Customer - Spa"])
+def get_spa_booking_quote(
+    spa_id: str,
+    payload: CustomerSpaBookingCreateRequest,
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    try:
+        return customer_service.repo.get_spa_booking_quote(
+            current_user["id"],
+            spa_id,
+            payload.date,
+            payload.time,
+            payload.guests,
+            payload.service_id,
+            payload.promo_code,
+        )
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Spa not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/spas/{spa_id}/bookings", tags=["Customer - Spa"])
+def create_spa_booking(
+    spa_id: str,
+    payload: CustomerSpaBookingCreateRequest,
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    try:
+        return customer_service.repo.create_spa_booking(
+            current_user["id"],
+            spa_id,
+            payload.date,
+            payload.time,
+            payload.guests,
+            payload.service_id,
+            payload.special_notes,
+            payload.promo_code,
+        )
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Spa not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
 @router.get("/restaurants/{restaurant_id}/services", tags=["Customer - Restaurant"])
 def get_restaurant_services(restaurant_id: str, customer_service: CustomerService = Depends(get_customer_service)) -> dict:
     try:
@@ -303,6 +352,23 @@ def get_event_directions(
         "location": event.get("location"),
         "venue": event.get("venue"),
     }
+
+
+@router.post("/events/{event_id}/booking-quote", tags=["Customer - Events"])
+def get_event_booking_quote(
+    event_id: str,
+    payload: CustomerEventTicketBookingRequest,
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    try:
+        return customer_service.repo.get_event_booking_quote(
+            current_user["id"], event_id, payload.quantity, payload.promo_code
+        )
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.post("/events/{event_id}/bookings", tags=["Customer - Events"])
@@ -468,13 +534,16 @@ def get_available_filters(current_user: dict = Depends(get_current_user), custom
 def get_booking_availability(
     provider_id: str,
     date: str,
+    provider_type: str = Query(default="restaurant", pattern="^(restaurant|hotel|spa)$"),
     current_user: dict = Depends(get_current_user),
     customer_service: CustomerService = Depends(get_customer_service),
 ) -> dict:
     _ = current_user
     payload = CustomerAvailabilityRequest(provider_id=provider_id, date=date)
     try:
-        return customer_service.repo.get_booking_availability(payload.provider_id, payload.date)
+        return customer_service.repo.get_booking_availability(
+            payload.provider_id, payload.date, provider_type
+        )
     except InvalidId as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider not found.") from exc
 
@@ -550,6 +619,29 @@ def create_restaurant_booking(
         )
     except InvalidId as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Restaurant not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/hotels/{hotel_id}/booking-quote", tags=["Customer - Hotels"])
+def get_hotel_booking_quote(
+    hotel_id: str,
+    payload: CustomerHotelBookingQuoteRequest,
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    try:
+        return customer_service.repo.get_hotel_booking_quote(
+            current_user["id"],
+            hotel_id,
+            payload.check_in_date,
+            payload.check_out_date,
+            payload.guests,
+            payload.room_id,
+            payload.promo_code,
+        )
+    except InvalidId as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hotel or room not found.") from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
