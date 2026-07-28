@@ -281,13 +281,86 @@ class CustomerRepository:
         applicable_to = str(promotion.get("applicable_to") or "All Services").strip().lower()
         if not applicable_to or applicable_to == "all services":
             return True
-        normalized = normalize_service_type(service_type)
+        normalized = str(service_type or "").strip().lower().replace("_room", "")
+        if normalized not in {"restaurant", "hotel", "spa", "event"}:
+            normalized = normalize_service_type(normalized)
         aliases = {
             "restaurant": ("restaurant", "dining", "food"),
             "hotel": ("hotel", "room", "stay"),
             "spa": ("spa", "wellness", "treatment"),
+            "event": ("event", "ticket"),
         }
         return any(alias in applicable_to for alias in aliases[normalized])
+
+    def _promotion_discount(
+        self,
+        vendor_id: ObjectId,
+        service_type: str,
+        subtotal: float,
+        customer_id: ObjectId | None,
+        scheduled_date: str,
+        promo_code: str | None,
+    ) -> dict[str, Any]:
+        normalized_code = str(promo_code or "").strip().upper()
+        candidates: list[tuple[float, dict[str, Any]]] = []
+        try:
+            booking_day = datetime.fromisoformat(scheduled_date[:10])
+        except ValueError:
+            booking_day = datetime.now(UTC)
+
+        for promotion in self.vendor_promotions.find({"vendor_id": vendor_id, "active": True}):
+            if not self._promotion_applies_to_service(promotion, service_type):
+                continue
+            start_date = str(promotion.get("start_date") or "")
+            end_date = str(promotion.get("end_date") or "")
+            day_value = booking_day.date().isoformat()
+            if start_date and day_value < start_date[:10]:
+                continue
+            if end_date and day_value > end_date[:10]:
+                continue
+            recurring_days = [str(value) for value in promotion.get("recurring_days") or []]
+            if recurring_days and str(booking_day.weekday()) not in recurring_days:
+                continue
+
+            required_code = bool(promotion.get("require_promo_code"))
+            configured_code = str(promotion.get("promo_code") or "").strip().upper()
+            if normalized_code:
+                if not configured_code or configured_code != normalized_code:
+                    continue
+            elif required_code:
+                continue
+            minimum_spend = max(float(promotion.get("minimum_spend") or 0), 0)
+            if subtotal < minimum_spend:
+                continue
+            if promotion.get("first_time_customers_only") and customer_id:
+                previous = self.vendor_bookings.find_one(
+                    {
+                        "vendor_id": vendor_id,
+                        "customer_id": customer_id,
+                        "status": {"$nin": ["canceled", "cancelled"]},
+                    },
+                    {"_id": 1},
+                )
+                if previous:
+                    continue
+
+            value = max(float(promotion.get("discount_value") or 0), 0)
+            offer_type = str(promotion.get("offer_type") or "percentage").lower()
+            discount = subtotal * min(value, 100) / 100 if offer_type == "percentage" else value
+            candidates.append((min(round(discount, 2), subtotal), promotion))
+
+        if normalized_code and not candidates:
+            raise ValueError("Promo code is invalid or not available for this booking.")
+        if not candidates:
+            return {"discount_amount": 0.0, "promotion_id": None, "promotion_name": None, "promo_code": None}
+
+        discount, promotion = max(candidates, key=lambda item: item[0])
+        return {
+            "discount_amount": discount,
+            "promotion_id": promotion["_id"],
+            "promotion_name": promotion.get("promotion_name") or "Promotion",
+            "promo_code": normalized_code or promotion.get("promo_code"),
+        }
 
     def _list_service_offers(
         self,
@@ -315,11 +388,16 @@ class CustomerRepository:
             and offer.get("active", True) is not False
         ]
         promotion_offers = []
+        today = datetime.now(UTC).date().isoformat()
         for document in self.vendor_promotions.find(
             {"vendor_id": vendor_id, "active": True}
         ).sort("created_at", DESCENDING):
             offer = self._serialize(document)
             if not offer or not self._promotion_applies_to_service(offer, normalized):
+                continue
+            if offer.get("start_date") and str(offer["start_date"])[:10] > today:
+                continue
+            if offer.get("end_date") and str(offer["end_date"])[:10] < today:
                 continue
             promotion_offers.append(
                 {
@@ -1136,10 +1214,34 @@ class CustomerRepository:
         return self.get_customer_profile(customer_id)
 
     def get_customer_points_summary(self, customer_id: str) -> dict[str, Any]:
+        customer_obj_id = self._oid(customer_id)
+        now = datetime.now(UTC)
+        expired_points = 0
+        for collection in (self.vendor_bookings, self.vendor_reviews):
+            for row in collection.find(
+                {
+                    "customer_id": customer_obj_id,
+                    "points_awarded": {"$gt": 0},
+                    "points_expires_at": {"$lte": now},
+                    "loyalty_points_expired_at": {"$exists": False},
+                },
+                {"points_awarded": 1},
+            ):
+                result = collection.update_one(
+                    {"_id": row["_id"], "loyalty_points_expired_at": {"$exists": False}},
+                    {"$set": {"loyalty_points_expired_at": now}},
+                )
+                if result.modified_count:
+                    expired_points += int(row.get("points_awarded") or 0)
         profile = self.get_customer_profile(customer_id)
-        points = int(profile.get("points_balance") or 0)
+        points = max(int(profile.get("points_balance") or 0) - expired_points, 0)
+        if expired_points:
+            self.users.update_one(
+                {"_id": customer_obj_id},
+                {"$set": {"points_balance": points, "updated_at": now}},
+            )
         tier = "gold" if points >= 500 else "silver" if points >= 200 else "bronze"
-        return {"points_balance": points, "tier": tier}
+        return {"points_balance": points, "tier": tier, "expired_points": expired_points}
 
     def list_customer_reviews(self, customer_id: str, limit: int, skip: int) -> dict[str, Any]:
         customer_obj_id = self._oid(customer_id)
@@ -1536,6 +1638,7 @@ class CustomerRepository:
         quantity: int,
         notes: str | None,
         auto_confirm: bool,
+        promo_code: str | None = None,
     ) -> dict[str, Any]:
         customer = self.users.find_one({"_id": self._oid(customer_id)})
         if not customer:
@@ -1574,7 +1677,11 @@ class CustomerRepository:
             )
 
         unit_price = round(float(event.get("ticket_price") or 0), 2)
-        subtotal = round(unit_price * quantity, 2)
+        original_subtotal = round(unit_price * quantity, 2)
+        promotion = self._promotion_discount(
+            vendor["_id"], "event", original_subtotal, customer["_id"], str(event.get("event_date") or ""), promo_code
+        )
+        subtotal = round(original_subtotal - promotion["discount_amount"], 2)
         service_fee = 0.0
         taxes = 0.0
         total = subtotal
@@ -1603,6 +1710,11 @@ class CustomerRepository:
             "payment_status": "unpaid",
             "special_requests": notes,
             "total_amount": total,
+            "original_subtotal": original_subtotal,
+            "discount_amount": promotion["discount_amount"],
+            "promotion_id": promotion["promotion_id"],
+            "promotion_name": promotion["promotion_name"],
+            "promo_code": promotion["promo_code"],
             "subtotal": subtotal,
             "service_fee": service_fee,
             "taxes": taxes,
@@ -1627,6 +1739,8 @@ class CustomerRepository:
                 "quantity": quantity,
                 "status": status,
                 "total_amount": total,
+                "promotion_id": promotion["promotion_id"],
+                "discount_amount": promotion["discount_amount"],
                 "created_at": now,
                 "updated_at": now,
             }
@@ -1699,19 +1813,35 @@ class CustomerRepository:
         date: str,
         time: str,
         seating_preference: str | None,
+        customer_id: str | None = None,
+        promo_code: str | None = None,
     ) -> dict[str, Any]:
         vendor = self.vendors.find_one({"_id": self._oid(provider_id), "status": "approved"})
         if not vendor:
             raise ValueError("Provider not found.")
         room = self.vendor_rooms.find_one({"vendor_id": vendor["_id"], "available": True}, sort=[("base_price", ASCENDING)])
         unit_price = float((room or {}).get("base_price", 60))
-        subtotal = round(unit_price * guests, 2)
+        original_subtotal = round(unit_price * guests, 2)
+        promotion = self._promotion_discount(
+            vendor["_id"],
+            provider_type,
+            original_subtotal,
+            self._oid(customer_id) if customer_id else None,
+            date,
+            promo_code,
+        )
+        subtotal = round(original_subtotal - promotion["discount_amount"], 2)
         service_fee = round(subtotal * 0.08, 2)
         taxes = round(subtotal * 0.05, 2)
         total = round(subtotal + service_fee + taxes, 2)
         loyalty = self.vendor_loyalty_settings.find_one({"vendor_id": vendor["_id"]}) or {}
-        points_per_currency = float(loyalty.get("points_earned", 0))
-        points = int(total * points_per_currency) if loyalty.get("enable_loyalty_program", False) else 0
+        points = 0
+        if loyalty.get("enable_loyalty_program", False):
+            if loyalty.get("points_rule_type") == "percentage_based":
+                points = int(total * float(loyalty.get("percentage_value") or 0) / 100)
+            else:
+                currency_unit = float(loyalty.get("currency_unit") or 1)
+                points = int((total / currency_unit) * float(loyalty.get("points_earned") or 0))
         return {
             "provider_id": provider_id,
             "provider_name": vendor.get("business_name", "Provider"),
@@ -1720,6 +1850,11 @@ class CustomerRepository:
             "time": time,
             "guests": guests,
             "seating_preference": seating_preference,
+            "original_subtotal": original_subtotal,
+            "discount_amount": promotion["discount_amount"],
+            "promotion_id": str(promotion["promotion_id"]) if promotion["promotion_id"] else None,
+            "promotion_name": promotion["promotion_name"],
+            "promo_code": promotion["promo_code"],
             "subtotal": subtotal,
             "service_fee": service_fee,
             "taxes": taxes,
@@ -1738,6 +1873,7 @@ class CustomerRepository:
         seating_preference: str | None,
         special_notes: str | None,
         auto_confirm: bool,
+        promo_code: str | None = None,
     ) -> dict[str, Any]:
         customer = self.users.find_one({"_id": self._oid(customer_id)})
         if not customer:
@@ -1760,6 +1896,8 @@ class CustomerRepository:
             date=date,
             time=time,
             seating_preference=seating_preference,
+            customer_id=customer_id,
+            promo_code=promo_code,
         )
         now = datetime.now(UTC)
         booking_code = f"#BK{now.strftime('%Y%m')}-{str(ObjectId())[-4:].upper()}"
@@ -1782,6 +1920,11 @@ class CustomerRepository:
             "special_requests": special_notes,
             "seating_preference": seating_preference,
             "total_amount": quote["total"],
+            "original_subtotal": quote["original_subtotal"],
+            "discount_amount": quote["discount_amount"],
+            "promotion_id": self._oid(quote["promotion_id"]) if quote["promotion_id"] else None,
+            "promotion_name": quote["promotion_name"],
+            "promo_code": quote["promo_code"],
             "subtotal": quote["subtotal"],
             "service_fee": quote["service_fee"],
             "taxes": quote["taxes"],
@@ -1803,6 +1946,8 @@ class CustomerRepository:
                 "guests": guests,
                 "status": status,
                 "total_amount": quote["total"],
+                "promotion_id": self._oid(quote["promotion_id"]) if quote["promotion_id"] else None,
+                "discount_amount": quote["discount_amount"],
                 "created_at": now,
                 "updated_at": now,
             }
@@ -1842,6 +1987,7 @@ class CustomerRepository:
         guest_name: str | None = None,
         guest_email: str | None = None,
         guest_phone: str | None = None,
+        promo_code: str | None = None,
     ) -> dict[str, Any]:
         customer = self.users.find_one({"_id": self._oid(customer_id)})
         if not customer:
@@ -1868,7 +2014,11 @@ class CustomerRepository:
             raise ValueError("check_out_date must be after check_in_date.")
 
         base_price = round(float(room.get("base_price") or 150), 2)
-        subtotal = round(base_price * nights, 2)
+        original_subtotal = round(base_price * nights, 2)
+        promotion = self._promotion_discount(
+            vendor["_id"], "hotel", original_subtotal, customer["_id"], check_in_date, promo_code
+        )
+        subtotal = round(original_subtotal - promotion["discount_amount"], 2)
         service_fee = round(subtotal * 0.08, 2)
         taxes = round(subtotal * 0.05, 2)
         total = round(subtotal + service_fee + taxes, 2)
@@ -1900,6 +2050,11 @@ class CustomerRepository:
             "payment_status": "unpaid",
             "special_requests": special_notes,
             "total_amount": total,
+            "original_subtotal": original_subtotal,
+            "discount_amount": promotion["discount_amount"],
+            "promotion_id": promotion["promotion_id"],
+            "promotion_name": promotion["promotion_name"],
+            "promo_code": promotion["promo_code"],
             "subtotal": subtotal,
             "service_fee": service_fee,
             "taxes": taxes,
@@ -1927,6 +2082,8 @@ class CustomerRepository:
                 "check_out_date": check_out_date,
                 "nights": nights,
                 "total_amount": total,
+                "promotion_id": promotion["promotion_id"],
+                "discount_amount": promotion["discount_amount"],
                 "created_at": now,
                 "updated_at": now,
             }
@@ -2041,6 +2198,33 @@ class CustomerRepository:
             "updated_at": now,
         }
         review_id = self.vendor_reviews.insert_one(review).inserted_id
+        loyalty = self.vendor_loyalty_settings.find_one({"vendor_id": vendor_obj_id}) or {}
+        review_points = (
+            max(int(loyalty.get("review_bonus_points") or 0), 0)
+            if loyalty.get("enable_loyalty_program") is True
+            else 0
+        )
+        if review_points:
+            expiry_policy = str(loyalty.get("points_expiry_policy") or "1 Year")
+            expires_at = None
+            if expiry_policy != "No Expiry":
+                years = 2 if expiry_policy == "2 Years" else 1
+                try:
+                    expires_at = now.replace(year=now.year + years)
+                except ValueError:
+                    expires_at = now.replace(month=2, day=28, year=now.year + years)
+            self.users.update_one(
+                {"_id": customer_obj_id},
+                {"$inc": {"points_balance": review_points}, "$set": {"updated_at": now}},
+            )
+            self.vendor_reviews.update_one(
+                {"_id": review_id},
+                {"$set": {"points_awarded": review_points, "points_awarded_at": now, "points_expires_at": expires_at}},
+            )
+            self.vendor_bookings.update_one(
+                {"_id": booking_obj_id},
+                {"$set": {"review_points_awarded": review_points, "updated_at": now}},
+            )
         self._create_vendor_notification(
             vendor_obj_id,
             "new_review",

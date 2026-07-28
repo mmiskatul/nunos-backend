@@ -13,6 +13,7 @@ class CustomerBookingQuoteRequest(BaseModel):
         default=None, pattern="^(indoor|outdoor|no_preference)$"
     )
     special_notes: str | None = Field(default=None, max_length=2000)
+    promo_code: str | None = Field(default=None, max_length=80)
 
 
 class CustomerBookingCreateRequest(CustomerBookingQuoteRequest):
@@ -26,6 +27,7 @@ class CustomerRestaurantBookingCreateRequest(BaseModel):
     seating_preference: str | None = Field(default=None, max_length=50)
     special_notes: str | None = Field(default=None, max_length=2000)
     auto_confirm: bool = False
+    promo_code: str | None = Field(default=None, max_length=80)
 
 
 class CustomerHotelBookingCreateRequest(BaseModel):
@@ -37,6 +39,7 @@ class CustomerHotelBookingCreateRequest(BaseModel):
     guest_name: str | None = Field(default=None, max_length=200)
     guest_email: str | None = Field(default=None, max_length=200)
     guest_phone: str | None = Field(default=None, max_length=40)
+    promo_code: str | None = Field(default=None, max_length=80)
 
 
 class CustomerBookingRescheduleRequest(BaseModel):
@@ -74,4 +77,5 @@ class CustomerEventTicketBookingRequest(BaseModel):
     quantity: int = Field(default=1, ge=1, le=20)
     notes: str | None = Field(default=None, max_length=2000)
     auto_confirm: bool = False
+    promo_code: str | None = Field(default=None, max_length=80)
 

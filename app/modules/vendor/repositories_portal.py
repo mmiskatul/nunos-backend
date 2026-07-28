@@ -1,5 +1,6 @@
 import csv
 import html
+import re
 from datetime import UTC, datetime, timedelta
 from io import StringIO
 from typing import Any
@@ -151,7 +152,14 @@ class VendorPortalRepository:
         normalized["schedule"] = row.get("schedule") or cls._promotion_schedule_label(row)
         normalized["usage_count"] = usage_count
         normalized["usage_max"] = max(usage_max, usage_count)
-        normalized["is_active"] = bool(row.get("is_active", row.get("active", False)))
+        today = datetime.now(UTC).date().isoformat()
+        configured_active = bool(row.get("is_active", row.get("active", False)))
+        within_schedule = (
+            (not row.get("start_date") or str(row["start_date"])[:10] <= today)
+            and (not row.get("end_date") or str(row["end_date"])[:10] >= today)
+        )
+        normalized["is_active"] = configured_active
+        normalized["is_currently_available"] = configured_active and within_schedule
         return normalized
 
     @classmethod
@@ -163,7 +171,7 @@ class VendorPortalRepository:
         total_promo_revenue = 0.0
 
         for row in promotions:
-            if bool(row.get("active")):
+            if bool(row.get("is_currently_available", row.get("active"))):
                 active_promotions += 1
 
             usage_count = cls._to_int(row.get("usage_count", row.get("usageCount", row.get("redemptions", 0))))
@@ -345,14 +353,35 @@ class VendorPortalRepository:
         if status_normalized == "canceled" and not booking.get("canceled_at"):
             payload["canceled_at"] = now
         points_awarded = int(booking.get("points_awarded") or 0)
-        if status_normalized == "complete" and booking.get("status") != "complete":
+        if status_normalized == "complete" and not booking.get("loyalty_awarded_at"):
             points_awarded = self._calculate_booking_points(vendor_id, booking)
             payload["points_awarded"] = points_awarded
+            payload["loyalty_awarded_at"] = now
+            settings = self.loyalty_settings.find_one({"vendor_id": ObjectId(vendor_id)}) or {}
+            expiry_policy = str(settings.get("points_expiry_policy") or "1 Year")
+            if expiry_policy != "No Expiry":
+                years = 2 if expiry_policy == "2 Years" else 1
+                try:
+                    payload["points_expires_at"] = now.replace(year=now.year + years)
+                except ValueError:
+                    payload["points_expires_at"] = now.replace(month=2, day=28, year=now.year + years)
             if points_awarded > 0 and booking.get("customer_id"):
                 self.users.update_one(
                     {"_id": booking["customer_id"]},
                     {"$inc": {"points_balance": points_awarded}, "$set": {"updated_at": datetime.now(UTC)}},
                 )
+        if status_normalized == "complete" and booking.get("promotion_id") and not booking.get("promotion_counted_at"):
+            payload["promotion_counted_at"] = now
+            self.promotions.update_one(
+                {"_id": booking["promotion_id"], "vendor_id": ObjectId(vendor_id)},
+                {
+                    "$inc": {
+                        "usage_count": 1,
+                        "total_promo_revenue": self._to_float(booking.get("total_amount")),
+                    },
+                    "$set": {"updated_at": now},
+                },
+            )
         updated = self.bookings.update_one(
             {"_id": ObjectId(booking_id), "vendor_id": ObjectId(vendor_id)},
             {
@@ -375,17 +404,28 @@ class VendorPortalRepository:
 
     def _calculate_booking_points(self, vendor_id: str, booking: dict[str, Any]) -> int:
         settings = self.loyalty_settings.find_one({"vendor_id": ObjectId(vendor_id)}) or {}
-        if not settings:
-            return 50
-        if settings and settings.get("enable_loyalty_program") is False:
+        if not settings or settings.get("enable_loyalty_program") is not True:
             return 0
         amount = max(float(booking.get("total_amount") or 0), 0)
         rule = str(settings.get("points_rule_type") or "points_per_currency")
         if rule == "percentage_based":
-            return max(int(amount * float(settings.get("percentage_value") or 0) / 100), 0)
-        points_per_currency = float(settings.get("points_earned") if settings.get("points_earned") is not None else 50)
-        currency_unit = float(settings.get("currency_unit") or 1)
-        return max(int((amount / currency_unit) * points_per_currency), 0) if currency_unit > 0 else 0
+            points = max(int(amount * float(settings.get("percentage_value") or 0) / 100), 0)
+        else:
+            points_per_currency = float(settings.get("points_earned") or 0)
+            currency_unit = float(settings.get("currency_unit") or 1)
+            points = max(int((amount / currency_unit) * points_per_currency), 0) if currency_unit > 0 else 0
+        customer_id = booking.get("customer_id")
+        if customer_id:
+            prior_query: dict[str, Any] = {
+                "vendor_id": ObjectId(vendor_id),
+                "customer_id": customer_id,
+                "status": {"$in": ["complete", "completed"]},
+            }
+            if booking.get("_id"):
+                prior_query["_id"] = {"$ne": booking["_id"]}
+            if self.bookings.count_documents(prior_query) == 0:
+                points += max(int(settings.get("first_booking_bonus") or 0), 0)
+        return points
 
     def reschedule_booking(self, vendor_id: str, booking_id: str, date: str, time: str, note: str | None = None) -> dict[str, Any] | None:
         object_id = ObjectId(booking_id)
@@ -812,8 +852,24 @@ class VendorPortalRepository:
     def create_promotion(self, vendor_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         now = datetime.now(UTC)
         sanitized = self._sanitize_payload(payload)
+        promo_code = str(sanitized.get("promo_code") or "").strip().upper()
+        if promo_code and self.promotions.find_one(
+            {
+                "vendor_id": ObjectId(vendor_id),
+                "promo_code": {"$regex": f"^{re.escape(promo_code)}$", "$options": "i"},
+            }
+        ):
+            raise ValueError("That promo code is already used by another promotion.")
+        sanitized["promo_code"] = promo_code or None
         inserted = self.promotions.insert_one(
-            {"vendor_id": ObjectId(vendor_id), **sanitized, "created_at": now, "updated_at": now}
+            {
+                "vendor_id": ObjectId(vendor_id),
+                **sanitized,
+                "usage_count": 0,
+                "total_promo_revenue": 0.0,
+                "created_at": now,
+                "updated_at": now,
+            }
         )
         created = self.promotions.find_one({"_id": inserted.inserted_id})
         return self._serialize(created)  # type: ignore[return-value]
@@ -825,6 +881,38 @@ class VendorPortalRepository:
 
     def update_promotion(self, vendor_id: str, promotion_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
         sanitized = self._sanitize_payload(payload)
+        if "promo_code" in sanitized:
+            promo_code = str(sanitized.get("promo_code") or "").strip().upper()
+            if promo_code and self.promotions.find_one(
+                {
+                    "vendor_id": ObjectId(vendor_id),
+                    "promo_code": {"$regex": f"^{re.escape(promo_code)}$", "$options": "i"},
+                    "_id": {"$ne": ObjectId(promotion_id)},
+                }
+            ):
+                raise ValueError("That promo code is already used by another promotion.")
+            sanitized["promo_code"] = promo_code or None
+        existing = self.promotions.find_one(
+            {"_id": ObjectId(promotion_id), "vendor_id": ObjectId(vendor_id)}
+        )
+        if not existing:
+            return None
+        start_date = str(sanitized.get("start_date") or existing.get("start_date") or "")
+        end_date = str(sanitized.get("end_date") or existing.get("end_date") or "")
+        if start_date and end_date and end_date[:10] < start_date[:10]:
+            raise ValueError("Promotion end date must be on or after its start date.")
+        offer_type = str(sanitized.get("offer_type") or existing.get("offer_type") or "")
+        discount_value = self._to_float(
+            sanitized.get("discount_value", existing.get("discount_value"))
+        )
+        if offer_type == "percentage" and discount_value > 100:
+            raise ValueError("Percentage discounts cannot exceed 100%.")
+        requires_code = bool(
+            sanitized.get("require_promo_code", existing.get("require_promo_code", False))
+        )
+        effective_code = sanitized.get("promo_code", existing.get("promo_code"))
+        if requires_code and not effective_code:
+            raise ValueError("A promo code is required when promo-code restriction is enabled.")
         self.promotions.update_one(
             {"_id": ObjectId(promotion_id), "vendor_id": ObjectId(vendor_id)},
             {"$set": {**sanitized, "updated_at": datetime.now(UTC)}},
@@ -1108,7 +1196,81 @@ class VendorPortalRepository:
         }
 
     def get_loyalty_settings(self, vendor_id: str) -> dict[str, Any]:
-        return self._serialize(self.loyalty_settings.find_one({"vendor_id": ObjectId(vendor_id)})) or {}
+        vendor_obj_id = ObjectId(vendor_id)
+        settings = self._serialize(self.loyalty_settings.find_one({"vendor_id": vendor_obj_id})) or {}
+        defaults = {
+            "enable_loyalty_program": False,
+            "points_rule_type": "points_per_currency",
+            "points_earned": 1,
+            "currency_unit": 1,
+            "percentage_value": 0,
+            "first_booking_bonus": 0,
+            "review_bonus_points": 0,
+            "points_expiry_policy": "1 Year",
+        }
+        completed = list(
+            self.bookings.find(
+                {"vendor_id": vendor_obj_id, "status": {"$in": ["complete", "completed"]}},
+                {"customer_id": 1, "customer_name": 1, "booking_code": 1, "points_awarded": 1, "completed_at": 1, "updated_at": 1},
+            )
+        )
+        reviews = list(
+            self.reviews.find(
+                {"vendor_id": vendor_obj_id, "points_awarded": {"$gt": 0}},
+                {"customer_id": 1, "customer_name": 1, "points_awarded": 1, "created_at": 1},
+            )
+        )
+        completed_by_customer: dict[str, int] = {}
+        active_members: set[str] = set()
+        total_points = 0
+        activity: list[dict[str, Any]] = []
+        for booking in completed:
+            customer_key = str(booking.get("customer_id") or "")
+            if customer_key:
+                completed_by_customer[customer_key] = completed_by_customer.get(customer_key, 0) + 1
+            points = max(self._to_int(booking.get("points_awarded")), 0)
+            total_points += points
+            if customer_key and points:
+                active_members.add(customer_key)
+            if points:
+                activity.append(
+                    {
+                        "type": "booking",
+                        "customer_name": booking.get("customer_name") or "Customer",
+                        "reference": booking.get("booking_code") or "",
+                        "points": points,
+                        "created_at": booking.get("completed_at") or booking.get("updated_at"),
+                    }
+                )
+        for review in reviews:
+            customer_key = str(review.get("customer_id") or "")
+            points = max(self._to_int(review.get("points_awarded")), 0)
+            total_points += points
+            if customer_key and points:
+                active_members.add(customer_key)
+            activity.append(
+                {
+                    "type": "review",
+                    "customer_name": review.get("customer_name") or "Customer",
+                    "reference": "Verified review",
+                    "points": points,
+                    "created_at": review.get("created_at"),
+                }
+            )
+        member_count = len(completed_by_customer)
+        repeat_members = sum(1 for count in completed_by_customer.values() if count > 1)
+        for row in activity:
+            if isinstance(row.get("created_at"), datetime):
+                row["created_at"] = row["created_at"].isoformat()
+        activity.sort(key=lambda row: str(row.get("created_at") or ""), reverse=True)
+        return {
+            **defaults,
+            **settings,
+            "total_points_issued": total_points,
+            "active_members": len(active_members),
+            "repeat_booking_rate": round((repeat_members / member_count) * 100, 1) if member_count else 0.0,
+            "recent_activity": activity[:10],
+        }
 
     def update_loyalty_settings(self, vendor_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         sanitized = self._sanitize_payload(payload)

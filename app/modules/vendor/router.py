@@ -706,7 +706,10 @@ def create_vendor_promotion(
     current_vendor: dict = Depends(get_current_vendor),
     portal_service: VendorPortalService = Depends(get_vendor_portal_service),
 ) -> dict:
-    return portal_service.repo.create_promotion(_vendor_id(current_vendor), payload.model_dump())
+    try:
+        return portal_service.repo.create_promotion(_vendor_id(current_vendor), payload.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.get("/promotions/{promotion_id}", tags=["Vendor - Promotions"])
@@ -733,6 +736,8 @@ def update_vendor_promotion(
         )
     except InvalidId as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Promotion not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Promotion not found.")
     return row

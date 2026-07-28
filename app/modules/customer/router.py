@@ -168,7 +168,6 @@ def get_restaurant_menu(
     current_user: dict = Depends(get_current_user),
     customer_service: CustomerService = Depends(get_customer_service),
 ) -> dict:
-    _ = current_user
     try:
         items = customer_service.repo.list_restaurant_assets(restaurant_id, "menu")
     except InvalidId as exc:
@@ -313,6 +312,7 @@ def create_event_ticket_booking(
     current_user: dict = Depends(get_current_user),
     customer_service: CustomerService = Depends(get_customer_service),
 ) -> dict:
+    _ = current_user
     try:
         return customer_service.repo.create_event_ticket_booking(
             customer_id=current_user["id"],
@@ -320,6 +320,7 @@ def create_event_ticket_booking(
             quantity=payload.quantity,
             notes=payload.notes,
             auto_confirm=payload.auto_confirm,
+            promo_code=payload.promo_code,
         )
     except InvalidId as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found.") from exc
@@ -493,6 +494,8 @@ def get_booking_quote(
             date=payload.date,
             time=payload.time,
             seating_preference=payload.seating_preference,
+            customer_id=current_user["id"],
+            promo_code=payload.promo_code,
         )
     except InvalidId as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider not found.") from exc
@@ -517,6 +520,7 @@ def create_booking(
             seating_preference=payload.seating_preference,
             special_notes=payload.special_notes,
             auto_confirm=payload.auto_confirm,
+            promo_code=payload.promo_code,
         )
     except InvalidId as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider not found.") from exc
@@ -542,6 +546,7 @@ def create_restaurant_booking(
             seating_preference=payload.seating_preference,
             special_notes=payload.special_notes,
             auto_confirm=payload.auto_confirm,
+            promo_code=payload.promo_code,
         )
     except InvalidId as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Restaurant not found.") from exc
@@ -565,6 +570,7 @@ def create_hotel_booking(
             guests=payload.guests,
             special_notes=payload.special_notes,
             auto_confirm=payload.auto_confirm,
+            promo_code=payload.promo_code,
             guest_name=payload.guest_name,
             guest_email=payload.guest_email,
             guest_phone=payload.guest_phone,
@@ -601,6 +607,7 @@ def create_hotel_room_booking(
             guest_name=payload.guest_name,
             guest_email=payload.guest_email,
             guest_phone=payload.guest_phone,
+            promo_code=payload.promo_code,
         )
     except InvalidId as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found.") from exc

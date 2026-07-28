@@ -196,6 +196,29 @@ class PromotionUpsertRequest(BaseModel):
     minimum_spend: float | None = Field(default=None, ge=0)
     active: bool = True
 
+    @field_validator("promotion_name", "internal_description", "applicable_to", "promo_code", mode="before")
+    @classmethod
+    def _strip_promotion_text(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+    @model_validator(mode="after")
+    def validate_promotion(self) -> "PromotionUpsertRequest":
+        if not self.promotion_name:
+            raise ValueError("Promotion name is required.")
+        try:
+            start = date.fromisoformat(self.start_date)
+            end = date.fromisoformat(self.end_date)
+        except ValueError as exc:
+            raise ValueError("Promotion dates must use YYYY-MM-DD.") from exc
+        if end < start:
+            raise ValueError("Promotion end date must be on or after its start date.")
+        if self.offer_type == "percentage" and self.discount_value > 100:
+            raise ValueError("Percentage discounts cannot exceed 100%.")
+        if self.require_promo_code and not self.promo_code:
+            raise ValueError("A promo code is required when promo-code restriction is enabled.")
+        self.promo_code = self.promo_code.upper() if self.promo_code else None
+        return self
+
 
 class PromotionUpdateRequest(BaseModel):
     promotion_name: str | None = None
@@ -216,6 +239,24 @@ class PromotionUpdateRequest(BaseModel):
     def require_at_least_one_change(self) -> "PromotionUpdateRequest":
         if not self.model_fields_set:
             raise ValueError("At least one promotion field must be provided.")
+        if self.promotion_name is not None:
+            self.promotion_name = self.promotion_name.strip()
+            if not self.promotion_name:
+                raise ValueError("Promotion name cannot be empty.")
+        if self.promo_code is not None:
+            self.promo_code = self.promo_code.strip().upper() or None
+        if self.require_promo_code is True and "promo_code" in self.model_fields_set and not self.promo_code:
+            raise ValueError("A promo code is required when promo-code restriction is enabled.")
+        if self.offer_type == "percentage" and self.discount_value is not None and self.discount_value > 100:
+            raise ValueError("Percentage discounts cannot exceed 100%.")
+        if self.start_date and self.end_date:
+            try:
+                if date.fromisoformat(self.end_date) < date.fromisoformat(self.start_date):
+                    raise ValueError("Promotion end date must be on or after its start date.")
+            except ValueError as exc:
+                if "end date" in str(exc):
+                    raise
+                raise ValueError("Promotion dates must use YYYY-MM-DD.") from exc
         return self
 
 
