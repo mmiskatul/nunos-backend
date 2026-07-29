@@ -545,6 +545,8 @@ class VendorSettingsProfileRequest(BaseModel):
     restaurant_settings: VendorServiceSettings | None = None
     hotel_settings: VendorServiceSettings | None = None
     spa_settings: VendorServiceSettings | None = None
+    event_settings: VendorServiceSettings | None = None
+    happy_hour_settings: VendorServiceSettings | None = None
 
     @field_validator("categories")
     @classmethod

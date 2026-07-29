@@ -12,7 +12,7 @@ from pymongo.collection import Collection
 from pymongo.database import Database
 
 from app.domain.event_categories import normalize_event_category
-from app.domain.service_listings import SERVICE_TYPES, collection_name_for, normalize_service_type
+from app.domain.service_listings import SERVICE_SETTINGS_TYPES, SERVICE_TYPES, collection_name_for, normalize_service_setting_type, normalize_service_type
 from app.domain.vendor_categories import normalize_account_categories
 
 
@@ -2061,11 +2061,12 @@ class VendorPortalRepository:
             },
             upsert=True,
         )
-        for service_type in ("restaurant", "hotel", "spa"):
+        for service_type in SERVICE_SETTINGS_TYPES:
             settings_key = f"{service_type}_settings"
             service_settings = next_profile.get(settings_key)
             if settings_key in sanitized and isinstance(service_settings, dict):
-                self.sync_service_listing(vendor_id, service_type, service_settings)
+                if service_type in SERVICE_TYPES:
+                    self.sync_service_listing(vendor_id, service_type, service_settings)
         return self.get_settings_profile(vendor_id)
 
     # ------------------------------------------------------------------

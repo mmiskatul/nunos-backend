@@ -43,7 +43,7 @@ from app.modules.vendor.schemas_portal import (
     VendorSupportTicketCreateRequest,
     VendorSupportTicketMessageRequest,
 )
-from app.domain.service_listings import normalize_service_type
+from app.domain.service_listings import normalize_service_setting_type, normalize_service_type
 from app.modules.vendor.service_auth import VendorAuthService
 from app.modules.vendor.service_portal import VendorPortalService
 
@@ -1142,7 +1142,7 @@ def update_vendor_profile_settings(
 @router.get("/settings/services/{service_type}", tags=["Vendor - Settings"])
 def get_vendor_service_settings(service_type: str, current_vendor: dict = Depends(get_current_vendor), portal_service: VendorPortalService = Depends(get_vendor_portal_service)) -> dict:
     try:
-        normalized = normalize_service_type(service_type)
+        normalized = normalize_service_setting_type(service_type)
     except ValueError:
         raise HTTPException(status_code=400, detail="Unsupported service type.")
     profile = portal_service.repo.get_settings_profile(_vendor_id(current_vendor))
@@ -1152,7 +1152,7 @@ def get_vendor_service_settings(service_type: str, current_vendor: dict = Depend
 @router.patch("/settings/services/{service_type}", tags=["Vendor - Settings"])
 def update_vendor_service_settings(service_type: str, payload: VendorServiceSettingsRequest, current_vendor: dict = Depends(get_current_vendor), portal_service: VendorPortalService = Depends(get_vendor_portal_service)) -> dict:
     try:
-        normalized = normalize_service_type(service_type)
+        normalized = normalize_service_setting_type(service_type)
     except ValueError:
         raise HTTPException(status_code=400, detail="Unsupported service type.")
     profile = portal_service.repo.get_settings_profile(_vendor_id(current_vendor))
@@ -1160,7 +1160,7 @@ def update_vendor_service_settings(service_type: str, payload: VendorServiceSett
     merged.update((payload.data or VendorServiceSettings()).model_dump(exclude_unset=True))
     updated = portal_service.repo.update_settings_profile(_vendor_id(current_vendor), {f"{normalized}_settings": merged})
     settings = updated.get(f"{normalized}_settings", merged)
-    listing = portal_service.repo.sync_service_listing(_vendor_id(current_vendor), normalized, settings)
+    listing = portal_service.repo.sync_service_listing(_vendor_id(current_vendor), normalized, settings) if normalized in {"restaurant", "hotel", "spa"} else None
     return {"service_type": normalized, "settings": settings, "listing": listing}
 
 
@@ -1176,7 +1176,7 @@ def add_vendor_service_amenity(
     portal_service: VendorPortalService = Depends(get_vendor_portal_service),
 ) -> dict:
     try:
-        normalized = normalize_service_type(service_type)
+        normalized = normalize_service_setting_type(service_type)
         return portal_service.repo.add_service_amenity(
             _vendor_id(current_vendor),
             normalized,

@@ -1,10 +1,11 @@
-"""Shared rules for public Restaurant, Hotel, and Spa listings."""
+"""Shared rules for public listings and vendor service settings."""
 
 from typing import Final
 
-__all__ = ["SERVICE_TYPES", "SERVICE_COLLECTIONS", "normalize_service_type", "collection_name_for"]
+__all__ = ["SERVICE_TYPES", "SERVICE_SETTINGS_TYPES", "SERVICE_COLLECTIONS", "normalize_service_type", "normalize_service_setting_type", "collection_name_for"]
 
 SERVICE_TYPES: Final[tuple[str, ...]] = ("restaurant", "hotel", "spa")
+SERVICE_SETTINGS_TYPES: Final[tuple[str, ...]] = (*SERVICE_TYPES, "event", "happy_hour")
 SERVICE_COLLECTIONS: Final[dict[str, str]] = {
     "restaurant": "restaurants",
     "hotel": "hotels",
@@ -16,6 +17,13 @@ def normalize_service_type(value: str) -> str:
     normalized = str(value or "").strip().lower()
     if normalized not in SERVICE_TYPES:
         raise ValueError(f"Unsupported service type: {value}")
+    return normalized
+
+
+def normalize_service_setting_type(value: str) -> str:
+    normalized = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if normalized not in SERVICE_SETTINGS_TYPES:
+        raise ValueError(f"Unsupported service settings type: {value}")
     return normalized
 
 
