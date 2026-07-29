@@ -158,12 +158,13 @@ class VendorPortalRepository:
 
     @staticmethod
     def _legacy_happy_hour_match() -> dict[str, Any]:
-        expression = {"$regex": r"happy[\s_-]*hour", "$options": "i"}
+        expression = {"$regex": r"^\s*happy[\s_-]*hour\s*$", "$options": "i"}
         return {
             "$or": [
                 {"event_type": expression},
-                {"title": expression},
                 {"category": expression},
+                {"entity_type": expression},
+                {"legacy_happy_hour": True},
             ]
         }
 
@@ -921,6 +922,32 @@ class VendorPortalRepository:
 
     def _migrate_legacy_happy_hours(self, vendor_id: str) -> None:
         vendor_obj_id = ObjectId(vendor_id)
+        for happy_hour in self.happy_hours.find(
+            {
+                "vendor_id": vendor_obj_id,
+                "legacy_event_id": {"$exists": True, "$ne": None},
+            },
+            {"_id": 1, "legacy_event_id": 1},
+        ):
+            legacy_event_id = str(happy_hour.get("legacy_event_id") or "")
+            if not ObjectId.is_valid(legacy_event_id):
+                continue
+            source_id = ObjectId(legacy_event_id)
+            source_event = self.events.find_one(
+                {"_id": source_id, "vendor_id": vendor_obj_id},
+                {"_id": 1},
+            )
+            explicitly_marked = self.events.find_one(
+                {
+                    "_id": source_id,
+                    "vendor_id": vendor_obj_id,
+                    **self._legacy_happy_hour_match(),
+                },
+                {"_id": 1},
+            )
+            if source_event and not explicitly_marked:
+                self.happy_hours.delete_one({"_id": happy_hour["_id"]})
+
         query = {"vendor_id": vendor_obj_id, **self._legacy_happy_hour_match()}
         for event in self.events.find(query):
             event_date = str(event.get("event_date") or "").strip()

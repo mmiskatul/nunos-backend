@@ -946,7 +946,7 @@ async def test_vendor_with_event_module_can_manage_events(client, test_db):
             "venue": "Skyline Hall",
             "capacity": 180,
             "ticket_price": 49,
-            "registration_deadline": "2026-07-19T23:59:00+06:00",
+            "registration_deadline": "2026-07-19",
             "description": "An evening networking event for founders and operators.",
             "banner_image_url": "https://files.example.com/events/banner.jpg",
             "active_status": True,
@@ -958,7 +958,7 @@ async def test_vendor_with_event_module_can_manage_events(client, test_db):
     assert created["category"] == "Restaurant"
     assert created["status"] == "draft"
     assert created["booking_mode"] == "detailed"
-    assert created["registration_deadline"] == "2026-07-19T23:59:00+06:00"
+    assert created["registration_deadline"] == "2026-07-19"
 
     list_res = await client.get("/api/v1/vendor/events", headers=headers)
     assert list_res.status_code == 200
@@ -979,7 +979,7 @@ async def test_vendor_with_event_module_can_manage_events(client, test_db):
             "venue": "Chef's Table Hall",
             "capacity": 120,
             "ticket_price": 59,
-            "registration_deadline": "2026-07-20T23:59:00+06:00",
+            "registration_deadline": "2026-07-20",
             "description": "Updated dinner event.",
             "banner_image_url": "https://files.example.com/events/banner-2.jpg",
             "active_status": True,
@@ -1006,7 +1006,7 @@ async def test_vendor_with_event_module_can_manage_events(client, test_db):
             "venue": "Wellness Wing",
             "capacity": 25,
             "ticket_price": 15,
-            "registration_deadline": "2026-07-31T23:59:00+06:00",
+            "registration_deadline": "2026-07-31",
             "description": "Should be blocked because Spa is not enabled.",
             "banner_image_url": None,
             "active_status": True,

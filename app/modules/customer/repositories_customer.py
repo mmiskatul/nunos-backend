@@ -476,7 +476,9 @@ class CustomerRepository:
     @staticmethod
     def _event_is_not_expired(event: dict[str, Any]) -> bool:
         """Evaluate an event's end time in the event's own timezone."""
-        event_date = str(event.get("event_date") or "").strip()
+        event_date = str(
+            event.get("end_date") or event.get("event_date") or ""
+        ).strip()
         end_time = str(event.get("end_time") or "").strip()
         if not event_date or not end_time:
             return False
@@ -488,13 +490,39 @@ class CustomerRepository:
         return end_at >= datetime.now(timezone)
 
     @staticmethod
+    def _event_registration_is_open(event: dict[str, Any]) -> bool:
+        """A date-only deadline remains open through 23:59:59 in event timezone."""
+        deadline = str(event.get("registration_deadline") or "").strip()
+        if not deadline:
+            return True
+        try:
+            timezone = ZoneInfo(str(event.get("timezone") or "UTC"))
+            if "T" in deadline:
+                legacy_deadline = datetime.fromisoformat(
+                    deadline.replace("Z", "+00:00")
+                )
+                deadline_at = (
+                    legacy_deadline.astimezone(timezone)
+                    if legacy_deadline.tzinfo
+                    else legacy_deadline.replace(tzinfo=timezone)
+                )
+            else:
+                deadline_at = datetime.fromisoformat(
+                    f"{deadline}T23:59:59.999999"
+                ).replace(tzinfo=timezone)
+        except (TypeError, ValueError):
+            return False
+        return datetime.now(timezone) <= deadline_at
+
+    @staticmethod
     def _legacy_happy_hour_match() -> dict[str, Any]:
-        expression = {"$regex": r"happy[\s_-]*hour", "$options": "i"}
+        expression = {"$regex": r"^\s*happy[\s_-]*hour\s*$", "$options": "i"}
         return {
             "$or": [
                 {"event_type": expression},
-                {"title": expression},
                 {"category": expression},
+                {"entity_type": expression},
+                {"legacy_happy_hour": True},
             ]
         }
 
@@ -1694,6 +1722,7 @@ class CustomerRepository:
             capacity = int(event.get("capacity") or 0)
             booking_mode = self._event_booking_mode(event)
             booking_summary = self._event_booking_summary(customer_id, event["_id"], capacity)
+            registration_open = self._event_registration_is_open(event)
 
             cards.append(
                 {
@@ -1705,6 +1734,7 @@ class CustomerRepository:
                     "entity_type": "event",
                     "event_type": event_type,
                     "event_date": event.get("event_date"),
+                    "end_date": event.get("end_date") or event.get("event_date"),
                     "start_time": event.get("start_time"),
                     "end_time": event.get("end_time"),
                     "timezone": event.get("timezone"),
@@ -1723,8 +1753,14 @@ class CustomerRepository:
                     "description": event.get("description") or "",
                     "ticket_price": event.get("ticket_price"),
                     "capacity": event.get("capacity"),
+                    "registration_deadline": event.get("registration_deadline"),
+                    "registration_open": registration_open,
                     "booking_mode": booking_mode,
-                    "can_book_on_map": booking_mode == "simple" and not booking_summary["is_sold_out"],
+                    "can_book_on_map": (
+                        booking_mode == "simple"
+                        and registration_open
+                        and not booking_summary["is_sold_out"]
+                    ),
                     **booking_summary,
                     "detail_route": f"/home/events/{event['_id']}",
                 }
@@ -1740,7 +1776,7 @@ class CustomerRepository:
         skip: int,
         search: str | None = None,
     ) -> dict[str, Any]:
-        current_docs = list(
+        current_docs_unfiltered = list(
             self.vendor_happy_hours.find(
                 {"status": "published", "active": {"$ne": False}}
             ).sort(
@@ -1751,6 +1787,23 @@ class CustomerRepository:
                 ]
             )
         )
+        current_docs = []
+        for happy_hour in current_docs_unfiltered:
+            legacy_event_id = str(happy_hour.get("legacy_event_id") or "")
+            if ObjectId.is_valid(legacy_event_id):
+                source_id = ObjectId(legacy_event_id)
+                source_event = self.vendor_events.find_one(
+                    {"_id": source_id},
+                    {"_id": 1},
+                )
+                explicitly_marked = self.vendor_events.find_one(
+                    {"_id": source_id, **self._legacy_happy_hour_match()},
+                    {"_id": 1},
+                )
+                if source_event and not explicitly_marked:
+                    continue
+            current_docs.append(happy_hour)
+
         current_ids = {row["_id"] for row in current_docs}
         legacy_docs = [
             self._legacy_event_as_happy_hour(row)
@@ -1913,6 +1966,7 @@ class CustomerRepository:
         capacity = int(event.get("capacity") or 0)
         booking_mode = self._event_booking_mode(event)
         booking_summary = self._event_booking_summary(customer_id, event["_id"], capacity)
+        registration_open = self._event_registration_is_open(event)
 
         return {
             "id": str(event["_id"]),
@@ -1923,6 +1977,7 @@ class CustomerRepository:
             "entity_type": "event",
             "event_type": event_type,
             "event_date": event.get("event_date"),
+            "end_date": event.get("end_date") or event.get("event_date"),
             "start_time": event.get("start_time"),
             "end_time": event.get("end_time"),
             "timezone": event.get("timezone"),
@@ -1941,8 +1996,14 @@ class CustomerRepository:
             "description": event.get("description") or "",
             "ticket_price": event.get("ticket_price"),
             "capacity": event.get("capacity"),
+            "registration_deadline": event.get("registration_deadline"),
+            "registration_open": registration_open,
             "booking_mode": booking_mode,
-            "can_book_on_map": booking_mode == "simple" and not booking_summary["is_sold_out"],
+            "can_book_on_map": (
+                booking_mode == "simple"
+                and registration_open
+                and not booking_summary["is_sold_out"]
+            ),
             **booking_summary,
             "detail_route": f"/home/events/{event['_id']}",
         }
@@ -1964,6 +2025,8 @@ class CustomerRepository:
         )
         if not event:
             raise ValueError("Event not found.")
+        if not self._event_registration_is_open(event):
+            raise ValueError("Registration for this event is closed.")
         vendor_id = event.get("vendor_id")
         if not isinstance(vendor_id, ObjectId):
             raise ValueError("Event vendor is invalid.")
@@ -3003,6 +3066,7 @@ class CustomerRepository:
                     # Keep the schedule on map pins so clients can apply the
                     # same non-expired-event rule when rendering markers.
                     "event_date": row.get("event_date"),
+                    "end_date": row.get("end_date") or row.get("event_date"),
                     "start_time": row.get("start_time"),
                     "end_time": row.get("end_time"),
                     "timezone": row.get("timezone"),

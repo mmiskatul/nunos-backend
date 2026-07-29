@@ -5,6 +5,7 @@ from app.modules.vendor.schemas_portal import (
     PromotionUpdateRequest,
     RoomUpsertRequest,
     ServiceUpsertRequest,
+    VendorEventUpsertRequest,
 )
 from app.modules.platform_admin.deps_auth import get_current_platform_admin
 
@@ -150,6 +151,60 @@ def test_promotion_patch_accepts_frontend_partial_payload():
         active=True,
     )
     assert payload.model_dump(exclude_unset=True)["discount_value"] == 20
+
+
+def test_event_schema_supports_multi_day_and_legacy_single_day_events():
+    shared = {
+        "title": "Weekend Festival",
+        "category": "Event",
+        "event_type": "Festival",
+        "event_date": "2026-08-01",
+        "start_time": "18:00",
+        "end_time": "10:00",
+        "venue": "Festival Ground",
+        "capacity": 500,
+        "ticket_price": 25,
+    }
+    multi_day = VendorEventUpsertRequest(
+        **shared,
+        end_date="2026-08-03",
+    )
+    assert multi_day.end_date == "2026-08-03"
+
+    single_day = VendorEventUpsertRequest(
+        **{**shared, "end_time": "22:00"},
+    )
+    assert single_day.end_date == single_day.event_date
+
+    with pytest.raises(ValueError):
+        VendorEventUpsertRequest(
+            **shared,
+            end_date="2026-07-31",
+        )
+
+
+def test_event_registration_deadline_is_normalized_to_date_only():
+    shared = {
+        "title": "Registration Event",
+        "category": "Event",
+        "event_type": "Workshop",
+        "event_date": "2026-08-10",
+        "start_time": "10:00",
+        "end_time": "12:00",
+        "venue": "Workshop Hall",
+        "capacity": 50,
+        "ticket_price": 10,
+    }
+    date_only = VendorEventUpsertRequest(
+        **shared,
+        registration_deadline="2026-08-09",
+    )
+    legacy_datetime = VendorEventUpsertRequest(
+        **shared,
+        registration_deadline="2026-08-09T18:30:00+06:00",
+    )
+    assert date_only.registration_deadline == "2026-08-09"
+    assert legacy_datetime.registration_deadline == "2026-08-09"
 
 
 def test_asset_registration_rejects_unsafe_url_schemes():

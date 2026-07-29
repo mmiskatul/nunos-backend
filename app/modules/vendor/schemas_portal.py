@@ -81,6 +81,7 @@ class VendorEventUpsertRequest(BaseModel):
     event_type: str = Field(min_length=2, max_length=80)
     booking_mode: str = Field(default="simple", pattern="^(simple|detailed)$")
     event_date: str
+    end_date: str | None = None
     start_time: str
     end_time: str
     timezone: str = Field(default="Asia/Dhaka", min_length=2, max_length=80)
@@ -104,9 +105,11 @@ class VendorEventUpsertRequest(BaseModel):
             return value.strip()
         return value
 
-    @field_validator("event_date")
+    @field_validator("event_date", "end_date")
     @classmethod
-    def _validate_event_date(cls, value: str) -> str:
+    def _validate_event_date(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         normalized = value.strip()
         date.fromisoformat(normalized)
         return normalized
@@ -127,8 +130,14 @@ class VendorEventUpsertRequest(BaseModel):
             normalized = value.strip()
             if not normalized:
                 return None
-            datetime.fromisoformat(normalized.replace("Z", "+00:00"))
-            return normalized
+            try:
+                deadline_date = date.fromisoformat(normalized)
+            except ValueError:
+                # Normalize legacy datetime clients to the new date-only contract.
+                deadline_date = datetime.fromisoformat(
+                    normalized.replace("Z", "+00:00")
+                ).date()
+            return deadline_date.isoformat()
         return value
 
     @field_validator("banner_image_url", mode="before")
@@ -160,9 +169,14 @@ class VendorEventUpsertRequest(BaseModel):
 
     @model_validator(mode="after")
     def _validate_event_times(self):
+        event_date = date.fromisoformat(self.event_date)
+        end_date = date.fromisoformat(self.end_date or self.event_date)
+        if end_date < event_date:
+            raise ValueError("Event end date cannot be earlier than the start date.")
+        self.end_date = end_date.isoformat()
         start = time.fromisoformat(self.start_time)
         end = time.fromisoformat(self.end_time)
-        if end <= start:
+        if end_date == event_date and end <= start:
             raise ValueError("End time must be later than start time.")
         return self
 
