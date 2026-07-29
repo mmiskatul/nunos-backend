@@ -879,7 +879,7 @@ async def test_vendor_request_code_reports_pending_vendor_status(client, test_db
 
 
 @pytest.mark.asyncio
-async def test_every_vendor_can_manage_events_without_event_venue_category(client, test_db):
+async def test_vendor_with_event_module_can_manage_events(client, test_db):
     request_code_res = await client.post(
         "/api/v1/vendor/auth/register/request-code",
         json={"email_or_phone": "events-vendor@example.com"},
@@ -915,7 +915,7 @@ async def test_every_vendor_can_manage_events_without_event_venue_category(clien
             "confirm_password": "VendorPass123!",
             "signup_token": signup_token,
             "category": "Restaurant",
-            "categories": ["Restaurant"],
+            "categories": ["Restaurant", "Event"],
         },
     )
     assert register_res.status_code == 201
@@ -1162,6 +1162,8 @@ async def test_vendor_registration_form_config_endpoint(client):
     assert response.status_code == 200
     payload = response.json()
     assert any(item["id"] == "Cafe" for item in payload["categories"])
+    assert any(item["id"] == "Event" for item in payload["categories"])
+    assert any(item["id"] == "Happy Hour" for item in payload["categories"])
     assert all(item["id"] != "Event Venue" for item in payload["categories"])
     assert "Corporate Gala" in payload["event_type_options"]
     assert "equipment_options" in payload

@@ -26,6 +26,7 @@ class CustomerRepository:
         self.vendor_rooms: Collection = db["vendor_rooms"]
         self.vendor_services: Collection = db["vendor_services"]
         self.vendor_events: Collection = db["vendor_events"]
+        self.vendor_happy_hours: Collection = db["vendor_happy_hours"]
         self.vendor_reviews: Collection = db["vendor_reviews"]
         self.vendor_loyalty_settings: Collection = db["vendor_loyalty_settings"]
         self.vendor_bookings: Collection = db["vendor_bookings"]
@@ -485,6 +486,71 @@ class CustomerRepository:
         except (TypeError, ValueError):
             return False
         return end_at >= datetime.now(timezone)
+
+    @staticmethod
+    def _legacy_happy_hour_match() -> dict[str, Any]:
+        expression = {"$regex": r"happy[\s_-]*hour", "$options": "i"}
+        return {
+            "$or": [
+                {"event_type": expression},
+                {"title": expression},
+                {"category": expression},
+            ]
+        }
+
+    @staticmethod
+    def _happy_hour_schedule_state(happy_hour: dict[str, Any]) -> tuple[bool, bool]:
+        start_date = str(happy_hour.get("start_date") or "").strip()
+        end_date = str(happy_hour.get("end_date") or "").strip()
+        start_time = str(happy_hour.get("start_time") or "").strip()
+        end_time = str(happy_hour.get("end_time") or "").strip()
+        try:
+            timezone = ZoneInfo(str(happy_hour.get("timezone") or "UTC"))
+            now = datetime.now(timezone)
+            starts_on = datetime.fromisoformat(start_date).date()
+            ends_on = datetime.fromisoformat(end_date).date()
+            starts_at = datetime.fromisoformat(
+                f"{now.date().isoformat()}T{start_time}"
+            ).replace(tzinfo=timezone)
+            ends_at = datetime.fromisoformat(
+                f"{now.date().isoformat()}T{end_time}"
+            ).replace(tzinfo=timezone)
+        except (TypeError, ValueError):
+            return False, False
+        is_visible = ends_on >= now.date()
+        configured_days = {
+            str(day or "").strip().lower()
+            for day in happy_hour.get("days_of_week") or []
+        }
+        day_matches = not configured_days or now.strftime("%A").lower() in configured_days
+        is_active_now = (
+            starts_on <= now.date() <= ends_on
+            and day_matches
+            and starts_at <= now <= ends_at
+        )
+        return is_visible, is_active_now
+
+    @staticmethod
+    def _legacy_event_as_happy_hour(event: dict[str, Any]) -> dict[str, Any]:
+        event_date = str(event.get("event_date") or "").strip()
+        try:
+            day_name = datetime.fromisoformat(event_date).strftime("%A").lower()
+        except ValueError:
+            day_name = "monday"
+        category = str(event.get("category") or "").strip().lower()
+        return {
+            **event,
+            "venue_type": category if category in {"restaurant", "hotel", "spa"} else "other",
+            "offer_text": event.get("event_type") or event.get("title") or "Happy Hour",
+            "start_date": event_date,
+            "end_date": event_date,
+            "days_of_week": [day_name],
+            "original_price": event.get("ticket_price"),
+            "happy_hour_price": event.get("ticket_price"),
+            "discount_percent": None,
+            "terms_and_conditions": "",
+            "legacy_event_id": str(event.get("_id") or ""),
+        }
 
     @staticmethod
     def _distance_between_km(
@@ -1152,13 +1218,36 @@ class CustomerRepository:
                 self.list_spas(count_customer_id, limit=1, skip=0).get("total", 0)
             ),
             "event": 0,
+            "happy_hour": 0,
         }
         counts["event"] = sum(
             1
-            for event in self.vendor_events.find({"status": "published", "active": {"$ne": False}})
+            for event in self.vendor_events.find(
+                {
+                    "status": "published",
+                    "active": {"$ne": False},
+                    "$nor": [self._legacy_happy_hour_match()],
+                }
+            )
             if self._event_is_not_expired(event)
         )
-        return {"items": [{"key": key, "label": key.title(), "count": value} for key, value in counts.items()]}
+        counts["happy_hour"] = int(
+            self.list_happy_hours(
+                count_customer_id,
+                limit=1,
+                skip=0,
+            ).get("total", 0)
+        )
+        return {
+            "items": [
+                {
+                    "key": key,
+                    "label": key.replace("_", " ").title(),
+                    "count": value,
+                }
+                for key, value in counts.items()
+            ]
+        }
 
     def get_customer_profile(self, customer_id: str) -> dict[str, Any]:
         profile = self._serialize(self.users.find_one({"_id": self._oid(customer_id)})) or {}
@@ -1551,13 +1640,21 @@ class CustomerRepository:
         skip: int,
         search: str | None = None,
     ) -> dict[str, Any]:
-        query: dict[str, Any] = {"status": "published", "active": {"$ne": False}}
+        query: dict[str, Any] = {
+            "status": "published",
+            "active": {"$ne": False},
+            "$nor": [self._legacy_happy_hour_match()],
+        }
         if search:
-            query["$or"] = [
-                {"title": {"$regex": search, "$options": "i"}},
-                {"venue": {"$regex": search, "$options": "i"}},
-                {"event_type": {"$regex": search, "$options": "i"}},
-                {"category": {"$regex": search, "$options": "i"}},
+            query["$and"] = [
+                {
+                    "$or": [
+                        {"title": {"$regex": search, "$options": "i"}},
+                        {"venue": {"$regex": search, "$options": "i"}},
+                        {"event_type": {"$regex": search, "$options": "i"}},
+                        {"category": {"$regex": search, "$options": "i"}},
+                    ]
+                }
             ]
 
         docs = list(
@@ -1636,9 +1733,156 @@ class CustomerRepository:
         total = len(cards)
         return {"items": cards[skip : skip + limit], "total": total}
 
+    def list_happy_hours(
+        self,
+        customer_id: str,
+        limit: int,
+        skip: int,
+        search: str | None = None,
+    ) -> dict[str, Any]:
+        current_docs = list(
+            self.vendor_happy_hours.find(
+                {"status": "published", "active": {"$ne": False}}
+            ).sort(
+                [
+                    ("start_date", ASCENDING),
+                    ("start_time", ASCENDING),
+                    ("created_at", DESCENDING),
+                ]
+            )
+        )
+        current_ids = {row["_id"] for row in current_docs}
+        legacy_docs = [
+            self._legacy_event_as_happy_hour(row)
+            for row in self.vendor_events.find(
+                {
+                    "status": "published",
+                    "active": {"$ne": False},
+                    **self._legacy_happy_hour_match(),
+                }
+            )
+            if row["_id"] not in current_ids
+        ]
+        docs = [*current_docs, *legacy_docs]
+        normalized_search = str(search or "").strip().casefold()
+        customer_lat, customer_lng = self._get_customer_coords(customer_id)
+        cards: list[dict[str, Any]] = []
+
+        for happy_hour in docs:
+            searchable_text = " ".join(
+                str(happy_hour.get(field) or "")
+                for field in ("title", "venue", "offer_text", "description")
+            ).casefold()
+            if normalized_search and normalized_search not in searchable_text:
+                continue
+            is_visible, is_active_now = self._happy_hour_schedule_state(happy_hour)
+            if not is_visible:
+                continue
+            vendor_id = happy_hour.get("vendor_id")
+            if not isinstance(vendor_id, ObjectId):
+                continue
+            vendor = self.vendors.find_one(
+                {"_id": vendor_id, "status": "approved"}
+            )
+            if not vendor:
+                continue
+
+            venue_type = str(
+                happy_hour.get("venue_type") or "restaurant"
+            ).strip().lower()
+            review_type = venue_type if venue_type in SERVICE_TYPES else None
+            bundle = self._get_vendor_bundle(vendor_id, review_type)
+            latitude, longitude = self._get_event_coords(happy_hour, bundle)
+            if latitude is None or longitude is None:
+                continue
+            venue = str(happy_hour.get("venue") or "").strip()
+            address = (
+                venue
+                or str(bundle["general"].get("business_address") or "").strip()
+                or str(bundle["business"].get("address") or "").strip()
+                or str(bundle["business"].get("city") or "").strip()
+                or "Location unavailable"
+            )
+            detail_route = {
+                "restaurant": f"/home/dining/{vendor_id}",
+                "hotel": f"/home/hotels/{vendor_id}",
+                "spa": f"/home/spa/{vendor_id}",
+            }.get(venue_type)
+            happy_hour_price = happy_hour.get("happy_hour_price")
+
+            cards.append(
+                {
+                    "id": str(happy_hour["_id"]),
+                    "vendor_id": str(vendor_id),
+                    "title": str(happy_hour.get("title") or "Happy Hour").strip(),
+                    "name": str(happy_hour.get("title") or "Happy Hour").strip(),
+                    "category": "Happy Hour",
+                    "entity_type": "happy_hour",
+                    "event_type": "Happy Hour",
+                    "venue_type": venue_type,
+                    "event_date": happy_hour.get("start_date"),
+                    "start_date": happy_hour.get("start_date"),
+                    "end_date": happy_hour.get("end_date"),
+                    "days_of_week": happy_hour.get("days_of_week") or [],
+                    "start_time": happy_hour.get("start_time"),
+                    "end_time": happy_hour.get("end_time"),
+                    "timezone": happy_hour.get("timezone"),
+                    "venue": venue,
+                    "location": address,
+                    "address": address,
+                    "city": bundle["business"].get("city"),
+                    "latitude": latitude,
+                    "longitude": longitude,
+                    "distance_km": self._distance_between_km(
+                        customer_lat,
+                        customer_lng,
+                        latitude,
+                        longitude,
+                    ),
+                    "cover_image_url": happy_hour.get("banner_image_url")
+                    or bundle["cover_image"]
+                    or "https://images.unsplash.com/photo-1515003197210-e0cd71810b5f?w=1200",
+                    "banner_image_url": happy_hour.get("banner_image_url")
+                    or bundle["cover_image"],
+                    "offer_text": happy_hour.get("offer_text") or "Happy Hour",
+                    "description": happy_hour.get("description") or "",
+                    "terms_and_conditions": happy_hour.get("terms_and_conditions")
+                    or "",
+                    "original_price": happy_hour.get("original_price"),
+                    "happy_hour_price": happy_hour_price,
+                    "discount_percent": happy_hour.get("discount_percent"),
+                    "ticket_price": happy_hour_price,
+                    "rating": bundle["rating"],
+                    "reviews_count": bundle["reviews_count"],
+                    "is_open_now": is_active_now,
+                    "booking_mode": "detailed",
+                    "can_book_on_map": False,
+                    "current_booking_status": None,
+                    "current_booking_code": None,
+                    "is_sold_out": False,
+                    "remaining_capacity": None,
+                    "detail_route": detail_route,
+                }
+            )
+
+        cards.sort(
+            key=lambda row: (
+                row.get("distance_km") is None,
+                row.get("distance_km") or float("inf"),
+                row.get("start_date") or "",
+            )
+        )
+        total = len(cards)
+        return {"items": cards[skip : skip + limit], "total": total}
+
     def get_event_details(self, customer_id: str, event_id: str) -> dict[str, Any] | None:
         event = self.vendor_events.find_one(
-            {"_id": self._oid(event_id), "status": "published", "active": {"$ne": False}}
+            {
+                "_id": self._oid(event_id),
+                "status": "published",
+                "active": {"$ne": False},
+                "$nor": [self._legacy_happy_hour_match()],
+            }
         )
         if not event:
             return None
@@ -1711,7 +1955,12 @@ class CustomerRepository:
         promo_code: str | None = None,
     ) -> dict[str, Any]:
         event = self.vendor_events.find_one(
-            {"_id": self._oid(event_id), "status": "published", "active": {"$ne": False}}
+            {
+                "_id": self._oid(event_id),
+                "status": "published",
+                "active": {"$ne": False},
+                "$nor": [self._legacy_happy_hour_match()],
+            }
         )
         if not event:
             raise ValueError("Event not found.")
@@ -1785,7 +2034,12 @@ class CustomerRepository:
             raise ValueError("Customer not found.")
 
         event = self.vendor_events.find_one(
-            {"_id": self._oid(event_id), "status": "published", "active": {"$ne": False}}
+            {
+                "_id": self._oid(event_id),
+                "status": "published",
+                "active": {"$ne": False},
+                "$nor": [self._legacy_happy_hour_match()],
+            }
         )
         if not event:
             raise ValueError("Event not found.")
@@ -2767,6 +3021,30 @@ class CustomerRepository:
                     "remaining_capacity": row.get("remaining_capacity"),
                     "entity_type": "event",
                     "detail_route": row.get("detail_route"),
+                }
+            )
+        return pins
+
+    def map_happy_hours(self, customer_id: str, limit: int) -> list[dict[str, Any]]:
+        happy_hours = self.list_happy_hours(
+            customer_id=customer_id,
+            limit=limit,
+            skip=0,
+        ).get("items", [])
+        pins: list[dict[str, Any]] = []
+        for row in happy_hours:
+            latitude = self._to_float(row.get("latitude"))
+            longitude = self._to_float(row.get("longitude"))
+            if latitude is None or longitude is None:
+                continue
+            pins.append(
+                {
+                    **row,
+                    "lat": latitude,
+                    "lng": longitude,
+                    "latitude": latitude,
+                    "longitude": longitude,
+                    "entity_type": "happy_hour",
                 }
             )
         return pins

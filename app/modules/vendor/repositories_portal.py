@@ -23,6 +23,7 @@ class VendorPortalRepository:
         self.rooms: Collection = db["vendor_rooms"]
         self.services: Collection = db["vendor_services"]
         self.events: Collection = db["vendor_events"]
+        self.happy_hours: Collection = db["vendor_happy_hours"]
         self.promotions: Collection = db["vendor_promotions"]
         self.platform_campaigns: Collection = db["platform_campaigns"]
         self.loyalty_settings: Collection = db["vendor_loyalty_settings"]
@@ -139,15 +140,63 @@ class VendorPortalRepository:
 
     def _allowed_vendor_categories(self, vendor_id: str) -> list[str]:
         vendor, profile, business, verification = self._get_vendor_records(vendor_id)
+        categories: list[str] = []
         for source in (profile, verification, vendor, business):
-            categories = source.get("categories")
-            if isinstance(categories, list):
-                return normalize_account_categories(categories)
-        for source in (profile, verification, vendor, business):
-            category = str(source.get("category") or "").strip()
-            if category:
-                return normalize_account_categories([category])
-        return ["Restaurant"]
+            source_categories = source.get("categories")
+            if isinstance(source_categories, list):
+                categories = normalize_account_categories(source_categories)
+                break
+        if not categories:
+            for source in (profile, verification, vendor, business):
+                category = str(source.get("category") or "").strip()
+                if category:
+                    categories = normalize_account_categories([category])
+                    break
+        if not categories:
+            categories = ["Restaurant"]
+        return self._with_inferred_content_modules(vendor_id, categories)
+
+    @staticmethod
+    def _legacy_happy_hour_match() -> dict[str, Any]:
+        expression = {"$regex": r"happy[\s_-]*hour", "$options": "i"}
+        return {
+            "$or": [
+                {"event_type": expression},
+                {"title": expression},
+                {"category": expression},
+            ]
+        }
+
+    def _with_inferred_content_modules(
+        self,
+        vendor_id: str,
+        categories: list[str],
+    ) -> list[str]:
+        inferred = list(categories)
+        vendor_obj_id = ObjectId(vendor_id)
+        legacy_happy_hour = self._legacy_happy_hour_match()
+        standard_event_query = {
+            "vendor_id": vendor_obj_id,
+            "$nor": [legacy_happy_hour],
+        }
+        if self.events.find_one(standard_event_query, {"_id": 1}) and "Event" not in inferred:
+            inferred.append("Event")
+        if (
+            self.happy_hours.find_one({"vendor_id": vendor_obj_id}, {"_id": 1})
+            or self.events.find_one(
+                {"vendor_id": vendor_obj_id, **legacy_happy_hour},
+                {"_id": 1},
+            )
+        ) and "Happy Hour" not in inferred:
+            inferred.append("Happy Hour")
+        return inferred
+
+    def _validate_vendor_module_access(self, vendor_id: str, module: str) -> None:
+        allowed_categories = self._allowed_vendor_categories(vendor_id)
+        if module not in allowed_categories:
+            raise ValueError(
+                f"{module} is not enabled for this vendor. Enable it in onboarding settings first."
+            )
 
     def _validate_vendor_category_access(self, vendor_id: str, category: str) -> None:
         allowed_categories = self._allowed_vendor_categories(vendor_id)
@@ -800,13 +849,18 @@ class VendorPortalRepository:
         status: str | None = None,
         category: str | None = None,
     ) -> list[dict[str, Any]]:
-        query: dict[str, Any] = {"vendor_id": ObjectId(vendor_id)}
+        query: dict[str, Any] = {
+            "vendor_id": ObjectId(vendor_id),
+            "$nor": [self._legacy_happy_hour_match()],
+        }
         if search:
-            query["$or"] = [
+            query["$and"] = [{
+                "$or": [
                 {"title": {"$regex": search, "$options": "i"}},
                 {"venue": {"$regex": search, "$options": "i"}},
                 {"event_type": {"$regex": search, "$options": "i"}},
-            ]
+                ]
+            }]
         if status and status.lower() not in {"all", ""}:
             query["status"] = status.strip().lower()
         if category and category.lower() not in {"all", ""}:
@@ -817,6 +871,7 @@ class VendorPortalRepository:
     def create_event(self, vendor_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         now = datetime.now(UTC)
         sanitized = self._sanitize_payload(payload)
+        self._validate_vendor_module_access(vendor_id, "Event")
         category = str(sanitized.get("category") or "").strip()
         self._validate_vendor_category_access(vendor_id, category)
         inserted = self.events.insert_one(
@@ -863,6 +918,155 @@ class VendorPortalRepository:
     def delete_event(self, vendor_id: str, event_id: str) -> bool:
         result = self.events.delete_one({"_id": ObjectId(event_id), "vendor_id": ObjectId(vendor_id)})
         return result.deleted_count > 0
+
+    def _migrate_legacy_happy_hours(self, vendor_id: str) -> None:
+        vendor_obj_id = ObjectId(vendor_id)
+        query = {"vendor_id": vendor_obj_id, **self._legacy_happy_hour_match()}
+        for event in self.events.find(query):
+            event_date = str(event.get("event_date") or "").strip()
+            try:
+                day_name = datetime.fromisoformat(event_date).strftime("%A").lower()
+            except ValueError:
+                day_name = "monday"
+            category = str(event.get("category") or "").strip().lower()
+            venue_type = category if category in {"restaurant", "hotel", "spa"} else "other"
+            ticket_price = event.get("ticket_price")
+            self.happy_hours.update_one(
+                {"_id": event["_id"]},
+                {
+                    "$setOnInsert": {
+                        "_id": event["_id"],
+                        "vendor_id": vendor_obj_id,
+                        "title": event.get("title") or "Happy Hour",
+                        "venue_type": venue_type,
+                        "offer_text": event.get("event_type") or event.get("title") or "Happy Hour",
+                        "start_date": event_date,
+                        "end_date": event_date,
+                        "days_of_week": [day_name],
+                        "start_time": event.get("start_time") or "17:00",
+                        "end_time": event.get("end_time") or "19:00",
+                        "timezone": event.get("timezone") or "Asia/Dhaka",
+                        "venue": event.get("venue") or "Venue available",
+                        "latitude": event.get("latitude"),
+                        "longitude": event.get("longitude"),
+                        "original_price": ticket_price,
+                        "happy_hour_price": ticket_price,
+                        "discount_percent": None,
+                        "description": event.get("description") or "",
+                        "terms_and_conditions": "",
+                        "banner_image_url": event.get("banner_image_url"),
+                        "active_status": bool(event.get("active_status", event.get("active", True))),
+                        "active": bool(event.get("active_status", event.get("active", True))),
+                        "status": str(event.get("status") or "draft").lower(),
+                        "legacy_event_id": str(event["_id"]),
+                        "created_at": event.get("created_at") or datetime.now(UTC),
+                        "updated_at": event.get("updated_at") or datetime.now(UTC),
+                    }
+                },
+                upsert=True,
+            )
+
+    def list_happy_hours(
+        self,
+        vendor_id: str,
+        search: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        self._migrate_legacy_happy_hours(vendor_id)
+        query: dict[str, Any] = {"vendor_id": ObjectId(vendor_id)}
+        if search:
+            query["$or"] = [
+                {"title": {"$regex": search, "$options": "i"}},
+                {"venue": {"$regex": search, "$options": "i"}},
+                {"offer_text": {"$regex": search, "$options": "i"}},
+            ]
+        if status and status.lower() not in {"all", ""}:
+            query["status"] = status.strip().lower()
+        docs = self.happy_hours.find(query).sort(
+            [("start_date", 1), ("start_time", 1), ("created_at", DESCENDING)]
+        )
+        return [self._serialize(doc) for doc in docs]
+
+    def create_happy_hour(self, vendor_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        self._validate_vendor_module_access(vendor_id, "Happy Hour")
+        now = datetime.now(UTC)
+        sanitized = self._sanitize_payload(payload)
+        inserted = self.happy_hours.insert_one(
+            {
+                "vendor_id": ObjectId(vendor_id),
+                **sanitized,
+                "status": str(sanitized.get("status") or "draft").lower(),
+                "active": bool(sanitized.get("active_status", True)),
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+        return self._serialize(
+            self.happy_hours.find_one({"_id": inserted.inserted_id})
+        )  # type: ignore[return-value]
+
+    def get_happy_hour(self, vendor_id: str, happy_hour_id: str) -> dict[str, Any] | None:
+        self._migrate_legacy_happy_hours(vendor_id)
+        return self._serialize(
+            self.happy_hours.find_one(
+                {"_id": ObjectId(happy_hour_id), "vendor_id": ObjectId(vendor_id)}
+            )
+        )
+
+    def update_happy_hour(
+        self,
+        vendor_id: str,
+        happy_hour_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        self._validate_vendor_module_access(vendor_id, "Happy Hour")
+        self._migrate_legacy_happy_hours(vendor_id)
+        sanitized = self._sanitize_payload(payload)
+        if "status" in sanitized:
+            sanitized["status"] = str(sanitized["status"]).lower()
+        if "active_status" in sanitized:
+            sanitized["active"] = bool(sanitized["active_status"])
+        self.happy_hours.update_one(
+            {"_id": ObjectId(happy_hour_id), "vendor_id": ObjectId(vendor_id)},
+            {"$set": {**sanitized, "updated_at": datetime.now(UTC)}},
+        )
+        return self.get_happy_hour(vendor_id, happy_hour_id)
+
+    def update_happy_hour_status(
+        self,
+        vendor_id: str,
+        happy_hour_id: str,
+        status: str,
+    ) -> dict[str, Any] | None:
+        self._validate_vendor_module_access(vendor_id, "Happy Hour")
+        self._migrate_legacy_happy_hours(vendor_id)
+        self.happy_hours.update_one(
+            {"_id": ObjectId(happy_hour_id), "vendor_id": ObjectId(vendor_id)},
+            {
+                "$set": {
+                    "status": status.strip().lower(),
+                    "updated_at": datetime.now(UTC),
+                }
+            },
+        )
+        return self.get_happy_hour(vendor_id, happy_hour_id)
+
+    def delete_happy_hour(self, vendor_id: str, happy_hour_id: str) -> bool:
+        self._migrate_legacy_happy_hours(vendor_id)
+        happy_hour_obj_id = ObjectId(happy_hour_id)
+        row = self.happy_hours.find_one(
+            {"_id": happy_hour_obj_id, "vendor_id": ObjectId(vendor_id)}
+        )
+        if not row:
+            return False
+        self.happy_hours.delete_one(
+            {"_id": happy_hour_obj_id, "vendor_id": ObjectId(vendor_id)}
+        )
+        if row.get("legacy_event_id"):
+            self.events.delete_one(
+                {"_id": happy_hour_obj_id, "vendor_id": ObjectId(vendor_id)}
+            )
+        return True
 
     def get_service(self, vendor_id: str, service_id: str) -> dict[str, Any] | None:
         return self._serialize(
@@ -1661,6 +1865,7 @@ class VendorPortalRepository:
             or ([verification.get("category")] if verification.get("category") else None)
             or ([vendor.get("category")] if vendor.get("category") else ["Restaurant"])
         )
+        categories = self._with_inferred_content_modules(vendor_id, categories)
         category = (
             categories[0]
             if str(raw_category).strip().casefold() == "event venue"

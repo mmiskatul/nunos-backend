@@ -181,6 +181,126 @@ class VendorEventStatusRequest(BaseModel):
         return value
 
 
+class VendorHappyHourUpsertRequest(BaseModel):
+    title: str = Field(min_length=3, max_length=180)
+    venue_type: str = Field(default="restaurant", pattern="^(restaurant|hotel|spa|other)$")
+    offer_text: str = Field(min_length=2, max_length=180)
+    start_date: str
+    end_date: str
+    days_of_week: list[str] = Field(min_length=1, max_length=7)
+    start_time: str
+    end_time: str
+    timezone: str = Field(default="Asia/Dhaka", min_length=2, max_length=80)
+    venue: str = Field(min_length=2, max_length=500)
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+    original_price: float | None = Field(default=None, ge=0)
+    happy_hour_price: float | None = Field(default=None, ge=0)
+    discount_percent: float | None = Field(default=None, ge=0, le=100)
+    description: str = Field(default="", max_length=5000)
+    terms_and_conditions: str = Field(default="", max_length=2000)
+    banner_image_url: str | None = None
+    active_status: bool = True
+    status: str = Field(default="draft", pattern="^(draft|published|archived|cancelled)$")
+
+    @field_validator(
+        "title",
+        "offer_text",
+        "timezone",
+        "venue",
+        "description",
+        "terms_and_conditions",
+        mode="before",
+    )
+    @classmethod
+    def _strip_text_fields(cls, value):
+        if value is None:
+            return ""
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("venue_type", mode="before")
+    @classmethod
+    def _normalize_venue_type(cls, value):
+        return str(value or "restaurant").strip().lower()
+
+    @field_validator("start_date", "end_date")
+    @classmethod
+    def _validate_date_fields(cls, value: str) -> str:
+        normalized = value.strip()
+        date.fromisoformat(normalized)
+        return normalized
+
+    @field_validator("start_time", "end_time")
+    @classmethod
+    def _validate_time_fields(cls, value: str) -> str:
+        normalized = value.strip()
+        time.fromisoformat(normalized)
+        return normalized
+
+    @field_validator("days_of_week", mode="before")
+    @classmethod
+    def _normalize_days_of_week(cls, value):
+        allowed = {
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday",
+        }
+        values = value if isinstance(value, list) else []
+        normalized: list[str] = []
+        for item in values:
+            day = str(item or "").strip().lower()
+            if day not in allowed:
+                raise ValueError(f"Unsupported day of week: {item}")
+            if day not in normalized:
+                normalized.append(day)
+        return normalized
+
+    @field_validator("banner_image_url", mode="before")
+    @classmethod
+    def _normalize_banner_image_url(cls, value):
+        if value is None:
+            return None
+        return value.strip() or None if isinstance(value, str) else value
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _normalize_status(cls, value):
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            return "cancelled" if normalized == "canceled" else normalized
+        return value
+
+    @model_validator(mode="after")
+    def _validate_schedule_and_pricing(self):
+        if date.fromisoformat(self.end_date) < date.fromisoformat(self.start_date):
+            raise ValueError("End date cannot be earlier than start date.")
+        if time.fromisoformat(self.end_time) <= time.fromisoformat(self.start_time):
+            raise ValueError("End time must be later than start time.")
+        if (
+            self.original_price is not None
+            and self.happy_hour_price is not None
+            and self.happy_hour_price > self.original_price
+        ):
+            raise ValueError("Happy Hour price cannot exceed the original price.")
+        return self
+
+
+class VendorHappyHourStatusRequest(BaseModel):
+    status: str = Field(pattern="^(draft|published|archived|cancelled)$")
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _normalize_status(cls, value):
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            return "cancelled" if normalized == "canceled" else normalized
+        return value
+
+
 class PromotionUpsertRequest(BaseModel):
     promotion_name: str
     internal_description: str = ""

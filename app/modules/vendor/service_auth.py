@@ -93,6 +93,16 @@ class VendorAuthService:
                     "desc": "Run treatment schedules, therapist availability, and service packages.",
                 },
                 {
+                    "id": "Event",
+                    "title": "Event",
+                    "desc": "Create ticketed or request-based events and manage event bookings.",
+                },
+                {
+                    "id": "Happy Hour",
+                    "title": "Happy Hour",
+                    "desc": "Publish recurring time-limited offers independently from events.",
+                },
+                {
                     "id": "Cafe",
                     "title": "Cafe",
                     "desc": "Manage coffee shop orders, quick service menus, and walk-in customer flow.",
@@ -124,6 +134,19 @@ class VendorAuthService:
             for category in configured_categories
             if str(category.get("id") or "").strip().casefold() != "event venue"
         ]
+        configured_ids = {
+            str(category.get("id") or "").strip().casefold()
+            for category in account_categories
+        }
+        for module_id in ("Event", "Happy Hour"):
+            if module_id.casefold() in configured_ids:
+                continue
+            module = next(
+                category
+                for category in fallback["categories"]
+                if category["id"] == module_id
+            )
+            account_categories.append(module)
         payload = {
             "categories": account_categories or fallback["categories"],
             "event_type_options": document.get("event_type_options") or fallback["event_type_options"],

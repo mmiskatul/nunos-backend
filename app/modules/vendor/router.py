@@ -30,6 +30,8 @@ from app.modules.vendor.schemas_portal import (
     ServiceUpsertRequest,
     VendorEventStatusRequest,
     VendorEventUpsertRequest,
+    VendorHappyHourStatusRequest,
+    VendorHappyHourUpsertRequest,
     VendorAmenityCreateRequest,
     VendorAmenityCreateResponse,
     VendorLegalDocRequest,
@@ -675,6 +677,126 @@ def delete_vendor_event(
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found.")
     return MessageResponse(message="Event deleted.")
+
+
+# ---------------------------------------------------------------------------
+# Happy Hours
+# ---------------------------------------------------------------------------
+
+
+@router.get("/happy-hours", tags=["Vendor - Happy Hours"])
+def list_vendor_happy_hours(
+    search: str | None = Query(default=None),
+    status_filter: str | None = Query(default=None, alias="status"),
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    vendor_id = _vendor_id(current_vendor)
+    portal_service.initialize(vendor_id)
+    return {
+        "items": _safe_call(
+            portal_service.repo.list_happy_hours,
+            vendor_id,
+            search=search,
+            status=status_filter,
+            detail="Failed to load Happy Hours",
+        )
+    }
+
+
+@router.post("/happy-hours", tags=["Vendor - Happy Hours"])
+def create_vendor_happy_hour(
+    payload: VendorHappyHourUpsertRequest,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    portal_service.initialize(_vendor_id(current_vendor))
+    return _safe_call(
+        portal_service.repo.create_happy_hour,
+        _vendor_id(current_vendor),
+        payload.model_dump(),
+        detail="Failed to create Happy Hour",
+    )
+
+
+@router.get("/happy-hours/{happy_hour_id}", tags=["Vendor - Happy Hours"])
+def get_vendor_happy_hour(
+    happy_hour_id: str,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    return portal_service.get_happy_hour_or_404(
+        _vendor_id(current_vendor),
+        happy_hour_id,
+    )
+
+
+@router.patch("/happy-hours/{happy_hour_id}", tags=["Vendor - Happy Hours"])
+def update_vendor_happy_hour(
+    happy_hour_id: str,
+    payload: VendorHappyHourUpsertRequest,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    row = _safe_call(
+        portal_service.repo.update_happy_hour,
+        _vendor_id(current_vendor),
+        happy_hour_id,
+        payload.model_dump(),
+        detail="Failed to update Happy Hour",
+    )
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Happy Hour not found.",
+        )
+    return row
+
+
+@router.patch("/happy-hours/{happy_hour_id}/status", tags=["Vendor - Happy Hours"])
+def update_vendor_happy_hour_status(
+    happy_hour_id: str,
+    payload: VendorHappyHourStatusRequest,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> dict:
+    row = _safe_call(
+        portal_service.repo.update_happy_hour_status,
+        _vendor_id(current_vendor),
+        happy_hour_id,
+        payload.status,
+        detail="Failed to update Happy Hour status",
+    )
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Happy Hour not found.",
+        )
+    return row
+
+
+@router.delete(
+    "/happy-hours/{happy_hour_id}",
+    tags=["Vendor - Happy Hours"],
+    response_model=MessageResponse,
+)
+def delete_vendor_happy_hour(
+    happy_hour_id: str,
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_service: VendorPortalService = Depends(get_vendor_portal_service),
+) -> MessageResponse:
+    deleted = _safe_call(
+        portal_service.repo.delete_happy_hour,
+        _vendor_id(current_vendor),
+        happy_hour_id,
+        detail="Failed to delete Happy Hour",
+    )
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Happy Hour not found.",
+        )
+    return MessageResponse(message="Happy Hour deleted.")
 
 
 # ---------------------------------------------------------------------------

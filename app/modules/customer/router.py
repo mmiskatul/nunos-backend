@@ -328,6 +328,22 @@ def list_events(
     )
 
 
+@router.get("/happy-hours", tags=["Customer - Happy Hours"])
+def list_happy_hours(
+    limit: int = Query(default=20, ge=1, le=100),
+    skip: int = Query(default=0, ge=0),
+    search: str | None = Query(default=None),
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    return customer_service.repo.list_happy_hours(
+        customer_id=current_user["id"],
+        limit=limit,
+        skip=skip,
+        search=search,
+    )
+
+
 @router.get("/events/{event_id}", tags=["Customer - Events"])
 def get_event_details(
     event_id: str,
@@ -524,10 +540,24 @@ def get_map_events(
     return {"items": customer_service.repo.map_events(current_user["id"], limit=limit)}
 
 
+@router.get("/map/happy-hours", tags=["Customer - Search"])
+def get_map_happy_hours(
+    limit: int = Query(default=50, ge=1, le=200),
+    current_user: dict = Depends(get_current_user),
+    customer_service: CustomerService = Depends(get_customer_service),
+) -> dict:
+    return {
+        "items": customer_service.repo.map_happy_hours(
+            current_user["id"],
+            limit=limit,
+        )
+    }
+
+
 @router.get("/filters", tags=["Customer - Search"])
 def get_available_filters(current_user: dict = Depends(get_current_user), customer_service: CustomerService = Depends(get_customer_service)) -> dict:
     _ = (current_user, customer_service)
-    return {"items": {"sort": ["recommended", "top_rated", "nearest"], "categories": ["restaurant", "event", "spa", "hotel"], "price_ranges": ["$", "$$", "$$$"]}}
+    return {"items": {"sort": ["recommended", "top_rated", "nearest"], "categories": ["restaurant", "event", "happy_hour", "spa", "hotel"], "price_ranges": ["$", "$$", "$$$"]}}
 
 
 @router.get("/bookings/availability", tags=["Customer - Bookings"])

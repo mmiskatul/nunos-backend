@@ -52,6 +52,11 @@ VENDOR_INDEXES: dict[str, list[IndexModel]] = {
         IndexModel([("vendor_id", ASCENDING), ("status", ASCENDING), ("created_at", DESCENDING)], name="vendor_event_status"),
         IndexModel([("vendor_id", ASCENDING), ("category", ASCENDING), ("created_at", DESCENDING)], name="vendor_event_category"),
     ],
+    "vendor_happy_hours": [
+        IndexModel([("vendor_id", ASCENDING), ("start_date", ASCENDING), ("end_date", ASCENDING)], name="vendor_happy_hour_schedule"),
+        IndexModel([("vendor_id", ASCENDING), ("status", ASCENDING), ("created_at", DESCENDING)], name="vendor_happy_hour_status"),
+        IndexModel([("vendor_id", ASCENDING), ("venue_type", ASCENDING), ("created_at", DESCENDING)], name="vendor_happy_hour_venue_type"),
+    ],
     "vendor_promotions": [
         IndexModel([("vendor_id", ASCENDING), ("created_at", DESCENDING)], name="vendor_promotion_created"),
         IndexModel([("vendor_id", ASCENDING), ("active", ASCENDING)], name="vendor_promotion_active"),

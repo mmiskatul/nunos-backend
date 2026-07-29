@@ -55,6 +55,22 @@ class VendorPortalService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found.")
         return event
 
+    def get_happy_hour_or_404(self, vendor_id: str, happy_hour_id: str):
+        self.initialize(vendor_id)
+        try:
+            happy_hour = self.repo.get_happy_hour(vendor_id, happy_hour_id)
+        except InvalidId as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Happy Hour not found.",
+            ) from exc
+        if not happy_hour:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Happy Hour not found.",
+            )
+        return happy_hour
+
     def get_promotion_or_404(self, vendor_id: str, promotion_id: str):
         self.initialize(vendor_id)
         try:
