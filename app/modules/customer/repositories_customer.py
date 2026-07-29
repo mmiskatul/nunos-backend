@@ -601,26 +601,6 @@ class CustomerRepository:
         c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
         return round(radius_km * c, 1)
 
-    def _event_booking_mode(self, event: dict[str, Any]) -> str:
-        explicit_mode = str(event.get("booking_mode") or "").strip().lower()
-        if explicit_mode in {"simple", "detailed"}:
-            return explicit_mode
-        if event.get("requires_seat_selection"):
-            return "detailed"
-        if event.get("requires_attendee_details"):
-            return "detailed"
-        if event.get("requires_timeslot_selection"):
-            return "detailed"
-        if event.get("requires_terms_confirmation"):
-            return "detailed"
-        if isinstance(event.get("ticket_types"), list) and len(event["ticket_types"]) > 1:
-            return "detailed"
-        if isinstance(event.get("addons"), list) and event["addons"]:
-            return "detailed"
-        if isinstance(event.get("packages"), list) and event["packages"]:
-            return "detailed"
-        return "simple"
-
     def _event_booking_summary(self, customer_id: str, event_id: ObjectId, capacity: int) -> dict[str, Any]:
         active_statuses = ["pending", "confirmed", "check_in"]
         sold = 0
@@ -1724,7 +1704,6 @@ class CustomerRepository:
                 fallback="Culture",
             )
             capacity = int(event.get("capacity") or 0)
-            booking_mode = self._event_booking_mode(event)
             booking_summary = self._event_booking_summary(customer_id, event["_id"], capacity)
             registration_open = self._event_registration_is_open(event)
 
@@ -1734,7 +1713,6 @@ class CustomerRepository:
                     "vendor_id": str(vendor_id),
                     "title": str(event.get("title") or "Untitled Event").strip(),
                     "name": str(event.get("title") or "Untitled Event").strip(),
-                    "category": str(event.get("category") or "Event").strip(),
                     "entity_type": "event",
                     "event_type": event_type,
                     "event_category": event_type,
@@ -1760,12 +1738,7 @@ class CustomerRepository:
                     "capacity": event.get("capacity"),
                     "registration_deadline": event.get("registration_deadline"),
                     "registration_open": registration_open,
-                    "booking_mode": booking_mode,
-                    "can_book_on_map": (
-                        booking_mode == "simple"
-                        and registration_open
-                        and not booking_summary["is_sold_out"]
-                    ),
+                    "can_book_on_map": False,
                     **booking_summary,
                     "detail_route": f"/home/events/{event['_id']}",
                 }
@@ -1972,7 +1945,6 @@ class CustomerRepository:
                 or "Location unavailable"
         )
         capacity = int(event.get("capacity") or 0)
-        booking_mode = self._event_booking_mode(event)
         booking_summary = self._event_booking_summary(customer_id, event["_id"], capacity)
         registration_open = self._event_registration_is_open(event)
 
@@ -1981,7 +1953,6 @@ class CustomerRepository:
             "vendor_id": str(vendor_id),
             "title": str(event.get("title") or "Untitled Event").strip(),
             "name": str(event.get("title") or "Untitled Event").strip(),
-            "category": str(event.get("category") or "Event").strip(),
             "entity_type": "event",
             "event_type": event_type,
             "event_category": event_type,
@@ -2007,12 +1978,7 @@ class CustomerRepository:
             "capacity": event.get("capacity"),
             "registration_deadline": event.get("registration_deadline"),
             "registration_open": registration_open,
-            "booking_mode": booking_mode,
-            "can_book_on_map": (
-                booking_mode == "simple"
-                and registration_open
-                and not booking_summary["is_sold_out"]
-            ),
+            "can_book_on_map": False,
             **booking_summary,
             "detail_route": f"/home/events/{event['_id']}",
         }
@@ -3088,7 +3054,6 @@ class CustomerRepository:
                     "banner_image_url": row.get("banner_image_url"),
                     "ticket_price": row.get("ticket_price"),
                     "capacity": row.get("capacity"),
-                    "booking_mode": row.get("booking_mode"),
                     "can_book_on_map": row.get("can_book_on_map"),
                     "current_booking_status": row.get("current_booking_status"),
                     "current_booking_code": row.get("current_booking_code"),

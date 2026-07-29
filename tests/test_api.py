@@ -565,16 +565,18 @@ async def test_customer_events_and_map_events_return_published_vendor_events(cli
     assert events_payload["items"][0]["entity_type"] == "event"
     assert events_payload["items"][0]["latitude"] == pytest.approx(23.7815)
     assert events_payload["items"][0]["longitude"] == pytest.approx(90.4003)
-    assert events_payload["items"][0]["booking_mode"] == "simple"
-    assert events_payload["items"][0]["can_book_on_map"] is True
+    assert "booking_mode" not in events_payload["items"][0]
+    assert "category" not in events_payload["items"][0]
+    assert events_payload["items"][0]["can_book_on_map"] is False
     assert events_payload["items"][0]["current_booking_status"] is None
     assert events_payload["items"][0]["is_sold_out"] is False
 
     event_detail_res = await client.get(f"/api/v1/customer/events/{event_id}", headers=headers)
     assert event_detail_res.status_code == 200
     event_detail_payload = event_detail_res.json()
-    assert event_detail_payload["booking_mode"] == "simple"
-    assert event_detail_payload["can_book_on_map"] is True
+    assert "booking_mode" not in event_detail_payload
+    assert "category" not in event_detail_payload
+    assert event_detail_payload["can_book_on_map"] is False
     assert event_detail_payload["current_booking_status"] is None
     assert event_detail_payload["is_sold_out"] is False
 
@@ -588,8 +590,8 @@ async def test_customer_events_and_map_events_return_published_vendor_events(cli
     assert map_items[0]["longitude"] == 90.4003
     assert map_items[0]["lat"] == pytest.approx(23.7815)
     assert map_items[0]["lng"] == pytest.approx(90.4003)
-    assert map_items[0]["booking_mode"] == "simple"
-    assert map_items[0]["can_book_on_map"] is True
+    assert "booking_mode" not in map_items[0]
+    assert map_items[0]["can_book_on_map"] is False
     assert map_items[0]["current_booking_status"] is None
     assert map_items[0]["is_sold_out"] is False
 
@@ -936,9 +938,7 @@ async def test_vendor_with_event_module_can_manage_events(client, test_db):
         headers=headers,
         json={
             "title": "Sunset Networking Dinner",
-            "category": "Restaurant",
             "event_type": "Corporate Gala",
-            "booking_mode": "detailed",
             "event_date": "2026-07-20",
             "start_time": "18:00",
             "end_time": "21:00",
@@ -955,11 +955,11 @@ async def test_vendor_with_event_module_can_manage_events(client, test_db):
     )
     assert create_res.status_code == 200
     created = create_res.json()
-    assert created["category"] == "Restaurant"
+    assert "category" not in created
     assert created["event_type"] == "Nightlife"
     assert created["event_category"] == "Nightlife"
     assert created["status"] == "draft"
-    assert created["booking_mode"] == "detailed"
+    assert "booking_mode" not in created
     assert created["registration_deadline"] == "2026-07-19"
 
     list_res = await client.get("/api/v1/vendor/events", headers=headers)
@@ -971,9 +971,7 @@ async def test_vendor_with_event_module_can_manage_events(client, test_db):
         headers=headers,
         json={
             "title": "Sunset Networking Dinner Updated",
-            "category": "Restaurant",
             "event_type": "Private Dinner",
-            "booking_mode": "simple",
             "event_date": "2026-07-21",
             "start_time": "19:00",
             "end_time": "22:00",
@@ -990,17 +988,17 @@ async def test_vendor_with_event_module_can_manage_events(client, test_db):
     )
     assert update_res.status_code == 200
     assert update_res.json()["title"] == "Sunset Networking Dinner Updated"
-    assert update_res.json()["category"] == "Restaurant"
+    assert "category" not in update_res.json()
     assert update_res.json()["event_type"] == "Nightlife"
-    assert update_res.json()["booking_mode"] == "simple"
+    assert "booking_mode" not in update_res.json()
 
-    bad_category_res = await client.post(
+    legacy_fields_res = await client.post(
         "/api/v1/vendor/events",
         headers=headers,
         json={
-            "title": "Spa Only Event",
+            "title": "Legacy Client Event",
             "category": "Spa",
-            "event_type": "Wellness Pop-up",
+            "event_type": "Wellness",
             "booking_mode": "detailed",
             "event_date": "2026-08-01",
             "start_time": "10:00",
@@ -1010,23 +1008,22 @@ async def test_vendor_with_event_module_can_manage_events(client, test_db):
             "capacity": 25,
             "ticket_price": 15,
             "registration_deadline": "2026-07-31",
-            "description": "Should be blocked because Spa is not enabled.",
+            "description": "Legacy fields should be ignored safely.",
             "banner_image_url": None,
             "active_status": True,
             "status": "draft",
         },
     )
-    assert bad_category_res.status_code == 422
-    assert "not enabled for this vendor" in bad_category_res.json()["detail"]
+    assert legacy_fields_res.status_code == 200
+    assert "category" not in legacy_fields_res.json()
+    assert "booking_mode" not in legacy_fields_res.json()
 
     normalized_optional_res = await client.post(
         "/api/v1/vendor/events",
         headers=headers,
         json={
             "title": "Compact Event",
-            "category": "Restaurant",
             "event_type": "Tasting Session",
-            "booking_mode": "simple",
             "event_date": "2026-08-04",
             "start_time": "12:00",
             "end_time": "14:00",
@@ -1049,7 +1046,7 @@ async def test_vendor_with_event_module_can_manage_events(client, test_db):
     assert normalized_created["banner_image_url"] is None
     assert normalized_created["registration_deadline"] is None
     assert normalized_created["status"] == "cancelled"
-    assert normalized_created["booking_mode"] == "simple"
+    assert "booking_mode" not in normalized_created
     assert normalized_created["event_type"] == "Culture"
 
     invalid_time_res = await client.post(
@@ -1057,9 +1054,7 @@ async def test_vendor_with_event_module_can_manage_events(client, test_db):
         headers=headers,
         json={
             "title": "Bad Time Event",
-            "category": "Restaurant",
             "event_type": "Late Session",
-            "booking_mode": "simple",
             "event_date": "2026-08-05",
             "start_time": "20:00",
             "end_time": "19:00",
@@ -1094,8 +1089,11 @@ async def test_vendor_with_event_module_can_manage_events(client, test_db):
 
     final_list_res = await client.get("/api/v1/vendor/events", headers=headers)
     assert final_list_res.status_code == 200
-    assert len(final_list_res.json()["items"]) == 1
-    assert final_list_res.json()["items"][0]["title"] == "Compact Event"
+    assert len(final_list_res.json()["items"]) == 2
+    assert {item["title"] for item in final_list_res.json()["items"]} == {
+        "Compact Event",
+        "Legacy Client Event",
+    }
 
 
 @pytest.mark.asyncio

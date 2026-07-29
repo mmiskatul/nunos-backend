@@ -376,6 +376,8 @@ class VendorPortalRepository:
             out.get("event_type"),
             fallback="Culture",
         )
+        out.pop("category", None)
+        out.pop("booking_mode", None)
         out["event_type"] = event_category
         out["event_category"] = event_category
         return out
@@ -864,7 +866,6 @@ class VendorPortalRepository:
         vendor_id: str,
         search: str | None = None,
         status: str | None = None,
-        category: str | None = None,
     ) -> list[dict[str, Any]]:
         query: dict[str, Any] = {
             "vendor_id": ObjectId(vendor_id),
@@ -880,8 +881,6 @@ class VendorPortalRepository:
             }]
         if status and status.lower() not in {"all", ""}:
             query["status"] = status.strip().lower()
-        if category and category.lower() not in {"all", ""}:
-            query["category"] = category.strip()
         docs = self.events.find(query).sort([("event_date", 1), ("start_time", 1), ("created_at", DESCENDING)])
         return [
             serialized
@@ -893,8 +892,8 @@ class VendorPortalRepository:
         now = datetime.now(UTC)
         sanitized = self._sanitize_payload(payload)
         self._validate_vendor_module_access(vendor_id, "Event")
-        category = str(sanitized.get("category") or "").strip()
-        self._validate_vendor_category_access(vendor_id, category)
+        sanitized.pop("category", None)
+        sanitized.pop("booking_mode", None)
         inserted = self.events.insert_one(
             {
                 "vendor_id": ObjectId(vendor_id),
@@ -915,16 +914,18 @@ class VendorPortalRepository:
 
     def update_event(self, vendor_id: str, event_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
         sanitized = self._sanitize_payload(payload)
-        category = str(sanitized.get("category") or "").strip()
-        if category:
-            self._validate_vendor_category_access(vendor_id, category)
+        sanitized.pop("category", None)
+        sanitized.pop("booking_mode", None)
         if "status" in sanitized:
             sanitized["status"] = str(sanitized["status"]).lower()
         if "active_status" in sanitized:
             sanitized["active"] = bool(sanitized["active_status"])
         self.events.update_one(
             {"_id": ObjectId(event_id), "vendor_id": ObjectId(vendor_id)},
-            {"$set": {**sanitized, "updated_at": datetime.now(UTC)}},
+            {
+                "$set": {**sanitized, "updated_at": datetime.now(UTC)},
+                "$unset": {"category": "", "booking_mode": ""},
+            },
         )
         return self.get_event(vendor_id, event_id)
 

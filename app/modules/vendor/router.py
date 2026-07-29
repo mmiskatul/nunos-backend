@@ -585,7 +585,6 @@ def delete_vendor_service(
 def list_vendor_events(
     search: str | None = Query(default=None),
     status_filter: str | None = Query(default=None, alias="status"),
-    category: str | None = Query(default=None),
     current_vendor: dict = Depends(get_current_vendor),
     portal_service: VendorPortalService = Depends(get_vendor_portal_service),
 ) -> dict:
@@ -597,7 +596,6 @@ def list_vendor_events(
             vendor_id,
             search=search,
             status=status_filter,
-            category=category,
             detail="Failed to load events",
         )
     }
