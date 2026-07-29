@@ -77,6 +77,9 @@ def test_event_list_keeps_published_events_without_coordinates():
     today = datetime.now(UTC).date()
 
     database.vendors.insert_one({"_id": vendor_id, "status": "approved"})
+    database.vendor_business_details.insert_one(
+        {"vendor_id": vendor_id, "latitude": 23.78, "longitude": 90.40}
+    )
     database.vendor_events.insert_one(
         {
             "_id": ObjectId(),
@@ -96,8 +99,8 @@ def test_event_list_keeps_published_events_without_coordinates():
 
     assert len(result["items"]) == 1
     assert result["items"][0]["title"] == "Venue-only event"
-    assert result["items"][0]["latitude"] is None
-    assert result["items"][0]["longitude"] is None
+    assert result["items"][0]["latitude"] == 23.78
+    assert result["items"][0]["longitude"] == 90.40
 
 
 def test_registration_deadline_date_closes_after_the_selected_day():

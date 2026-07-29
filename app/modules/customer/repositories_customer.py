@@ -239,6 +239,12 @@ class CustomerRepository:
             latitude = self._to_float(general_settings.get("latitude"))
         if longitude is None:
             longitude = self._to_float(general_settings.get("longitude"))
+        business = bundle.get("business", {})
+        if isinstance(business, dict):
+            if latitude is None:
+                latitude = self._to_float(business.get("latitude"))
+            if longitude is None:
+                longitude = self._to_float(business.get("longitude"))
         return latitude, longitude
 
     @staticmethod
