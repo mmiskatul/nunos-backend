@@ -99,11 +99,6 @@ class VendorAuthService:
                     "desc": "Create ticketed or request-based events and manage event bookings.",
                 },
                 {
-                    "id": "Happy Hour",
-                    "title": "Happy Hour",
-                    "desc": "Publish recurring time-limited offers independently from events.",
-                },
-                {
                     "id": "Cafe",
                     "title": "Cafe",
                     "desc": "Manage coffee shop orders, quick service menus, and walk-in customer flow.",
@@ -124,7 +119,8 @@ class VendorAuthService:
         account_categories = [
             category
             for category in configured_categories
-            if str(category.get("id") or "").strip().casefold() != "event venue"
+            if str(category.get("id") or "").strip().casefold()
+            not in {"event venue", "happy hour"}
         ]
         payload = {
             "categories": account_categories or fallback["categories"],
