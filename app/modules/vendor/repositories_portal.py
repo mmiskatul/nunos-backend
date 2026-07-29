@@ -155,7 +155,7 @@ class VendorPortalRepository:
                     break
         if not categories:
             categories = ["Restaurant"]
-        return self._with_inferred_content_modules(vendor_id, categories)
+        return categories
 
     @staticmethod
     def _legacy_happy_hour_match() -> dict[str, Any]:
@@ -1913,7 +1913,6 @@ class VendorPortalRepository:
             or ([verification.get("category")] if verification.get("category") else None)
             or ([vendor.get("category")] if vendor.get("category") else ["Restaurant"])
         )
-        categories = self._with_inferred_content_modules(vendor_id, categories)
         category = (
             categories[0]
             if str(raw_category).strip().casefold() == "event venue"
