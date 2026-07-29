@@ -915,6 +915,8 @@ class CustomerRepository:
                     "reviews": str(bundle["reviews_count"]),
                     "location": f"{service_settings.get('address') or service_settings.get('city') or bundle['general'].get('business_address') or bundle['business'].get('city') or 'Location unavailable'}",
                     "distance_km": distance_km,
+                    "latitude": vendor_lat,
+                    "longitude": vendor_lng,
                     "price": str(int(min_price)),
                     "status": "Available" if has_rooms else "Limited",
                     "is_open_now": self._service_is_open(service_settings, has_rooms),
@@ -1170,7 +1172,7 @@ class CustomerRepository:
             distance = self._distance_between_km(customer_lat, customer_lng, lat, lng)
             if nearby and (distance is None or distance > max_distance_km):
                 continue
-            items.append({"id": str(vendor["_id"]), "name": name, "title": name, "category": "spa", "service_type": "spa", "entity_type": "spa", "rating": bundle["rating"], "reviews_count": bundle["reviews_count"], "distance_km": distance, "location": settings.get("address") or settings.get("city"), "profile_image_url": self._service_profile_image(bundle, settings), "cover_image_url": bundle["cover_image"]})
+            items.append({"id": str(vendor["_id"]), "name": name, "title": name, "category": "spa", "service_type": "spa", "entity_type": "spa", "rating": bundle["rating"], "reviews_count": bundle["reviews_count"], "distance_km": distance, "latitude": lat, "longitude": lng, "location": settings.get("address") or settings.get("city"), "profile_image_url": self._service_profile_image(bundle, settings), "cover_image_url": bundle["cover_image"]})
         for item in items:
             item["title"] = item.get("name") or "Spa"
             item["type"] = item.get("category") or "Wellness"
