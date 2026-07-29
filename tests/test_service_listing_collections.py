@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from bson import ObjectId
 import mongomock
 import pytest
@@ -295,6 +297,95 @@ def test_spa_detail_checks_spa_publication_instead_of_restaurant_publication():
     assert detail is not None
     assert detail["category"] == "spa"
     assert detail["name"] == "Wellness Spa"
+
+
+def test_customer_service_payloads_expose_each_service_profile_image():
+    database = mongomock.MongoClient().nuno
+    vendor_id = ObjectId()
+    customer_id = ObjectId()
+    database.vendors.insert_one(
+        {"_id": vendor_id, "status": "approved", "business_name": "Harbour Group"}
+    )
+    database.vendor_profiles.insert_one(
+        {"vendor_id": vendor_id, "category": "Restaurant"}
+    )
+    service_settings = {
+        "restaurant": {
+            "name": "Harbour Dining",
+            "profile_image_url": "https://example.com/restaurant-profile.jpg",
+            "published": True,
+        },
+        "hotel": {
+            "name": "Harbour Hotel",
+            "profile_image_url": "https://example.com/hotel-profile.jpg",
+            "published": True,
+        },
+        "spa": {
+            "name": "Harbour Spa",
+            "profile_image_url": "https://example.com/spa-profile.jpg",
+            "published": True,
+        },
+    }
+    database.vendor_portal_settings.insert_one(
+        {
+            "vendor_id": vendor_id,
+            "profile": {
+                f"{service_type}_settings": settings
+                for service_type, settings in service_settings.items()
+            },
+            "general": {},
+        }
+    )
+    database.vendor_rooms.insert_one(
+        {
+            "vendor_id": vendor_id,
+            "name": "Standard Room",
+            "available": True,
+            "base_price": 150,
+        }
+    )
+    portal = VendorPortalRepository(database)
+    for service_type, settings in service_settings.items():
+        portal.sync_service_listing(str(vendor_id), service_type, settings)
+        database.vendor_bookings.insert_one(
+            {
+                "vendor_id": vendor_id,
+                "customer_id": customer_id,
+                "provider_type": service_type,
+                "service": f"{service_type.title()} Booking",
+                "status": "confirmed",
+                "created_at": datetime.now(UTC),
+            }
+        )
+
+    repository = CustomerRepository(database)
+    restaurants = repository.list_restaurants(str(customer_id), limit=10, skip=0)
+    hotels = repository.list_hotels(str(customer_id), limit=10, skip=0)
+    spas = repository.list_spas(str(customer_id), limit=10, skip=0)
+
+    assert restaurants["items"][0]["profile_image_url"].endswith(
+        "restaurant-profile.jpg"
+    )
+    assert hotels["items"][0]["profile_image_url"].endswith("hotel-profile.jpg")
+    assert spas["items"][0]["profile_image_url"].endswith("spa-profile.jpg")
+    assert repository.get_restaurant_details(
+        str(customer_id), str(vendor_id)
+    )["profile_image_url"].endswith("restaurant-profile.jpg")
+    assert repository.get_hotel_details(
+        str(customer_id), str(vendor_id)
+    )["profile_image_url"].endswith("hotel-profile.jpg")
+    assert repository.get_spa_details(
+        str(customer_id), str(vendor_id)
+    )["profile_image_url"].endswith("spa-profile.jpg")
+    bookings = repository.list_customer_bookings(
+        str(customer_id), limit=10, skip=0
+    )["items"]
+    booking_images = {
+        booking["provider_type"]: booking["provider_image"] for booking in bookings
+    }
+    assert booking_images["restaurant"].endswith("restaurant-profile.jpg")
+    assert booking_images["hotel"].endswith("hotel-profile.jpg")
+    assert booking_images["spa"].endswith("spa-profile.jpg")
 
 
 def test_hotel_detail_uses_saved_overview_settings_and_merges_room_amenities():

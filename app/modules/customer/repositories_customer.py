@@ -245,6 +245,17 @@ class CustomerRepository:
         settings = bundle.get("profile_settings", {}).get(key, {})
         return settings if isinstance(settings, dict) else {}
 
+    @staticmethod
+    def _service_profile_image(
+        bundle: dict[str, Any], service_settings: dict[str, Any]
+    ) -> str:
+        return str(
+            service_settings.get("profile_image_url")
+            or bundle.get("general", {}).get("logo_url")
+            or bundle.get("profile_settings", {}).get("avatar_url")
+            or ""
+        ).strip()
+
     def _asset_query(
         self, vendor_id: ObjectId, asset_type: str, service_type: str
     ) -> dict[str, Any]:
@@ -758,6 +769,7 @@ class CustomerRepository:
                     "is_open_now": self._service_is_open(service_settings, bool(slots)),
                     "opening_time": service_settings.get("opening_time"),
                     "closing_time": service_settings.get("closing_time"),
+                    "profile_image_url": self._service_profile_image(bundle, service_settings),
                     "cover_image_url": room_image or bundle["cover_image"],
                     "offer_text": (bundle["active_offer"] or {}).get("promotion_name"),
                 }
@@ -830,6 +842,7 @@ class CustomerRepository:
                     "badge": (bundle["active_offer"] or {}).get("promotion_name"),
                     "badgeColor": "#3b82f6",
                     "amenities": amenities,
+                    "profile_image_url": self._service_profile_image(bundle, service_settings),
                     "image": room_image or bundle["cover_image"],
                 }
             )
@@ -882,6 +895,7 @@ class CustomerRepository:
             "distance_km": self._distance_between_km(customer_lat, customer_lng, vendor_lat, vendor_lng),
             "address": service_settings.get("address") or bundle["general"].get("business_address") or bundle["business"].get("address") or "",
             "about": service_settings.get("about") or bundle["business"].get("business_description") or bundle["profile"].get("about_business") or "",
+            "profile_image_url": self._service_profile_image(bundle, service_settings),
             "image": next((image for room in rooms for image in (room.get("images") or []) if image), None)
             or bundle["cover_image"],
             "price": str(int(min_price)),
@@ -1075,7 +1089,7 @@ class CustomerRepository:
             distance = self._distance_between_km(customer_lat, customer_lng, lat, lng)
             if nearby and (distance is None or distance > max_distance_km):
                 continue
-            items.append({"id": str(vendor["_id"]), "name": name, "title": name, "category": "spa", "service_type": "spa", "entity_type": "spa", "rating": bundle["rating"], "reviews_count": bundle["reviews_count"], "distance_km": distance, "location": settings.get("address") or settings.get("city"), "cover_image_url": bundle["cover_image"]})
+            items.append({"id": str(vendor["_id"]), "name": name, "title": name, "category": "spa", "service_type": "spa", "entity_type": "spa", "rating": bundle["rating"], "reviews_count": bundle["reviews_count"], "distance_km": distance, "location": settings.get("address") or settings.get("city"), "profile_image_url": self._service_profile_image(bundle, settings), "cover_image_url": bundle["cover_image"]})
         for item in items:
             item["title"] = item.get("name") or "Spa"
             item["type"] = item.get("category") or "Wellness"
@@ -1249,7 +1263,8 @@ class CustomerRepository:
             "provider_area": provider_area,
             "provider_address": address,
             "provider_phone": settings.get("phone") or bundle.get("general", {}).get("front_desk_phone"),
-            "provider_image": bundle.get("cover_image"),
+            "provider_image": self._service_profile_image(bundle, settings)
+            or bundle.get("cover_image"),
             "name": provider_name,
             "location": provider_area,
         })
@@ -1326,7 +1341,11 @@ class CustomerRepository:
                     or bundle.get("business", {}).get("business_name")
                     or provider_name
                 )
-                provider_image = str(bundle.get("cover_image") or "")
+                provider_image = str(
+                    self._service_profile_image(bundle, settings)
+                    or bundle.get("cover_image")
+                    or ""
+                )
 
             booking = self.vendor_bookings.find_one(
                 {"_id": doc.get("booking_id"), "customer_id": customer_obj_id},
@@ -1456,6 +1475,7 @@ class CustomerRepository:
             or bundle["business"].get("business_description")
             or bundle["profile"].get("about_business")
             or "Welcome to our venue.",
+            "profile_image_url": self._service_profile_image(bundle, service_settings),
             "cover_image_url": bundle["cover_image"],
             "opening_hours": {
                 "monday_friday": "12:00 PM - 11:00 PM",

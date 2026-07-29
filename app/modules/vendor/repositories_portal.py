@@ -64,6 +64,69 @@ class VendorPortalRepository:
         return int(round(cls._to_float(value, float(default))))
 
     @staticmethod
+    def _month_offset(month_start: datetime, offset: int) -> datetime:
+        """Move between real calendar months without fixed-day approximations."""
+        month_index = month_start.year * 12 + month_start.month - 1 + offset
+        return month_start.replace(
+            year=month_index // 12,
+            month=month_index % 12 + 1,
+            day=1,
+        )
+
+    @staticmethod
+    def _as_utc_datetime(value: Any) -> datetime | None:
+        if isinstance(value, datetime):
+            return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+
+    @classmethod
+    def _booking_activity_datetime(cls, booking: dict[str, Any]) -> datetime | None:
+        """Use request time for booking demand, with legacy fallbacks."""
+        for key in ("requested_at", "created_at", "scheduled_date"):
+            parsed = cls._as_utc_datetime(booking.get(key))
+            if parsed is not None:
+                return parsed
+        return None
+
+    def _bookings_for_activity_period(
+        self,
+        vendor_id: str,
+        start: datetime,
+        end: datetime,
+    ) -> list[dict[str, Any]]:
+        start_text = start.date().isoformat()
+        end_text = end.date().isoformat()
+        date_conditions: list[dict[str, Any]] = []
+        for field in ("requested_at", "created_at", "scheduled_date"):
+            date_conditions.extend(
+                [
+                    {field: {"$gte": start, "$lt": end}},
+                    {field: {"$gte": start_text, "$lt": end_text}},
+                ]
+            )
+        candidates = self.bookings.find(
+            {
+                "vendor_id": ObjectId(vendor_id),
+                "$or": date_conditions,
+            }
+        )
+        return [
+            booking
+            for booking in candidates
+            if (
+                (activity_at := self._booking_activity_datetime(booking)) is not None
+                and start <= activity_at < end
+            )
+        ]
+
+    @staticmethod
     def _promotion_type_label(offer_type: str) -> str:
         normalized = offer_type.strip().lower()
         if normalized == "fixed_amount":
@@ -487,23 +550,20 @@ class VendorPortalRepository:
     def get_dashboard_overview(self, vendor_id: str) -> dict[str, Any]:
         now = datetime.now(UTC)
         today = now.date().isoformat()
-        month_start = now.strftime("%Y-%m-01")
-        month_end = (now.replace(day=28) + timedelta(days=4)).replace(day=1).date().isoformat()
-        month_query = {
-            "vendor_id": ObjectId(vendor_id),
-            "scheduled_date": {"$gte": month_start, "$lt": month_end},
-        }
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        month_end = self._month_offset(month_start, 1)
+        month_bookings = self._bookings_for_activity_period(
+            vendor_id, month_start, month_end
+        )
         monthly_revenue = 0.0
         todays_bookings = 0
         service_counts: dict[str, int] = {}
-        for booking in self.bookings.find(
-            month_query,
-            {"scheduled_date": 1, "status": 1, "total_amount": 1, "provider_type": 1, "booking_type": 1, "service": 1},
-        ):
+        for booking in month_bookings:
             booking_status = str(booking.get("status") or "").strip().lower()
             if booking_status in {"complete", "completed"}:
                 monthly_revenue += self._to_float(booking.get("total_amount"))
-            if booking.get("scheduled_date") == today:
+            scheduled_at = self._as_utc_datetime(booking.get("scheduled_date"))
+            if scheduled_at and scheduled_at.date().isoformat() == today:
                 todays_bookings += 1
             provider_type = str(
                 booking.get("provider_type") or booking.get("booking_type") or booking.get("service") or "other"
@@ -519,9 +579,18 @@ class VendorPortalRepository:
             else:
                 provider_type = provider_type.replace("_room", "")
             service_counts[provider_type] = service_counts.get(provider_type, 0) + 1
-        total_bookings_month = int(self.bookings.count_documents(month_query))
-        month_last_day = (datetime.fromisoformat(month_end) - timedelta(days=1)).date().isoformat()
+        total_bookings_month = len(month_bookings)
         review_summary = self.get_reviews_summary(vendor_id)
+        booking_trends = self.get_booking_trends(vendor_id)
+        booking_rows = [
+            self._enrich_booking_customer(booking)
+            for booking in sorted(
+                month_bookings,
+                key=lambda row: self._booking_activity_datetime(row)
+                or datetime.min.replace(tzinfo=UTC),
+                reverse=True,
+            )[:50]
+        ]
         kpis = {
             "total_bookings": total_bookings_month,
             "total_bookings_month": total_bookings_month,
@@ -533,14 +602,8 @@ class VendorPortalRepository:
         return {
             "kpis": kpis,
             "booking_breakdown": {"by_service": service_counts},
-            "booking_rows": self.list_bookings(
-                vendor_id,
-                limit=50,
-                skip=0,
-                date_from=month_start,
-                date_to=month_last_day,
-            ).get("items", []),
-            "booking_trends": self.get_booking_trends(vendor_id),
+            "booking_rows": booking_rows,
+            "booking_trends": booking_trends,
             "calendar_preview": self.get_calendar_preview(vendor_id),
             "upcoming_bookings": self.list_bookings(vendor_id, limit=10, skip=0, status="upcoming").get("items", []),
             "recent_reviews": self.list_reviews(vendor_id, limit=5, skip=0).get("items", []),
@@ -548,33 +611,28 @@ class VendorPortalRepository:
 
     def get_booking_trends(self, vendor_id: str) -> list[dict[str, Any]]:
         now = datetime.now(UTC)
-        earliest = (now.replace(day=1) - timedelta(days=32 * 11)).replace(day=1).strftime("%Y-%m-01")
+        current_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        earliest = self._month_offset(current_month, -11)
+        range_end = self._month_offset(current_month, 1)
         buckets: dict[str, int] = {}
-        for b in self.bookings.find(
-            {
-                "vendor_id": ObjectId(vendor_id),
-                "$or": [
-                    {"scheduled_date": {"$gte": earliest}},
-                    {"created_at": {"$gte": now.replace(day=1) - timedelta(days=32 * 11)}},
-                ],
-            },
-            {"scheduled_date": 1, "created_at": 1},
+        for booking in self._bookings_for_activity_period(
+            vendor_id, earliest, range_end
         ):
-            scheduled_date = b.get("scheduled_date")
-            created_at = b.get("created_at")
-            if scheduled_date:
-                month = str(scheduled_date)[:7]
-            elif isinstance(created_at, datetime):
-                month = created_at.strftime("%Y-%m")
-            else:
-                month = str(created_at or "")[:7]
-            if month:
+            activity_at = self._booking_activity_datetime(booking)
+            if activity_at is not None:
+                month = activity_at.strftime("%Y-%m")
                 buckets[month] = buckets.get(month, 0) + 1
         points: list[dict[str, Any]] = []
-        for i in range(11, -1, -1):
-            dt = (now.replace(day=1) - timedelta(days=32 * i)).replace(day=1)
+        for offset in range(-11, 1):
+            dt = self._month_offset(current_month, offset)
             key = dt.strftime("%Y-%m")
-            points.append({"month": dt.strftime("%b"), "bookings": buckets.get(key, 0)})
+            points.append(
+                {
+                    "period": key,
+                    "month": dt.strftime("%b"),
+                    "bookings": buckets.get(key, 0),
+                }
+            )
         return points
 
     def get_calendar_preview(self, vendor_id: str, month: str | None = None) -> dict[str, Any]:

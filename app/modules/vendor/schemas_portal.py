@@ -306,6 +306,7 @@ class VendorServiceOffer(BaseModel):
 class VendorServiceSettings(BaseModel):
     """Common editable settings shared by restaurant, hotel and spa services."""
     name: str = ""
+    profile_image_url: str | None = None
     address: str = ""
     city: str = ""
     phone: str = ""
@@ -327,6 +328,12 @@ class VendorServiceSettings(BaseModel):
     @classmethod
     def strip_text(cls, value):
         return str(value or "").strip()
+
+    @field_validator("profile_image_url", mode="before")
+    @classmethod
+    def normalize_profile_image_url(cls, value):
+        normalized = str(value or "").strip()
+        return normalized or None
 
     @field_validator("opening_time", "closing_time", mode="before")
     @classmethod
@@ -431,7 +438,6 @@ class VendorServiceSettingsRequest(BaseModel):
         if isinstance(value, dict) and "data" not in value:
             return {"data": value}
         return value
-
 
 class VendorAmenityCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=80)

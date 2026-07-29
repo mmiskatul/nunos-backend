@@ -128,6 +128,74 @@ def test_analytics_uses_selected_range_and_returns_real_csv():
     assert "files.example.com" not in str(export)
 
 
+def test_dashboard_booking_trends_and_month_count_use_booking_request_time():
+    database = mongomock.MongoClient().nuno
+    vendor_id = ObjectId()
+    repository = VendorPortalRepository(database)
+    now = datetime.now(UTC)
+    current_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    next_month = repository._month_offset(current_month, 1)
+    previous_month = repository._month_offset(current_month, -1)
+    same_month_last_year = current_month.replace(year=current_month.year - 1)
+
+    database.vendor_bookings.insert_many(
+        [
+            {
+                "vendor_id": vendor_id,
+                "requested_at": now,
+                "created_at": now,
+                "scheduled_date": (next_month + timedelta(days=4)).date().isoformat(),
+                "provider_type": "restaurant",
+                "status": "pending",
+            },
+            {
+                "vendor_id": vendor_id,
+                "created_at": now,
+                "scheduled_date": now,
+                "provider_type": "hotel",
+                "status": "complete",
+                "total_amount": 100,
+            },
+            {
+                "vendor_id": vendor_id,
+                "scheduled_date": now.date().isoformat(),
+                "provider_type": "spa",
+                "status": "pending",
+            },
+            {
+                "vendor_id": vendor_id,
+                "created_at": previous_month + timedelta(days=2),
+                "provider_type": "event",
+                "status": "pending",
+            },
+            {
+                "vendor_id": vendor_id,
+                "created_at": same_month_last_year + timedelta(days=2),
+                "scheduled_date": now.date().isoformat(),
+                "provider_type": "restaurant",
+                "status": "pending",
+            },
+        ]
+    )
+
+    overview = repository.get_dashboard_overview(str(vendor_id))
+    trends = overview["booking_trends"]
+    current_period = current_month.strftime("%Y-%m")
+    previous_period = previous_month.strftime("%Y-%m")
+    trend_counts = {point["period"]: point["bookings"] for point in trends}
+
+    assert len(trends) == 12
+    assert len({point["period"] for point in trends}) == 12
+    assert len({point["month"] for point in trends}) == 12
+    assert trends[-1]["period"] == current_period
+    assert trend_counts[current_period] == 3
+    assert trend_counts[previous_period] == 1
+    assert overview["kpis"]["total_bookings_month"] == 3
+    assert overview["kpis"]["todays_bookings"] == 2
+    assert overview["kpis"]["monthly_revenue"] == 100
+    assert len(overview["booking_rows"]) == 3
+
+
 def test_vendor_legal_edits_do_not_modify_platform_legal_content():
     database = mongomock.MongoClient().nuno
     vendor_id = ObjectId()
