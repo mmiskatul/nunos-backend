@@ -1687,8 +1687,6 @@ class CustomerRepository:
 
             bundle = self._get_vendor_bundle(vendor_id)
             event_lat, event_lng = self._get_event_coords(event, bundle)
-            if event_lat is None or event_lng is None:
-                continue
 
             active_offer = bundle.get("active_offer") or {}
             venue = str(event.get("venue") or "").strip()

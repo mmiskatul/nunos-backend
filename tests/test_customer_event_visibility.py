@@ -70,6 +70,36 @@ def test_map_events_only_returns_published_non_expired_events_with_coordinates()
     assert result[0]["end_time"] == "10:00:00"
 
 
+def test_event_list_keeps_published_events_without_coordinates():
+    database = mongomock.MongoClient().nuno
+    customer_id = ObjectId()
+    vendor_id = ObjectId()
+    today = datetime.now(UTC).date()
+
+    database.vendors.insert_one({"_id": vendor_id, "status": "approved"})
+    database.vendor_events.insert_one(
+        {
+            "_id": ObjectId(),
+            "vendor_id": vendor_id,
+            "title": "Venue-only event",
+            "event_date": (today + timedelta(days=1)).isoformat(),
+            "start_time": "18:00:00",
+            "end_time": "22:00:00",
+            "timezone": "UTC",
+            "venue": "Community Hall",
+            "status": "published",
+            "active": True,
+        }
+    )
+
+    result = CustomerRepository(database).list_events(str(customer_id), limit=50, skip=0)
+
+    assert len(result["items"]) == 1
+    assert result["items"][0]["title"] == "Venue-only event"
+    assert result["items"][0]["latitude"] is None
+    assert result["items"][0]["longitude"] is None
+
+
 def test_registration_deadline_date_closes_after_the_selected_day():
     repository = CustomerRepository(mongomock.MongoClient().nuno)
     today = datetime.now(UTC).date()
