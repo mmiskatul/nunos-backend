@@ -10,6 +10,7 @@ from pymongo import ASCENDING, DESCENDING
 from pymongo.collection import Collection
 from pymongo.database import Database
 
+from app.domain.event_categories import normalize_event_category
 from app.domain.service_listings import SERVICE_TYPES, collection_name_for, normalize_service_type
 
 
@@ -1718,7 +1719,10 @@ class CustomerRepository:
                 or str(bundle["business"].get("city") or "").strip()
                 or "Location unavailable"
             )
-            event_type = str(event.get("event_type") or "Event").strip()
+            event_type = normalize_event_category(
+                event.get("event_type"),
+                fallback="Culture",
+            )
             capacity = int(event.get("capacity") or 0)
             booking_mode = self._event_booking_mode(event)
             booking_summary = self._event_booking_summary(customer_id, event["_id"], capacity)
@@ -1733,6 +1737,7 @@ class CustomerRepository:
                     "category": str(event.get("category") or "Event").strip(),
                     "entity_type": "event",
                     "event_type": event_type,
+                    "event_category": event_type,
                     "event_date": event.get("event_date"),
                     "end_date": event.get("end_date") or event.get("event_date"),
                     "start_time": event.get("start_time"),
@@ -1954,7 +1959,10 @@ class CustomerRepository:
         event_lat, event_lng = self._get_event_coords(event, bundle)
         customer_lat, customer_lng = self._get_customer_coords(customer_id)
         active_offer = bundle.get("active_offer") or {}
-        event_type = str(event.get("event_type") or "Event").strip()
+        event_type = normalize_event_category(
+            event.get("event_type"),
+            fallback="Culture",
+        )
         venue = str(event.get("venue") or "").strip()
         display_address = (
             venue
@@ -1976,6 +1984,7 @@ class CustomerRepository:
             "category": str(event.get("category") or "Event").strip(),
             "entity_type": "event",
             "event_type": event_type,
+            "event_category": event_type,
             "event_date": event.get("event_date"),
             "end_date": event.get("end_date") or event.get("event_date"),
             "start_time": event.get("start_time"),
@@ -3072,6 +3081,8 @@ class CustomerRepository:
                     "timezone": row.get("timezone"),
                     "offer_text": row.get("offer_text"),
                     "event_type": row.get("event_type"),
+                    "event_category": row.get("event_category")
+                    or row.get("event_type"),
                     "venue": row.get("venue"),
                     "cover_image_url": row.get("cover_image_url"),
                     "banner_image_url": row.get("banner_image_url"),

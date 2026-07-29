@@ -11,6 +11,7 @@ from pymongo import DESCENDING
 from pymongo.collection import Collection
 from pymongo.database import Database
 
+from app.domain.event_categories import normalize_event_category
 from app.domain.service_listings import SERVICE_TYPES, collection_name_for, normalize_service_type
 from app.domain.vendor_categories import normalize_account_categories
 
@@ -362,6 +363,21 @@ class VendorPortalRepository:
                     "label": "Booking approved by service provider",
                 })
             out["status_history"] = history
+        return out
+
+    def _serialize_event(
+        self,
+        doc: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        out = self._serialize(doc)
+        if out is None:
+            return None
+        event_category = normalize_event_category(
+            out.get("event_type"),
+            fallback="Culture",
+        )
+        out["event_type"] = event_category
+        out["event_category"] = event_category
         return out
 
     def list_bookings(
@@ -867,7 +883,11 @@ class VendorPortalRepository:
         if category and category.lower() not in {"all", ""}:
             query["category"] = category.strip()
         docs = self.events.find(query).sort([("event_date", 1), ("start_time", 1), ("created_at", DESCENDING)])
-        return [self._serialize(doc) for doc in docs]
+        return [
+            serialized
+            for doc in docs
+            if (serialized := self._serialize_event(doc)) is not None
+        ]
 
     def create_event(self, vendor_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         now = datetime.now(UTC)
@@ -886,10 +906,10 @@ class VendorPortalRepository:
             }
         )
         created = self.events.find_one({"_id": inserted.inserted_id})
-        return self._serialize(created)  # type: ignore[return-value]
+        return self._serialize_event(created)  # type: ignore[return-value]
 
     def get_event(self, vendor_id: str, event_id: str) -> dict[str, Any] | None:
-        return self._serialize(
+        return self._serialize_event(
             self.events.find_one({"_id": ObjectId(event_id), "vendor_id": ObjectId(vendor_id)})
         )
 

@@ -170,6 +170,7 @@ def test_event_schema_supports_multi_day_and_legacy_single_day_events():
         end_date="2026-08-03",
     )
     assert multi_day.end_date == "2026-08-03"
+    assert multi_day.event_type == "Music"
 
     single_day = VendorEventUpsertRequest(
         **{**shared, "end_time": "22:00"},
@@ -205,6 +206,34 @@ def test_event_registration_deadline_is_normalized_to_date_only():
     )
     assert date_only.registration_deadline == "2026-08-09"
     assert legacy_datetime.registration_deadline == "2026-08-09"
+
+
+def test_event_category_is_limited_to_supported_discovery_categories():
+    shared = {
+        "title": "Community Event",
+        "category": "Event",
+        "event_date": "2026-08-10",
+        "start_time": "10:00",
+        "end_time": "12:00",
+        "venue": "Community Hall",
+        "capacity": 50,
+        "ticket_price": 10,
+    }
+
+    assert VendorEventUpsertRequest(
+        **shared,
+        event_type="Comedy",
+    ).event_type == "Comedy"
+    assert VendorEventUpsertRequest(
+        **shared,
+        event_type="Wedding",
+    ).event_type == "Family"
+
+    with pytest.raises(ValueError, match="Event category must be one of"):
+        VendorEventUpsertRequest(
+            **shared,
+            event_type="Other",
+        )
 
 
 def test_asset_registration_rejects_unsafe_url_schemes():

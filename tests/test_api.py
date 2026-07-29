@@ -956,6 +956,8 @@ async def test_vendor_with_event_module_can_manage_events(client, test_db):
     assert create_res.status_code == 200
     created = create_res.json()
     assert created["category"] == "Restaurant"
+    assert created["event_type"] == "Nightlife"
+    assert created["event_category"] == "Nightlife"
     assert created["status"] == "draft"
     assert created["booking_mode"] == "detailed"
     assert created["registration_deadline"] == "2026-07-19"
@@ -989,6 +991,7 @@ async def test_vendor_with_event_module_can_manage_events(client, test_db):
     assert update_res.status_code == 200
     assert update_res.json()["title"] == "Sunset Networking Dinner Updated"
     assert update_res.json()["category"] == "Restaurant"
+    assert update_res.json()["event_type"] == "Nightlife"
     assert update_res.json()["booking_mode"] == "simple"
 
     bad_category_res = await client.post(
@@ -1047,6 +1050,7 @@ async def test_vendor_with_event_module_can_manage_events(client, test_db):
     assert normalized_created["registration_deadline"] is None
     assert normalized_created["status"] == "cancelled"
     assert normalized_created["booking_mode"] == "simple"
+    assert normalized_created["event_type"] == "Culture"
 
     invalid_time_res = await client.post(
         "/api/v1/vendor/events",
@@ -1165,5 +1169,12 @@ async def test_vendor_registration_form_config_endpoint(client):
     assert any(item["id"] == "Event" for item in payload["categories"])
     assert any(item["id"] == "Happy Hour" for item in payload["categories"])
     assert all(item["id"] != "Event Venue" for item in payload["categories"])
-    assert "Corporate Gala" in payload["event_type_options"]
+    assert payload["event_type_options"] == [
+        "Music",
+        "Nightlife",
+        "Comedy",
+        "Family",
+        "Culture",
+        "Sports",
+    ]
     assert "equipment_options" in payload

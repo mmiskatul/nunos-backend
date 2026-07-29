@@ -4,6 +4,7 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.domain.event_categories import normalize_event_category
 from app.domain.vendor_categories import normalize_account_categories
 
 
@@ -113,6 +114,11 @@ class VendorEventUpsertRequest(BaseModel):
         normalized = value.strip()
         date.fromisoformat(normalized)
         return normalized
+
+    @field_validator("event_type")
+    @classmethod
+    def _normalize_event_category(cls, value: str) -> str:
+        return normalize_event_category(value)
 
     @field_validator("start_time", "end_time")
     @classmethod

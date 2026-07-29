@@ -12,6 +12,7 @@ from app.core.contact import parse_email_or_phone
 from app.core.mongo_errors import duplicate_contact_conflict_detail
 from app.core.session_tokens import SESSION_COLLECTION, build_session_document, session_is_active
 from app.core.security import create_access_token, decode_token, hash_password, verify_password
+from app.domain.event_categories import EVENT_CATEGORY_OPTIONS
 from app.modules.vendor.repositories_password_reset import VendorPasswordResetRepository
 from app.modules.vendor.repositories_signup import VendorSignupVerificationRepository
 from app.modules.vendor.repositories_vendor import VendorRepository
@@ -108,16 +109,7 @@ class VendorAuthService:
                     "desc": "Manage coffee shop orders, quick service menus, and walk-in customer flow.",
                 },
             ],
-            "event_type_options": [
-                "Corporate Gala",
-                "Wedding",
-                "Birthday Party",
-                "Concert",
-                "Conference",
-                "Exhibition",
-                "Private Dinner",
-                "Workshop",
-            ],
+            "event_type_options": list(EVENT_CATEGORY_OPTIONS),
             "equipment_options": [
                 "Sound System",
                 "Lighting",
@@ -149,7 +141,7 @@ class VendorAuthService:
             account_categories.append(module)
         payload = {
             "categories": account_categories or fallback["categories"],
-            "event_type_options": document.get("event_type_options") or fallback["event_type_options"],
+            "event_type_options": list(EVENT_CATEGORY_OPTIONS),
             "equipment_options": document.get("equipment_options") or fallback["equipment_options"],
         }
         return VendorRegistrationFormConfigResponse(**payload)
