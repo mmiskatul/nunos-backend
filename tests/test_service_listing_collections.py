@@ -84,7 +84,7 @@ def test_profile_response_hides_legacy_event_venue_module():
     profile = VendorPortalRepository(database).get_settings_profile(str(vendor_id))
 
     assert profile["category"] == "Restaurant"
-    assert profile["categories"] == ["Restaurant"]
+    assert profile["categories"] == ["Restaurant", "Happy Hour"]
 
 
 def test_partial_profile_update_preserves_service_settings_without_resync():

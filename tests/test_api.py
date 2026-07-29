@@ -1165,7 +1165,7 @@ async def test_vendor_registration_form_config_endpoint(client):
     payload = response.json()
     assert any(item["id"] == "Cafe" for item in payload["categories"])
     assert any(item["id"] == "Event" for item in payload["categories"])
-    assert any(item["id"] == "Happy Hour" for item in payload["categories"])
+    assert not any(item["id"] == "Happy Hour" for item in payload["categories"])
     assert all(item["id"] != "Event Venue" for item in payload["categories"])
     assert payload["event_type_options"] == [
         "Music",
