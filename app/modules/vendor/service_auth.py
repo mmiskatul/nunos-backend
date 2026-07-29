@@ -126,19 +126,6 @@ class VendorAuthService:
             for category in configured_categories
             if str(category.get("id") or "").strip().casefold() != "event venue"
         ]
-        configured_ids = {
-            str(category.get("id") or "").strip().casefold()
-            for category in account_categories
-        }
-        for module_id in ("Event", "Happy Hour"):
-            if module_id.casefold() in configured_ids:
-                continue
-            module = next(
-                category
-                for category in fallback["categories"]
-                if category["id"] == module_id
-            )
-            account_categories.append(module)
         payload = {
             "categories": account_categories or fallback["categories"],
             "event_type_options": list(EVENT_CATEGORY_OPTIONS),
