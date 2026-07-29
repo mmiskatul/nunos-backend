@@ -1686,7 +1686,7 @@ class VendorPortalRepository:
         amenity_name: str,
     ) -> dict[str, Any]:
         """Append one amenity without overwriting the service's other settings."""
-        normalized = normalize_service_type(service_type)
+        normalized = normalize_service_setting_type(service_type)
         profile = self.get_settings_profile(vendor_id)
         settings_key = f"{normalized}_settings"
         service_settings = dict(profile.get(settings_key, {}) or {})
