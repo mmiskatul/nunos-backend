@@ -58,3 +58,14 @@ class AIPlannerService:
             return AIPlan.model_validate(llm_json)
         except ValidationError as exc:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Invalid AI output: {exc}") from exc
+
+    async def create_plan_from_context(self, user_context: dict, candidates: dict[str, list[dict]]) -> AIPlan:
+        """Generate a plan from the authenticated customer's current Nuno data."""
+        prompt = build_planner_prompt(user_context, candidates)
+        try:
+            llm_json = await self.llm_client.generate_json(prompt=prompt, system_prompt=SYSTEM_PROMPT)
+            return AIPlan.model_validate(llm_json)
+        except ValidationError as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Invalid AI output: {exc}") from exc
+        except Exception as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"AI provider failed: {exc}") from exc

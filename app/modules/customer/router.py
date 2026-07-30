@@ -1,7 +1,7 @@
 from bson.errors import InvalidId
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.api.deps import get_current_user
+from app.api.deps import get_ai_service, get_current_user
 from app.modules.customer.deps import get_customer_service
 from app.modules.customer.schemas_live import (
     CustomerAvailabilityRequest,
@@ -17,6 +17,7 @@ from app.modules.customer.schemas_live import (
     CustomerSpaBookingCreateRequest,
 )
 from app.modules.customer.service_customer import CustomerService
+from app.services.ai_service import AIPlannerService
 from app.modules.schemas import (
     GenericPatchRequest,
     PlanForMeStepRequest,
@@ -117,10 +118,15 @@ def set_plan_preferences(session_id: str, payload: PlanForMeStepRequest, current
     "/plan-for-me/sessions/{session_id}/reveal",
     tags=["Customer - Plan"],
 )
-def reveal_plan(session_id: str, current_user: dict = Depends(get_current_user), customer_service: CustomerService = Depends(get_customer_service)) -> dict:
+async def reveal_plan(session_id: str, current_user: dict = Depends(get_current_user), customer_service: CustomerService = Depends(get_customer_service), ai_service: AIPlannerService = Depends(get_ai_service)) -> dict:
     session = customer_service.repo.update_plan_session(current_user["id"], session_id, "revealed", True)
     values = (session or {}).get("values", {})
-    return {"session": session, "recommendations": customer_service.repo.global_search(current_user["id"], str(values.get("preferences") or values.get("mood") or ""), limit=10).get("items", [])}
+    user_context, candidates = customer_service.repo.get_personalized_plan_context(current_user["id"])
+    user_context["plan_preferences"] = values
+    plan = await ai_service.create_plan_from_context(user_context, candidates)
+    updated_session = customer_service.repo.update_plan_session(current_user["id"], session_id, "generated_plan", plan.model_dump(mode="json"))
+    recommendations = [item for group in candidates.values() for item in group]
+    return {"session": updated_session, "plan": plan.model_dump(mode="json"), "recommendations": recommendations}
 
 
 @router.get("/categories", tags=["Customer - Discover"])

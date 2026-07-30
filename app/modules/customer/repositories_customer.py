@@ -1608,6 +1608,81 @@ class CustomerRepository:
         self.customer_plan_sessions.update_one({"_id": self._oid(session_id), "customer_id": self._oid(customer_id)}, {"$set": {f"values.{key}": value, "updated_at": datetime.now(UTC)}})
         return self._serialize(self.customer_plan_sessions.find_one({"_id": self._oid(session_id), "customer_id": self._oid(customer_id)}))
 
+    def get_personalized_plan_context(self, customer_id: str) -> tuple[dict[str, Any], dict[str, list[dict[str, Any]]]]:
+        profile = self.get_customer_profile(customer_id)
+        saved = self.list_saved_items(customer_id).get("items", [])[:20]
+        bookings = self.list_customer_bookings(customer_id, limit=20, skip=0).get("items", [])
+        reviews = self.list_customer_reviews(customer_id, limit=20, skip=0).get("items", [])
+        searches = self.list_recent_searches(customer_id, limit=20).get("items", [])
+
+        user_context = {
+            "profile": {
+                "full_name": profile.get("full_name"),
+                "gender": profile.get("gender"),
+                "location": profile.get("location") or profile.get("address"),
+                "latitude": profile.get("latitude"),
+                "longitude": profile.get("longitude"),
+            },
+            "saved_items": [
+                {
+                    "entity_type": item.get("entity_type"),
+                    "entity_id": item.get("entity_id"),
+                    "name": item.get("name") or item.get("title"),
+                    "location": item.get("location") or item.get("address"),
+                    "rating": item.get("rating") or item.get("avg_rating"),
+                }
+                for item in saved
+            ],
+            "booking_history": [
+                {
+                    "provider_type": item.get("provider_type"),
+                    "provider_name": item.get("provider_name") or item.get("name"),
+                    "status": item.get("status"),
+                    "created_at": item.get("created_at"),
+                }
+                for item in bookings
+            ],
+            "review_history": [
+                {
+                    "provider_type": item.get("provider_type"),
+                    "provider_name": item.get("provider_name"),
+                    "rating": item.get("rating") or item.get("star_rating"),
+                    "review_text": item.get("review_text"),
+                }
+                for item in reviews
+            ],
+            "recent_searches": [{"query": item.get("query")} for item in searches],
+        }
+
+        raw_groups = {
+            "restaurants": self.list_restaurants(customer_id, 12, 0, nearby=True).get("items", []),
+            "events": self.list_events(customer_id, 12, 0).get("items", []),
+            "spas": self.list_spas(customer_id, 12, 0, nearby=True).get("items", []),
+            "hotels": self.list_hotels(customer_id, 12, 0, nearby=True).get("items", []),
+            "happy_hours": self.list_happy_hours(customer_id, 12, 0).get("items", []),
+        }
+        candidates: dict[str, list[dict[str, Any]]] = {}
+        for category, rows in raw_groups.items():
+            candidates[category] = [
+                {
+                    "id": row.get("id"),
+                    "name": row.get("name") or row.get("title"),
+                    "type": row.get("entity_type") or row.get("service_type") or category,
+                    "location": row.get("location") or row.get("address"),
+                    "distance_km": row.get("distance_km"),
+                    "rating": row.get("rating") or row.get("avg_rating"),
+                    "reviews_count": row.get("reviews_count"),
+                    "offer_text": row.get("offer_text"),
+                    "event_date": row.get("event_date"),
+                    "start_time": row.get("start_time"),
+                    "end_time": row.get("end_time"),
+                    "original_price": row.get("original_price"),
+                    "happy_hour_price": row.get("happy_hour_price"),
+                }
+                for row in rows
+            ]
+        return user_context, candidates
+
     def get_restaurant_details(self, customer_id: str, restaurant_id: str, service_type: str = "restaurant") -> dict[str, Any] | None:
         service_type = normalize_service_type(service_type)
         vendor = self.vendors.find_one({"_id": self._oid(restaurant_id), "status": "approved"})
