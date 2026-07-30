@@ -26,6 +26,19 @@ def _vendor_category_label(vendor: dict) -> str:
             return ", ".join(normalized)
     return str(vendor.get("category") or "—")
 
+def _number(value: Any) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _date_label(value: Any) -> str:
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc).strftime("%b %d, %Y %H:%M")
+    return str(value or "—")
+
+
 def get_cached_data(key: str, ttl: int = 5):
     now = time.time()
     if key in _CACHE:
@@ -180,14 +193,17 @@ async def get_platform_dashboard_overview(
         month = (current_month - i - 1) % 12 + 1
         year = current_year if current_month - i > 0 else current_year - 1
         label = datetime(year, month, 1).strftime("%b")
-        count = await db["bookings"].count_documents({
-            "created_at": {
+        revenue_result = await db["bookings"].aggregate([
+            {"$match": {"created_at": {
                 "$gte": datetime(year, month, 1, tzinfo=timezone.utc),
                 "$lt": datetime(year, month % 12 + 1, 1, tzinfo=timezone.utc) if month < 12
                        else datetime(year + 1, 1, 1, tzinfo=timezone.utc),
-            }
-        })
-        monthly_data.append({"period": label, "value": count})
+            }}},
+            {"$group": {"_id": None, "total": {"$sum": {"$convert": {
+                "input": "$total_amount", "to": "double", "onError": 0, "onNull": 0
+            }}}}},
+        ]).to_list(1)
+        monthly_data.append({"period": label, "value": round(_number(revenue_result[0].get("total", 0) if revenue_result else 0), 2)})
 
     # Weekly data — last 7 days
     weekly_data = []
@@ -197,10 +213,23 @@ async def get_platform_dashboard_overview(
         label = day.strftime("%a")
         day_start = day.replace(hour=0, minute=0, second=0, microsecond=0)
         day_end = day.replace(hour=23, minute=59, second=59, microsecond=999999)
-        count = await db["bookings"].count_documents({
-            "created_at": {"$gte": day_start, "$lte": day_end}
-        })
-        weekly_data.append({"period": label, "value": count})
+        revenue_result = await db["bookings"].aggregate([
+            {"$match": {"created_at": {"$gte": day_start, "$lte": day_end}}},
+            {"$group": {"_id": None, "total": {"$sum": {"$convert": {
+                "input": "$total_amount", "to": "double", "onError": 0, "onNull": 0
+            }}}}},
+        ]).to_list(1)
+        weekly_data.append({"period": label, "value": round(_number(revenue_result[0].get("total", 0) if revenue_result else 0), 2)})
+
+    status_results = await db["bookings"].aggregate([
+        {"$group": {"_id": {"$toLower": {"$ifNull": ["$status", "unknown"]}}, "count": {"$sum": 1}}}
+    ]).to_list(20)
+    booking_statuses = {str(item.get("_id") or "unknown"): int(item.get("count") or 0) for item in status_results}
+    active_vendor_count = await db["vendors"].count_documents({"status": {"$in": ["active", "approved"]}})
+    pending_vendor_count = await db["vendors"].count_documents({"status": {"$in": ["pending", "pending_review", "pending_approval"]}})
+    blocked_vendor_count = await db["vendors"].count_documents({"status": {"$in": ["blocked", "suspended"]}})
+    total_offers = await db["offers"].count_documents({})
+    expired_offers = await db["offers"].count_documents({"is_active": {"$ne": True}})
 
     # Booking insights by type
     type_pipeline = [{"$group": {"_id": "$provider_type", "count": {"$sum": 1}}}]
@@ -229,7 +258,8 @@ async def get_platform_dashboard_overview(
         name = v.get("business_name", "Unknown")
         code = "".join(w[0].upper() for w in name.split()[:2]) or "??"
         rating = str(round(float(v.get("average_rating") or 0), 1))
-        revenue_raw = float(v.get("total_revenue") or 0)
+        vendor_bookings = await db["bookings"].find({"vendor_id": {"$in": [v.get("_id"), str(v.get("_id"))]}}).to_list(5000)
+        revenue_raw = sum(_number(booking.get("total_amount")) for booking in vendor_bookings)
         revenue = f"${revenue_raw / 1000:.1f}k" if revenue_raw >= 1000 else f"${revenue_raw:.0f}"
         perf = float(v.get("average_rating") or 0)
         status = "TOP PERFORMER" if perf >= 4.5 else ("AT RISK" if perf < 3.0 else "ACTIVE")
@@ -241,7 +271,19 @@ async def get_platform_dashboard_overview(
             "rating": rating,
             "revenue": revenue,
             "status": status,
+            "bookings": len(vendor_bookings),
         })
+
+    recent_raw = await db["bookings"].find({}).sort("created_at", -1).limit(10).to_list(10)
+    recent_bookings = [{
+        "id": str(item.get("_id") or ""),
+        "customer": str(item.get("customer_name") or item.get("user_name") or "Customer"),
+        "vendor": str(item.get("vendor_name") or item.get("business_name") or "Vendor"),
+        "type": str(item.get("provider_type") or item.get("booking_type") or "other").replace("_", " ").title(),
+        "amount": round(_number(item.get("total_amount")), 2),
+        "status": str(item.get("status") or "unknown").replace("_", " ").title(),
+        "date": _date_label(item.get("created_at")),
+    } for item in recent_raw]
 
     return {
         "stats": [
@@ -292,7 +334,37 @@ async def get_platform_dashboard_overview(
             "monthly": total_bookings,
         },
         "vendors": vendors,
+        "details": {
+            "users": {"total": total_users, "active": await db["users"].count_documents({"status": "active"})},
+            "vendors": {"total": total_vendors, "active": active_vendor_count, "pending": pending_vendor_count, "blocked": blocked_vendor_count},
+            "bookings": {"total": total_bookings, "pending": booking_statuses.get("pending", 0), "confirmed": booking_statuses.get("confirmed", 0), "completed": booking_statuses.get("complete", 0) + booking_statuses.get("completed", 0), "cancelled": booking_statuses.get("cancelled", 0) + booking_statuses.get("canceled", 0)},
+            "offers": {"total": total_offers, "active": active_offers, "inactive": expired_offers},
+        },
+        "recentBookings": recent_bookings,
     }
+
+
+@router.get("/dashboard/revenue-growth", tags=["Platform Admin - Dashboard"])
+async def get_platform_revenue_growth(db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
+    overview = await get_platform_dashboard_overview(db)
+    return {"monthlyData": overview["monthlyData"], "weeklyData": overview["weeklyData"]}
+
+
+@router.get("/dashboard/booking-insights", tags=["Platform Admin - Dashboard"])
+async def get_platform_booking_insights(db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
+    overview = await get_platform_dashboard_overview(db)
+    return {
+        "bookingByRange": overview["bookingByRange"],
+        "bookingTotals": overview["bookingTotals"],
+        "bookingDetails": overview["details"]["bookings"],
+        "recentBookings": overview["recentBookings"],
+    }
+
+
+@router.get("/dashboard/vendor-performance", tags=["Platform Admin - Dashboard"])
+async def get_platform_vendor_performance(db: AsyncIOMotorDatabase = Depends(get_db)) -> dict:
+    overview = await get_platform_dashboard_overview(db)
+    return {"vendors": overview["vendors"], "vendorDetails": overview["details"]["vendors"]}
 
 
 @router.get("/users/{user_id}/bookings", tags=["Platform Admin - Users"], response_model=PlannedEndpointResponse)
