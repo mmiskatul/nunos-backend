@@ -509,6 +509,7 @@ async def test_customer_events_and_map_events_return_published_vendor_events(cli
         await test_db.vendors.insert_one(
             {
                 "business_name": "Skyline Events",
+                "categories": ["Event"],
                 "owner_full_name": "Vendor Owner",
                 "email": "vendor@example.com",
                 "status": "approved",

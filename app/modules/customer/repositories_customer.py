@@ -138,9 +138,6 @@ class CustomerRepository:
                 if collection.find_one({"vendor_id": vendor_id, "published": True}, {"_id": 1}):
                     enabled.add(service_type)
 
-        if not explicit_categories and not enabled:
-            if self.vendor_events.find_one({"vendor_id": vendor_id, "status": "published"}, {"_id": 1}):
-                enabled.add("event")
         return enabled or {"restaurant"}
 
     def _vendor_module_enabled(self, vendor_id: ObjectId, service_type: str) -> bool:
@@ -1165,6 +1162,7 @@ class CustomerRepository:
         hotels = self.list_hotels(customer_id, 50, 0, nearby=True).get("items", [])
         spas = self.list_spas(customer_id, 50, 0, nearby=True).get("items", [])
         events = self.list_events(customer_id, 50, 0).get("items", [])
+        happy_hours = self.list_happy_hours(customer_id, 50, 0).get("items", [])
         quick_access = []
         if restaurants:
             quick_access.append({"key": "dining", "label": "Dining"})
@@ -1174,7 +1172,11 @@ class CustomerRepository:
             quick_access.append({"key": "spa", "label": "Spa"})
         if hotels:
             quick_access.append({"key": "hotels", "label": "Hotels"})
-        featured = restaurants[:6]
+        featured = [
+            item
+            for group in (restaurants, events, spas, hotels, happy_hours)
+            for item in group
+        ][:6]
         return {
             "greeting": "Good Morning",
             "plan_for_me": {"title": "Plan for me", "subtitle": "Tell us your mood, budget & time"},

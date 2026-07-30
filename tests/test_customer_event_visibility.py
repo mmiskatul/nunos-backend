@@ -14,7 +14,7 @@ def test_map_events_only_returns_published_non_expired_events_with_coordinates()
     today = datetime.now(UTC).date()
 
     database.users.insert_one({"_id": customer_id, "latitude": 25.28, "longitude": 51.53})
-    database.vendors.insert_one({"_id": vendor_id, "status": "approved", "business_name": "Live Events"})
+    database.vendors.insert_one({"_id": vendor_id, "status": "approved", "business_name": "Live Events", "categories": ["Event"]})
     database.vendor_events.insert_many(
         [
             {
@@ -76,7 +76,7 @@ def test_event_list_keeps_published_events_without_coordinates():
     vendor_id = ObjectId()
     today = datetime.now(UTC).date()
 
-    database.vendors.insert_one({"_id": vendor_id, "status": "approved"})
+    database.vendors.insert_one({"_id": vendor_id, "status": "approved", "categories": ["Event"]})
     database.vendor_business_details.insert_one(
         {"vendor_id": vendor_id, "latitude": 23.78, "longitude": 90.40}
     )
