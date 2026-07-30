@@ -1721,6 +1721,7 @@ class CustomerRepository:
         query: dict[str, Any] = {
             "status": "published",
             "active": {"$ne": False},
+            "active_status": {"$ne": False},
             "$nor": [self._legacy_happy_hour_match()],
         }
         if search:
@@ -1801,10 +1802,10 @@ class CustomerRepository:
                     "longitude": event_lng,
                     "distance_km": self._distance_between_km(customer_lat, customer_lng, event_lat, event_lng),
                      "cover_image_url": event.get("banner_image_url")
-                     or bundle["cover_image"]
-                     or "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=1200",
+                     or self._service_profile_image(bundle, event_settings)
+                     or "",
                      "profile_image_url": self._service_profile_image(bundle, event_settings),
-                     "banner_image_url": event.get("banner_image_url") or bundle["cover_image"],
+                    "banner_image_url": event.get("banner_image_url") or "",
                     "offer_text": active_offer.get("promotion_name") or event_type,
                     "description": event.get("description") or "",
                     "ticket_price": event.get("ticket_price"),
