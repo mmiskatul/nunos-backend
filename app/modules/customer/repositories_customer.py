@@ -1136,16 +1136,23 @@ class CustomerRepository:
 
     def get_home_feed(self, customer_id: str) -> dict[str, Any]:
         restaurants = self.list_restaurants(customer_id=customer_id, limit=50, skip=0, nearby=True).get("items", [])
+        hotels = self.list_hotels(customer_id, 50, 0, nearby=True).get("items", [])
+        spas = self.list_spas(customer_id, 50, 0, nearby=True).get("items", [])
+        events = self.list_events(customer_id, 50, 0).get("items", [])
+        quick_access = []
+        if restaurants:
+            quick_access.append({"key": "dining", "label": "Dining"})
+        if events:
+            quick_access.append({"key": "events", "label": "Events"})
+        if spas:
+            quick_access.append({"key": "spa", "label": "Spa"})
+        if hotels:
+            quick_access.append({"key": "hotels", "label": "Hotels"})
         featured = restaurants[:6]
         return {
             "greeting": "Good Morning",
             "plan_for_me": {"title": "Plan for me", "subtitle": "Tell us your mood, budget & time"},
-            "quick_access": [
-                {"key": "dining", "label": "Dining"},
-                {"key": "events", "label": "Events"},
-                {"key": "spa", "label": "Spa"},
-                {"key": "hotels", "label": "Hotels"},
-            ],
+            "quick_access": quick_access,
             "trending_now": self.get_trending_hotels(customer_id),
             "featured_experiences": featured,
         }
