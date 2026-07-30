@@ -1242,6 +1242,16 @@ async def upload_vendor_profile_avatar(
     return {"avatar_url": result.url, "settings": saved, "message": "Avatar updated successfully."}
 
 
+@router.delete("/settings/profile/avatar", tags=["Vendor - Settings"])
+def delete_vendor_profile_avatar(
+    current_vendor: dict = Depends(get_current_vendor),
+    portal_repo=Depends(get_vendor_portal_repository),
+) -> dict:
+    """Remove the canonical provider avatar while keeping service images intact."""
+    saved = portal_repo.update_avatar_url(_vendor_id(current_vendor), "")
+    return {"avatar_url": "", "settings": saved, "message": "Avatar removed successfully."}
+
+
 # ---------------------------------------------------------------------------
 # Settings — password change
 # ---------------------------------------------------------------------------

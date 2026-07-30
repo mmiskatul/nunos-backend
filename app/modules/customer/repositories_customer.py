@@ -1146,6 +1146,8 @@ class CustomerRepository:
         for vendor in public_spas:
             bundle = self._get_vendor_bundle(vendor["_id"], "spa")
             settings = self._service_settings(bundle, "spa")
+            if settings.get("published") is False:
+                continue
             name = settings.get("name") or vendor.get("business_name") or "Unnamed Spa"
             lat, lng = self._get_vendor_coords(bundle, "spa")
             distance = self._distance_between_km(customer_lat, customer_lng, lat, lng)
@@ -1673,6 +1675,9 @@ class CustomerRepository:
                 continue
 
             bundle = self._get_vendor_bundle(vendor_id)
+            event_settings = self._service_settings(bundle, "event")
+            if event_settings.get("published") is False:
+                continue
             event_lat, event_lng = self._get_event_coords(event, bundle)
 
             active_offer = bundle.get("active_offer") or {}
@@ -1713,10 +1718,11 @@ class CustomerRepository:
                     "latitude": event_lat,
                     "longitude": event_lng,
                     "distance_km": self._distance_between_km(customer_lat, customer_lng, event_lat, event_lng),
-                    "cover_image_url": event.get("banner_image_url")
-                    or bundle["cover_image"]
-                    or "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=1200",
-                    "banner_image_url": event.get("banner_image_url") or bundle["cover_image"],
+                     "cover_image_url": event.get("banner_image_url")
+                     or bundle["cover_image"]
+                     or "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=1200",
+                     "profile_image_url": self._service_profile_image(bundle, event_settings),
+                     "banner_image_url": event.get("banner_image_url") or bundle["cover_image"],
                     "offer_text": active_offer.get("promotion_name") or event_type,
                     "description": event.get("description") or "",
                     "ticket_price": event.get("ticket_price"),
@@ -1914,6 +1920,9 @@ class CustomerRepository:
             return None
 
         bundle = self._get_vendor_bundle(vendor_id)
+        event_settings = self._service_settings(bundle, "event")
+        if event_settings.get("published") is False:
+            return None
         event_lat, event_lng = self._get_event_coords(event, bundle)
         customer_lat, customer_lng = self._get_customer_coords(customer_id)
         active_offer = bundle.get("active_offer") or {}
@@ -1956,6 +1965,7 @@ class CustomerRepository:
             "cover_image_url": event.get("banner_image_url")
             or bundle["cover_image"]
             or "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=1200",
+            "profile_image_url": self._service_profile_image(bundle, event_settings),
             "banner_image_url": event.get("banner_image_url") or bundle["cover_image"],
             "offer_text": active_offer.get("promotion_name") or event_type,
             "description": event.get("description") or "",
