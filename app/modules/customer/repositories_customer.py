@@ -1,4 +1,4 @@
-import hashlib
+﻿import hashlib
 import math
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -1058,7 +1058,7 @@ class CustomerRepository:
             "vendor_id": str(doc.get("vendor_id")),
             "title": doc.get("name") or "Room",
             "status": "Available" if doc.get("available", True) else "Unavailable",
-            "size": f"{doc['size_sqm']} m²" if doc.get("size_sqm") is not None else "",
+            "size": f"{doc['size_sqm']} mÂ²" if doc.get("size_sqm") is not None else "",
             "guests": f"{doc['max_guests']} Guests" if doc.get("max_guests") is not None else "",
             "bed": doc.get("bed_type") or "",
             "view": doc.get("view") or doc.get("room_view") or "",
@@ -1109,57 +1109,36 @@ class CustomerRepository:
         }
 
     def get_trending_hotels(self, customer_id: str, limit: int = 6) -> list[dict[str, Any]]:
-        restaurants = self.list_hotels(customer_id=customer_id, limit=50, skip=0, nearby=True).get("items", [])
-        trending: list[dict[str, Any]] = []
-        for card in restaurants:
-            vendor_id = self._oid(card["id"])
-            category = "hotel"
-
-            # Trending Now is intentionally hotel-only. A hotel is eligible
-            # only while it has at least one available room right now.
-            has_available_room = self.vendor_rooms.count_documents(
-                {"vendor_id": vendor_id, "available": True},
-                limit=1,
-            ) > 0
-            if not has_available_room:
-                continue
-
-            room_image = self.vendor_rooms.find_one(
-                {"vendor_id": vendor_id, "available": True, "images": {"$exists": True, "$ne": []}},
-                {"images": 1},
-                sort=[("created_at", DESCENDING)],
-            )
-            uploaded_image = next(
-                (image for image in (room_image or {}).get("images", []) if image),
-                None,
-            )
-
-            usage_count = self.vendor_bookings.count_documents(
-                {
-                    "vendor_id": vendor_id,
-                    "status": {"$nin": ["cancelled", "rejected"]},
-                }
-            )
-            trending.append(
-                {
-                    **card,
-                    "cover_image_url": uploaded_image or card.get("cover_image_url"),
-                    "entity_type": category,
-                    "detail_route": f"/home/hotels/{card['id']}",
-                    "usage_count": usage_count,
-                }
-            )
-
-        trending.sort(
-            key=lambda row: (
-                row["usage_count"],
-                row.get("reviews_count", 0),
-                row.get("rating", 0),
-            ),
-            reverse=True,
+        """Return a mixed, nearby trending feed for all customer offerings."""
+        max_items = max(1, min(limit, 50))
+        sources = (
+            ("hotel", self.list_hotels(customer_id, 50, 0, nearby=True).get("items", [])),
+            ("restaurant", self.list_restaurants(customer_id, 50, 0, nearby=True).get("items", [])),
+            ("spa", self.list_spas(customer_id, 50, 0, nearby=True).get("items", [])),
+            ("event", self.list_events(customer_id, 50, 0).get("items", [])),
         )
-        return trending[: max(1, min(limit, 50))]
-
+        trending: list[dict[str, Any]] = []
+        for category, cards in sources:
+            for card in cards:
+                distance = card.get("distance_km")
+                if category == "event" and distance is not None and distance > 50:
+                    continue
+                row = {**card, "entity_type": category, "service_type": category}
+                row["detail_route"] = f"/home/{'dining' if category == 'restaurant' else 'spa' if category == 'spa' else category + 's'}/{card['id']}"
+                vendor_id = self._oid(card["id"]) if category != "event" else None
+                usage_count = self.vendor_bookings.count_documents({"vendor_id": vendor_id, "status": {"$nin": ["cancelled", "rejected"]}}) if vendor_id is not None else 0
+                row["usage_count"] = usage_count
+                row["trend_score"] = usage_count * 3 + int(row.get("reviews_count") or row.get("reviews") or 0) + float(row.get("rating") or row.get("avg_rating") or 0) * 10
+                trending.append(row)
+        trending.sort(key=lambda row: (row.get("distance_km") is None, row.get("distance_km") if row.get("distance_km") is not None else 10000, -row.get("trend_score", 0)))
+        selected = []
+        for category in ("hotel", "restaurant", "spa", "event"):
+            match = next((row for row in trending if row["entity_type"] == category), None)
+            if match:
+                selected.append(match)
+        selected_ids = {id(row) for row in selected}
+        selected.extend(row for row in trending if id(row) not in selected_ids)
+        return selected[:max_items]
     def list_spas(self, customer_id: str, limit: int, skip: int, search: str | None = None, nearby: bool = False, max_distance_km: float = 50.0) -> dict[str, Any]:
         public_spas = self._published_vendor_docs("spa", search=search)
         items = []
