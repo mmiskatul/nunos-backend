@@ -1915,8 +1915,7 @@ class VendorPortalRepository:
             or ([verification.get("category")] if verification.get("category") else None)
             or ([vendor.get("category")] if vendor.get("category") else ["Restaurant"])
         )
-        if "Happy Hour" not in categories:
-            categories.append("Happy Hour")
+        categories = [category for category in categories if category != "Happy Hour"]
         category = (
             categories[0]
             if str(raw_category).strip().casefold() == "event venue"
@@ -2002,8 +2001,7 @@ class VendorPortalRepository:
         next_categories = normalize_account_categories(
             next_profile.get("categories") or [next_category]
         )
-        if "Happy Hour" not in next_categories:
-            next_categories.append("Happy Hour")
+        next_categories = [category for category in next_categories if category != "Happy Hour"]
         if str(next_category).strip().casefold() == "event venue":
             next_category = next_categories[0]
         next_profile["category"] = next_category

@@ -12,6 +12,7 @@ from pymongo.database import Database
 
 from app.domain.event_categories import normalize_event_category
 from app.domain.service_listings import SERVICE_TYPES, collection_name_for, normalize_service_type
+from app.domain.vendor_categories import normalize_account_categories
 
 
 class CustomerRepository:
@@ -92,6 +93,42 @@ class CustomerRepository:
         user = self.users.find_one({"_id": self._oid(customer_id)}, {"latitude": 1, "longitude": 1}) or {}
         return self._to_float(user.get("latitude")), self._to_float(user.get("longitude"))
 
+    def _vendor_enabled_categories(self, vendor_id: ObjectId) -> set[str]:
+        portal = self.vendor_portal_settings.find_one(
+            {"vendor_id": vendor_id},
+            {"profile.categories": 1, "profile.category": 1},
+        ) or {}
+        profile = portal.get("profile") or {}
+        sources = [
+            profile,
+            self.vendor_verification_details.find_one(
+                {"vendor_id": vendor_id}, {"categories": 1, "category": 1}
+            ) or {},
+            self.vendors.find_one(
+                {"_id": vendor_id}, {"categories": 1, "category": 1}
+            ) or {},
+        ]
+        for source in sources:
+            values = source.get("categories")
+            if isinstance(values, list) and values:
+                return {category.casefold() for category in normalize_account_categories(values)}
+            category = source.get("category")
+            if category:
+                return {item.casefold() for item in normalize_account_categories([category])}
+        return {"restaurant"}
+
+    def _vendor_module_enabled(self, vendor_id: ObjectId, service_type: str) -> bool:
+        # Happy Hour is a universal service and is not an onboarding module.
+        if service_type == "happy_hour":
+            return True
+        category = {
+            "restaurant": "restaurant",
+            "hotel": "hotel",
+            "spa": "spa",
+            "event": "event",
+        }.get(service_type, service_type).casefold()
+        return category in self._vendor_enabled_categories(vendor_id)
+
     def _published_vendor_docs(
         self,
         service_type: str,
@@ -135,6 +172,11 @@ class CustomerRepository:
             for vendor_id in settings_by_vendor
             if vendor_id not in listings_by_vendor
         )
+        public_vendor_ids = {
+            vendor_id
+            for vendor_id in public_vendor_ids
+            if self._vendor_module_enabled(vendor_id, normalized)
+        }
         if not public_vendor_ids:
             return []
 
@@ -1116,6 +1158,7 @@ class CustomerRepository:
             ("restaurant", self.list_restaurants(customer_id, 50, 0, nearby=True).get("items", [])),
             ("spa", self.list_spas(customer_id, 50, 0, nearby=True).get("items", [])),
             ("event", self.list_events(customer_id, 50, 0).get("items", [])),
+            ("happy_hour", self.list_happy_hours(customer_id, 50, 0).get("items", [])),
         )
         trending: list[dict[str, Any]] = []
         for category, cards in sources:
@@ -1124,15 +1167,15 @@ class CustomerRepository:
                 if category == "event" and distance is not None and distance > 50:
                     continue
                 row = {**card, "entity_type": category, "service_type": category}
-                row["detail_route"] = f"/home/{'dining' if category == 'restaurant' else 'spa' if category == 'spa' else category + 's'}/{card['id']}"
-                vendor_id = self._oid(card["id"]) if category != "event" else None
+                row["detail_route"] = card.get("detail_route") or f"/home/{'dining' if category == 'restaurant' else 'spa' if category == 'spa' else category + 's'}/{card['id']}"
+                vendor_id = self._oid(card["vendor_id"]) if category in {"event", "happy_hour"} else self._oid(card["id"])
                 usage_count = self.vendor_bookings.count_documents({"vendor_id": vendor_id, "status": {"$nin": ["cancelled", "rejected"]}}) if vendor_id is not None else 0
                 row["usage_count"] = usage_count
                 row["trend_score"] = usage_count * 3 + int(row.get("reviews_count") or row.get("reviews") or 0) + float(row.get("rating") or row.get("avg_rating") or 0) * 10
                 trending.append(row)
         trending.sort(key=lambda row: (row.get("distance_km") is None, row.get("distance_km") if row.get("distance_km") is not None else 10000, -row.get("trend_score", 0)))
         selected = []
-        for category in ("hotel", "restaurant", "spa", "event"):
+        for category in ("hotel", "restaurant", "spa", "event", "happy_hour"):
             match = next((row for row in trending if row["entity_type"] == category), None)
             if match:
                 selected.append(match)
@@ -1672,6 +1715,8 @@ class CustomerRepository:
 
             vendor = self.vendors.find_one({"_id": vendor_id, "status": "approved"})
             if not vendor:
+                continue
+            if not self._vendor_module_enabled(vendor_id, "event"):
                 continue
 
             bundle = self._get_vendor_bundle(vendor_id)
