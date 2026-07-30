@@ -1546,8 +1546,24 @@ class CustomerRepository:
                 detail = self.get_hotel_details(customer_id, entity_id)
             elif entity_type == "event":
                 detail = self.get_event_details(customer_id, entity_id)
+            elif entity_type == "happy_hour":
+                detail = next(
+                    (
+                        item
+                        for item in self.list_happy_hours(customer_id, 50, 0).get("items", [])
+                        if str(item.get("id") or "") == entity_id
+                    ),
+                    None,
+                )
             if detail:
-                items.append({"entity_type": entity_type, "entity_id": entity_id, **detail})
+                items.append({
+                    "entity_type": entity_type,
+                    "entity_id": entity_id,
+                    "customer_id": customer_id,
+                    "saved_at": saved.get("created_at"),
+                    "updated_at": saved.get("updated_at"),
+                    **detail,
+                })
         return {"items": items, "total": len(items)}
 
     def add_saved_item(self, customer_id: str, entity_type: str, entity_id: str) -> dict[str, Any]:
