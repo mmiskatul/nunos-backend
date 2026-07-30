@@ -472,6 +472,8 @@ class VendorPortalRepository:
         status_normalized = status.lower().strip()
         if status_normalized == "cancelled":
             status_normalized = "canceled"
+        if status_normalized == "completed":
+            status_normalized = "complete"
         booking = self.bookings.find_one({"_id": ObjectId(booking_id), "vendor_id": ObjectId(vendor_id)})
         if not booking:
             return None
