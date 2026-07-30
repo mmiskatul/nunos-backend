@@ -1306,6 +1306,8 @@ class CustomerRepository:
                 }
             )
             if self._event_is_not_expired(event)
+            and isinstance(event.get("vendor_id"), ObjectId)
+            and self._vendor_module_enabled(event["vendor_id"], "event")
         )
         counts["happy_hour"] = int(
             self.list_happy_hours(
