@@ -3075,8 +3075,42 @@ class CustomerRepository:
                     "rating": row["rating"],
                     "distance_km": row["distance_km"],
                     "offer_text": row.get("offer_text"),
+                    "profile_image_url": row.get("profile_image_url"),
+                    "cover_image_url": row.get("cover_image_url"),
+                    "entity_type": "restaurant",
+                    "service_type": "restaurant",
                 }
             )
+        hotels = self.list_hotels(customer_id=customer_id, limit=limit, skip=0).get("items", [])
+        for row in hotels:
+            lat = self._to_float(row.get("latitude"))
+            lng = self._to_float(row.get("longitude"))
+            if lat is None or lng is None:
+                continue
+            pins.append({
+                **row,
+                "id": row["id"],
+                "name": row.get("title") or row.get("name") or "Hotel",
+                "lat": lat,
+                "lng": lng,
+                "entity_type": "hotel",
+                "service_type": "hotel",
+            })
+        spas = self.list_spas(customer_id=customer_id, limit=limit, skip=0).get("items", [])
+        for row in spas:
+            lat = self._to_float(row.get("latitude"))
+            lng = self._to_float(row.get("longitude"))
+            if lat is None or lng is None:
+                continue
+            pins.append({
+                **row,
+                "id": row["id"],
+                "name": row.get("title") or row.get("name") or "Spa",
+                "lat": lat,
+                "lng": lng,
+                "entity_type": "spa",
+                "service_type": "spa",
+            })
         events = self.list_events(customer_id=customer_id, limit=max(1, min(limit, 50)), skip=0).get("items", [])
         for row in events:
             lat = self._to_float(row.get("latitude"))
@@ -3093,8 +3127,24 @@ class CustomerRepository:
                     "distance_km": row["distance_km"],
                     "offer_text": row.get("offer_text"),
                     "entity_type": "event",
+                    "service_type": "event",
                 }
             )
+        happy_hours = self.list_happy_hours(customer_id=customer_id, limit=max(1, min(limit, 50)), skip=0).get("items", [])
+        for row in happy_hours:
+            lat = self._to_float(row.get("latitude"))
+            lng = self._to_float(row.get("longitude"))
+            if lat is None or lng is None:
+                continue
+            pins.append({
+                **row,
+                "id": row.get("id") or str(row.get("_id")),
+                "name": row.get("title") or row.get("venue") or "Happy Hour",
+                "lat": lat,
+                "lng": lng,
+                "entity_type": "happy_hour",
+                "service_type": "happy_hour",
+            })
         return pins
 
     def map_events(self, customer_id: str, limit: int) -> list[dict[str, Any]]:
