@@ -96,7 +96,7 @@ class CustomerRepository:
     def _vendor_enabled_categories(self, vendor_id: ObjectId) -> set[str]:
         portal = self.vendor_portal_settings.find_one(
             {"vendor_id": vendor_id},
-            {"profile.categories": 1, "profile.category": 1},
+            {"profile": 1},
         ) or {}
         profile = portal.get("profile") or {}
         sources = [
@@ -107,15 +107,41 @@ class CustomerRepository:
             self.vendors.find_one(
                 {"_id": vendor_id}, {"categories": 1, "category": 1}
             ) or {},
+            self.vendor_profiles.find_one(
+                {"vendor_id": vendor_id}, {"categories": 1, "category": 1}
+            ) or {},
         ]
+        explicit_categories = False
         for source in sources:
             values = source.get("categories")
             if isinstance(values, list) and values:
+                explicit_categories = True
                 return {category.casefold() for category in normalize_account_categories(values)}
+
+        enabled = set()
+        for source in sources:
             category = source.get("category")
             if category:
-                return {item.casefold() for item in normalize_account_categories([category])}
-        return {"restaurant"}
+                enabled.update(item.casefold() for item in normalize_account_categories([category]))
+                break
+
+        # Older vendors may not have onboarding categories yet. Their
+        # published service settings are the legacy source of enabled modules.
+        if not explicit_categories and isinstance(profile, dict):
+            for service_type in ("restaurant", "hotel", "spa", "event"):
+                settings = profile.get(f"{service_type}_settings")
+                if isinstance(settings, dict) and settings.get("published") is True:
+                    enabled.add(service_type)
+
+        if not explicit_categories:
+            for service_type, collection in self.public_service_collections.items():
+                if collection.find_one({"vendor_id": vendor_id, "published": True}, {"_id": 1}):
+                    enabled.add(service_type)
+
+        if not explicit_categories and not enabled:
+            if self.vendor_events.find_one({"vendor_id": vendor_id, "status": "published"}, {"_id": 1}):
+                enabled.add("event")
+        return enabled or {"restaurant"}
 
     def _vendor_module_enabled(self, vendor_id: ObjectId, service_type: str) -> bool:
         # Happy Hour is a universal service and is not an onboarding module.
